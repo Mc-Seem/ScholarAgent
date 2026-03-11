@@ -172,6 +172,16 @@ class RelationshipExtractionOutput(BaseModel):
     relationships: List[Relationship]
 
 
+class SymbolDedupCluster(BaseModel):
+    """A cluster of symbol ids that refer to the same paper-level symbol."""
+    symbol_ids: List[str] = Field(description="IDs of symbol entities that should be merged")
+
+
+class SymbolDedupAdjudicationOutput(BaseModel):
+    """Structured output for ambiguous symbol deduplication buckets."""
+    clusters: List[SymbolDedupCluster] = Field(default_factory=list, description="Duplicate clusters within the candidate bucket")
+
+
 # =============================================================================
 # Prompt Templates
 # =============================================================================
@@ -403,6 +413,25 @@ Theorems:
 Extract all dependency relationships visible in this section."""
 
 
+SYMBOL_DEDUP_SYSTEM_PROMPT = """You are adjudicating ambiguous mathematical symbol deduplication candidates inside one paper.
+
+You will receive a small bucket of symbol entities that all use the same glyph or LaTeX notation.
+Your task is to group only the entities that clearly refer to the same paper-level symbol.
+
+Rules:
+- Be conservative. If unsure, keep entities separate.
+- Do not merge symbols solely because the glyph matches.
+- Use concept scope, role in formula, section context, sibling symbols, and meaning text.
+- Return clusters only for duplicates. Singletons should be omitted.
+- Each symbol id may appear in at most one cluster.
+"""
+
+SYMBOL_DEDUP_USER_PROMPT = """Candidate symbol bucket:
+{symbol_bucket}
+
+Return only the duplicate clusters."""
+
+
 # =============================================================================
 # Occurrence Detection Utilities
 # =============================================================================
@@ -622,9 +651,520 @@ def _ensure_math_delimiters(value: Optional[str]) -> str:
     return f"${stripped}$"
 
 
+def _extract_math_signatures(text: Optional[str]) -> List[str]:
+    """Extract lightly normalized inline/display math spans from free-form text."""
+    import re
+
+    if not text:
+        return []
+
+    patterns = [
+        r"\$(.+?)\$",
+        r"\\\((.+?)\\\)",
+        r"\\\[(.+?)\\\]",
+    ]
+    signatures: List[str] = []
+    for pattern in patterns:
+        for match in re.findall(pattern, text, flags=re.DOTALL):
+            normalized = _normalize_latex(match)
+            if normalized and normalized not in signatures:
+                signatures.append(normalized)
+    return signatures
+
+
+def _tokenize_text(text: Optional[str]) -> set[str]:
+    """Tokenize text into a coarse lowercase word set for overlap checks."""
+    import re
+
+    if not text:
+        return set()
+    return set(re.findall(r"[a-z0-9_]+", text.lower()))
+
+
+_GENERIC_MATCH_TOKENS = {
+    "a", "an", "the", "and", "or", "of", "for", "to", "in", "on", "by", "with",
+    "loss", "objective", "function", "equation", "formula", "term", "value",
+    "model", "paper", "method", "training", "optimization",
+}
+
+
+def _significant_tokens(text: Optional[str]) -> set[str]:
+    """Return informative tokens only, excluding common glue and generic KG words."""
+    return {token for token in _tokenize_text(text) if token not in _GENERIC_MATCH_TOKENS}
+
+
+def _has_significant_token_overlap(
+    left: Optional[str],
+    right: Optional[str],
+    minimum_overlap: int = 1,
+) -> bool:
+    """Check for overlap on informative tokens, excluding generic concept words."""
+    overlap = _significant_tokens(left) & _significant_tokens(right)
+    return len(overlap) >= minimum_overlap
+
+
+def _has_meaningful_token_overlap(left: Optional[str], right: Optional[str], minimum_overlap: int = 3) -> bool:
+    """Check whether two short summaries share enough substance to support a merge."""
+    overlap = _tokenize_text(left) & _tokenize_text(right)
+    return len(overlap) >= minimum_overlap
+
+
+def _section_title_by_id(sections: List[Dict[str, Any]]) -> Dict[str, str]:
+    """Build a section_id -> title mapping."""
+    return {
+        section.get("id", ""): section.get("title", "")
+        for section in sections
+        if section.get("id")
+    }
+
+
+def _llm_dedup_enabled() -> bool:
+    """Check whether LLM dedup adjudication is enabled."""
+    return os.getenv("KG_LLM_DEDUP_ENABLED", "false").lower() == "true"
+
+
+def _normalize_formula_role(role: Optional[str]) -> Optional[str]:
+    """Map free-form role descriptions into a small stable vocabulary."""
+    normalized = _normalize_text(role)
+    if not normalized:
+        return None
+    if any(token in normalized for token in ["output", "result", "target"]):
+        return "output"
+    if any(token in normalized for token in ["input", "feature", "argument"]):
+        return "input"
+    if any(token in normalized for token in ["parameter", "weight", "coefficient"]):
+        return "parameter"
+    if any(token in normalized for token in ["normalizer", "denominator", "scale"]):
+        return "normalizer"
+    if any(token in normalized for token in ["state"]):
+        return "state"
+    return normalized
+
+
 def _symbol_observation_key(obs: Dict[str, Any]) -> str:
     """Build a conservative key for symbol observation clustering."""
+    canonical_key = obs.get("canonical_symbol_key")
+    if canonical_key:
+        return canonical_key
     return f"{_normalize_latex(obs.get('latex') or obs.get('symbol'))}|{_normalize_text(obs.get('context'))}"
+
+
+def reconcile_local_subsection_observations(state: GraphState) -> GraphState:
+    """Reconcile obvious cross-type overlaps within the same subsection."""
+    section_titles = _section_title_by_id(state.get("sections", []))
+    formula_observations = [dict(formula) for formula in state["formula_observations"]]
+    symbol_observations = [dict(symbol) for symbol in state["symbol_observations"]]
+    definition_observations = [dict(defn) for defn in state["definition_observations"]]
+
+    definitions_by_section: Dict[str, List[Dict[str, Any]]] = {}
+    formulas_by_section: Dict[str, List[Dict[str, Any]]] = {}
+    stray_symbols_by_section: Dict[str, List[Dict[str, Any]]] = {}
+
+    for defn in definition_observations:
+        definitions_by_section.setdefault(defn.get("section_id") or "", []).append(defn)
+
+    for formula in formula_observations:
+        formulas_by_section.setdefault(formula.get("section_id") or "", []).append(formula)
+
+    for symbol in symbol_observations:
+        symbol["scope_level"] = symbol.get("scope_level") or "paper_level"
+        symbol["section_title"] = symbol.get("section_title") or section_titles.get(symbol.get("section_id"), "")
+        stray_symbols_by_section.setdefault(symbol.get("section_id") or "", []).append(symbol)
+
+    for section_id, formulas in formulas_by_section.items():
+        for formula in formulas:
+            formula["section_title"] = formula.get("section_title") or section_titles.get(formula.get("section_id"), "")
+
+        definitions = definitions_by_section.get(section_id, [])
+        if definitions:
+            for defn in definitions:
+                defn.setdefault("math_signatures", _extract_math_signatures(defn.get("definition_text")))
+
+            for formula in formulas:
+                formula_label = _normalize_text(formula.get("label"))
+                formula_latex = _normalize_latex(formula.get("latex"))
+                attached_definition = None
+
+                for defn in definitions:
+                    term = _normalize_text(defn.get("term"))
+                    if formula_label and term and formula_label == term:
+                        attached_definition = defn
+                        break
+                    if formula_latex and formula_latex in (defn.get("math_signatures") or []):
+                        attached_definition = defn
+                        break
+
+                if attached_definition:
+                    formula["attached_definition_term"] = attached_definition.get("term")
+                    formula["attached_definition_section_id"] = section_id
+                    attached_definition.setdefault("attached_formula_keys", [])
+                    formula_key = formula.get("formula_key") or formula.get("label") or formula.get("latex")
+                    if formula_key and formula_key not in attached_definition["attached_formula_keys"]:
+                        attached_definition["attached_formula_keys"].append(formula_key)
+
+        stray_symbols = stray_symbols_by_section.get(section_id, [])
+        stray_by_latex: Dict[str, List[Dict[str, Any]]] = {}
+        for obs in stray_symbols:
+            latex_key = _normalize_latex(obs.get("latex") or obs.get("symbol"))
+            if not latex_key:
+                continue
+            stray_by_latex.setdefault(latex_key, []).append(obs)
+
+        for formula in formulas:
+            reconciled_symbols = []
+            sibling_latex = [
+                _normalize_latex(item.get("latex") or item.get("symbol"))
+                for item in formula.get("symbols", [])
+                if _normalize_latex(item.get("latex") or item.get("symbol"))
+            ]
+            for symbol in formula.get("symbols", []):
+                symbol_copy = dict(symbol)
+                latex_key = _normalize_latex(symbol_copy.get("latex") or symbol_copy.get("symbol"))
+                symbol_copy["scope_level"] = "formula_scoped"
+                symbol_copy["section_title"] = formula.get("section_title", "")
+                symbol_copy["normalized_role_in_formula"] = _normalize_formula_role(symbol_copy.get("role_in_formula"))
+                symbol_copy["sibling_symbols"] = [item for item in sibling_latex if item != latex_key]
+                candidates = stray_by_latex.get(latex_key, [])
+                if len(candidates) == 1:
+                    stray = candidates[0]
+                    canonical_key = f"{latex_key}|{_normalize_text(stray.get('context'))}"
+                    symbol_copy["canonical_symbol_key"] = canonical_key
+                    stray["canonical_symbol_key"] = canonical_key
+                    symbol_copy["paper_symbol_context"] = stray.get("context")
+                reconciled_symbols.append(symbol_copy)
+            formula["symbols"] = reconciled_symbols
+
+    return {
+        "formula_observations": formula_observations,
+        "symbol_observations": symbol_observations,
+        "definition_observations": definition_observations,
+    }
+
+
+def _definitions_match(existing: Dict[str, Any], candidate: Dict[str, Any]) -> bool:
+    """Determine whether two definition observations should merge deterministically."""
+    existing_term = _normalize_text(existing.get("term"))
+    candidate_term = _normalize_text(candidate.get("term"))
+    if not existing_term or existing_term != candidate_term:
+        return False
+
+    existing_math = set(existing.get("math_signatures") or _extract_math_signatures(existing.get("definition_text")))
+    candidate_math = set(candidate.get("math_signatures") or _extract_math_signatures(candidate.get("definition_text")))
+
+    if existing_math and candidate_math and existing_math & candidate_math:
+        return True
+
+    existing_summary = existing.get("summary") or existing.get("definition_text")
+    candidate_summary = candidate.get("summary") or candidate.get("definition_text")
+    return _has_meaningful_token_overlap(existing_summary, candidate_summary)
+
+
+def _definition_formula_match_score(definition: Dict[str, Any], formula: Dict[str, Any]) -> int:
+    """Score a definition/formula match using multiple conservative signals."""
+    score = 0
+
+    definition_term = definition.get("term")
+    formula_label = formula.get("label")
+    definition_summary = definition.get("summary") or definition.get("definition_text")
+    formula_summary = formula.get("summary")
+
+    if formula_label:
+        if _normalize_text(definition_term) == _normalize_text(formula_label):
+            score += 4
+        elif _has_significant_token_overlap(definition_term, formula_label):
+            score += 2
+
+    definition_math = set(definition.get("math_signatures") or _extract_math_signatures(definition.get("definition_text")))
+    formula_latex = _normalize_latex(formula.get("latex"))
+    if formula_latex and formula_latex in definition_math:
+        score += 3
+
+    if _has_meaningful_token_overlap(definition_summary, formula_summary, minimum_overlap=2):
+        score += 2
+    elif _has_significant_token_overlap(definition_summary, formula_summary):
+        score += 1
+
+    return score
+
+
+def _symbols_approximately_match(existing: Dict[str, Any], candidate: Dict[str, Any]) -> bool:
+    """Determine whether two symbol observations with the same glyph are the same paper-level symbol."""
+    existing_latex = _normalize_latex(existing.get("latex") or existing.get("symbol"))
+    candidate_latex = _normalize_latex(candidate.get("latex") or candidate.get("symbol"))
+    if not existing_latex or existing_latex != candidate_latex:
+        return False
+
+    existing_context = existing.get("context") or existing.get("paper_symbol_context")
+    candidate_context = candidate.get("context") or candidate.get("paper_symbol_context")
+    existing_scope = existing.get("scope_level")
+    candidate_scope = candidate.get("scope_level")
+    existing_section_title = existing.get("section_title")
+    candidate_section_title = candidate.get("section_title")
+    existing_role = existing.get("normalized_role_in_formula")
+    candidate_role = candidate.get("normalized_role_in_formula")
+    existing_neighbors = set(existing.get("sibling_symbols", []))
+    candidate_neighbors = set(candidate.get("sibling_symbols", []))
+    existing_concept = existing.get("concept_scope")
+    candidate_concept = candidate.get("concept_scope")
+
+    if _normalize_text(existing_context) == _normalize_text(candidate_context):
+        return True
+
+    if _has_meaningful_token_overlap(existing_context, candidate_context, minimum_overlap=2):
+        return True
+
+    if existing_concept and candidate_concept and existing_concept == candidate_concept:
+        if existing_role and candidate_role and existing_role == candidate_role:
+            return True
+        if existing_neighbors & candidate_neighbors:
+            return True
+        if _has_significant_token_overlap(existing_context, candidate_context):
+            return True
+
+    existing_formulas = set(existing.get("parent_formula_ids", []))
+    candidate_formula = candidate.get("parent_formula_id")
+    if candidate_formula and candidate_formula in existing_formulas:
+        return True
+
+    if existing_scope == "formula_scoped" and candidate_scope == "formula_scoped":
+        if existing_role and candidate_role and existing_role == candidate_role:
+            if existing_neighbors & candidate_neighbors:
+                return True
+            if existing_section_title and candidate_section_title and _has_significant_token_overlap(existing_section_title, candidate_section_title):
+                return True
+
+    if existing_scope == candidate_scope and existing_role and candidate_role and existing_role == candidate_role:
+        if existing_section_title and candidate_section_title and _has_significant_token_overlap(existing_section_title, candidate_section_title):
+            return True
+
+    if existing_section_title and candidate_section_title and _has_significant_token_overlap(existing_section_title, candidate_section_title):
+        if _has_significant_token_overlap(existing_context, candidate_context):
+            return True
+
+    if existing.get("section_id") == candidate.get("section_id") and _has_significant_token_overlap(existing_context, candidate_context):
+        return True
+
+    return False
+
+
+def _attach_formulas_to_definitions(
+    deduped_formulas: List[Dict[str, Any]],
+    deduped_definitions: List[Dict[str, Any]],
+) -> None:
+    """Attach formulas to matching definitions across the paper using deterministic signals."""
+    definition_index_by_term: Dict[str, List[int]] = {}
+    definition_index_by_math: Dict[str, List[int]] = {}
+
+    for idx, defn in enumerate(deduped_definitions):
+        term = _normalize_text(defn.get("term"))
+        if term:
+            definition_index_by_term.setdefault(term, []).append(idx)
+
+        math_signatures = defn.get("math_signatures") or _extract_math_signatures(defn.get("definition_text"))
+        defn["math_signatures"] = math_signatures
+        for signature in math_signatures:
+            definition_index_by_math.setdefault(signature, []).append(idx)
+
+    for formula in deduped_formulas:
+        if formula.get("attached_definition_term"):
+            attached_term = _normalize_text(formula.get("attached_definition_term"))
+            for idx in definition_index_by_term.get(attached_term, []):
+                definition = deduped_definitions[idx]
+                if formula["id"] not in definition["attached_formula_ids"]:
+                    definition["attached_formula_ids"].append(formula["id"])
+                break
+            continue
+
+        candidate_indexes: List[int] = []
+        label_key = _normalize_text(formula.get("label"))
+        latex_key = _normalize_latex(formula.get("latex"))
+
+        if label_key:
+            candidate_indexes.extend(definition_index_by_term.get(label_key, []))
+        if latex_key:
+            candidate_indexes.extend(definition_index_by_math.get(latex_key, []))
+        if not candidate_indexes:
+            for idx, definition in enumerate(deduped_definitions):
+                if _definition_formula_match_score(definition, formula) >= 4:
+                    candidate_indexes.append(idx)
+
+        seen_indexes = set()
+        for idx in candidate_indexes:
+            if idx in seen_indexes:
+                continue
+            seen_indexes.add(idx)
+
+            definition = deduped_definitions[idx]
+            match_score = _definition_formula_match_score(definition, formula)
+            if label_key and label_key == _normalize_text(definition.get("term")):
+                formula["attached_definition_term"] = definition.get("term")
+            elif latex_key and latex_key in (definition.get("math_signatures") or []):
+                formula["attached_definition_term"] = definition.get("term")
+            elif match_score >= 4:
+                formula["attached_definition_term"] = definition.get("term")
+            else:
+                continue
+
+            formula["attached_definition_section_id"] = definition.get("section_id")
+            if formula["id"] not in definition["attached_formula_ids"]:
+                definition["attached_formula_ids"].append(formula["id"])
+            break
+
+
+def _propagate_symbol_scope(
+    deduped_symbols: List[Dict[str, Any]],
+    deduped_formulas: List[Dict[str, Any]],
+) -> None:
+    """Enrich symbols with concept scope inherited from their parent formulas."""
+    formula_scope = {
+        formula["id"]: _normalize_text(formula.get("attached_definition_term") or formula.get("label") or formula.get("latex"))
+        for formula in deduped_formulas
+    }
+    formula_section_titles = {
+        formula["id"]: formula.get("section_title")
+        for formula in deduped_formulas
+    }
+
+    for symbol in deduped_symbols:
+        symbol.setdefault("scope_level", "paper_level")
+        symbol.setdefault("sibling_symbols", [])
+        if not symbol.get("normalized_role_in_formula"):
+            symbol["normalized_role_in_formula"] = _normalize_formula_role(symbol.get("role_in_formula"))
+
+        concept_scopes = [
+            formula_scope.get(formula_id)
+            for formula_id in symbol.get("parent_formula_ids", [])
+            if formula_scope.get(formula_id)
+        ]
+        if concept_scopes:
+            symbol["concept_scope"] = concept_scopes[0]
+            symbol["scope_level"] = "formula_scoped"
+
+        if not symbol.get("section_title"):
+            for formula_id in symbol.get("parent_formula_ids", []):
+                section_title = formula_section_titles.get(formula_id)
+                if section_title:
+                    symbol["section_title"] = section_title
+                    break
+
+
+def _build_symbol_adjudication_buckets(deduped_symbols: List[Dict[str, Any]]) -> List[List[Dict[str, Any]]]:
+    """Build small ambiguous symbol buckets for optional LLM adjudication."""
+    symbols_by_latex: Dict[str, List[Dict[str, Any]]] = {}
+    for symbol in deduped_symbols:
+        latex_key = _normalize_latex(symbol.get("latex") or symbol.get("symbol"))
+        if not latex_key:
+            continue
+        symbols_by_latex.setdefault(latex_key, []).append(symbol)
+
+    buckets: List[List[Dict[str, Any]]] = []
+    for symbols in symbols_by_latex.values():
+        if len(symbols) < 2:
+            continue
+        if len(symbols) <= 4:
+            buckets.append(symbols)
+    return buckets
+
+
+def _format_symbol_bucket_for_prompt(symbol_bucket: List[Dict[str, Any]]) -> str:
+    """Serialize a symbol bucket into compact text for the adjudication prompt."""
+    lines = []
+    for symbol in symbol_bucket:
+        lines.append(
+            "\n".join([
+                f"id: {symbol['id']}",
+                f"latex: {symbol.get('latex')}",
+                f"context: {symbol.get('context')}",
+                f"concept_scope: {symbol.get('concept_scope')}",
+                f"role: {symbol.get('normalized_role_in_formula')}",
+                f"section_title: {symbol.get('section_title')}",
+                f"sibling_symbols: {', '.join(symbol.get('sibling_symbols', [])) or 'none'}",
+            ])
+        )
+    return "\n\n".join(lines)
+
+
+def _resolve_symbol_bucket_with_llm(symbol_bucket: List[Dict[str, Any]]) -> List[List[str]]:
+    """Use the LLM to resolve an ambiguous symbol bucket into duplicate clusters."""
+    llm = ChatAnthropic(model="claude-sonnet-4-5-20250929")
+    structured_llm = llm.with_structured_output(SymbolDedupAdjudicationOutput)
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", SYMBOL_DEDUP_SYSTEM_PROMPT),
+        ("user", SYMBOL_DEDUP_USER_PROMPT),
+    ])
+    chain = prompt | structured_llm
+
+    response = run_with_retry(
+        func=chain.invoke,
+        max_retries=3,
+        base_delay=2.0,
+        timeout_seconds=60,
+        func_args=({
+            "symbol_bucket": _format_symbol_bucket_for_prompt(symbol_bucket),
+        },),
+    )
+    return [cluster.symbol_ids for cluster in response.clusters if len(cluster.symbol_ids) >= 2]
+
+
+def _merge_symbol_clusters(
+    deduped_symbols: List[Dict[str, Any]],
+    clusters: List[List[str]],
+) -> List[Dict[str, Any]]:
+    """Merge resolved duplicate symbol clusters into canonical symbol entries."""
+    symbols_by_id = {symbol["id"]: symbol for symbol in deduped_symbols}
+    absorbed_ids = set()
+
+    for cluster in clusters:
+        cluster_symbols = [symbols_by_id[symbol_id] for symbol_id in cluster if symbol_id in symbols_by_id and symbol_id not in absorbed_ids]
+        if len(cluster_symbols) < 2:
+            continue
+
+        canonical = max(cluster_symbols, key=lambda item: (
+            len(item.get("context", "")),
+            len(item.get("parent_formula_ids", [])),
+        ))
+        for symbol in cluster_symbols:
+            if symbol["id"] == canonical["id"]:
+                continue
+            if len(symbol.get("context", "")) > len(canonical.get("context", "")):
+                canonical["context"] = symbol.get("context")
+            if symbol.get("is_definition"):
+                canonical["is_definition"] = True
+            if not canonical.get("concept_scope") and symbol.get("concept_scope"):
+                canonical["concept_scope"] = symbol.get("concept_scope")
+            if not canonical.get("section_title") and symbol.get("section_title"):
+                canonical["section_title"] = symbol.get("section_title")
+            for formula_id in symbol.get("parent_formula_ids", []):
+                if formula_id not in canonical["parent_formula_ids"]:
+                    canonical["parent_formula_ids"].append(formula_id)
+            for sibling in symbol.get("sibling_symbols", []):
+                if sibling not in canonical["sibling_symbols"]:
+                    canonical["sibling_symbols"].append(sibling)
+            absorbed_ids.add(symbol["id"])
+
+    return [symbol for symbol in deduped_symbols if symbol["id"] not in absorbed_ids]
+
+
+def _adjudicate_ambiguous_symbols(
+    deduped_symbols: List[Dict[str, Any]],
+    resolver: Optional[Any] = None,
+) -> List[Dict[str, Any]]:
+    """Optionally adjudicate ambiguous symbol buckets with a resolver or live LLM."""
+    active_resolver = resolver
+    if active_resolver is None and _llm_dedup_enabled():
+        active_resolver = _resolve_symbol_bucket_with_llm
+    if active_resolver is None:
+        return deduped_symbols
+
+    buckets = _build_symbol_adjudication_buckets(deduped_symbols)
+    if not buckets:
+        return deduped_symbols
+
+    merged_symbols = deduped_symbols
+    for bucket in buckets:
+        clusters = active_resolver(bucket)
+        merged_symbols = _merge_symbol_clusters(merged_symbols, clusters)
+    return merged_symbols
 
 
 def extract_stray_symbols(state: GraphState) -> GraphState:
@@ -1078,15 +1618,17 @@ def extract_theorems(state: GraphState) -> GraphState:
     return {"theorem_observations": theorems, "errors": errors}
 
 
-def deduplicate_entities(state: GraphState) -> GraphState:
+def deduplicate_entities(state: GraphState, symbol_bucket_resolver: Optional[Any] = None) -> GraphState:
     """Normalize local observations into paper-level entities."""
     print("\n[5/7] Deduplicating extracted entities...")
+
+    reconciled = reconcile_local_subsection_observations(state)
 
     deduped_formulas: List[Dict[str, Any]] = []
     formula_index_by_key: Dict[str, int] = {}
     formula_symbol_links: Dict[str, List[Dict[str, Any]]] = {}
 
-    for formula in state["formula_observations"]:
+    for formula in reconciled["formula_observations"]:
         normalized_label = _normalize_text(formula.get("label"))
         normalized_latex = _normalize_latex(formula.get("latex"))
         formula_key = normalized_label or normalized_latex or _normalize_text(formula.get("summary"))
@@ -1103,7 +1645,10 @@ def deduplicate_entities(state: GraphState) -> GraphState:
                 "summary": formula.get("summary"),
                 "aliases": [formula.get("label")] if formula.get("label") else [],
                 "section_id": formula.get("section_id"),
+                "section_title": formula.get("section_title"),
                 "dom_node_id": formula.get("dom_node_id"),
+                "attached_definition_term": formula.get("attached_definition_term"),
+                "attached_definition_section_id": formula.get("attached_definition_section_id"),
             }
             deduped_formulas.append(formula_entry)
             formula_index_by_key[formula_key] = len(deduped_formulas) - 1
@@ -1117,9 +1662,12 @@ def deduplicate_entities(state: GraphState) -> GraphState:
                 existing["summary"] = formula.get("summary")
             if len(formula.get("latex", "")) > len(existing.get("latex", "")):
                 existing["latex"] = formula.get("latex")
+            if not existing.get("attached_definition_term") and formula.get("attached_definition_term"):
+                existing["attached_definition_term"] = formula.get("attached_definition_term")
+                existing["attached_definition_section_id"] = formula.get("attached_definition_section_id")
             formula_symbol_links[existing["id"]].extend(formula.get("symbols", []))
 
-    symbol_observations = list(state["symbol_observations"])
+    symbol_observations = list(reconciled["symbol_observations"])
     for formula_id, observations in formula_symbol_links.items():
         for obs in observations:
             obs = dict(obs)
@@ -1128,15 +1676,36 @@ def deduplicate_entities(state: GraphState) -> GraphState:
 
     deduped_symbols: List[Dict[str, Any]] = []
     symbol_index_by_key: Dict[str, int] = {}
+    symbol_indexes_by_latex: Dict[str, List[int]] = {}
 
     for obs in symbol_observations:
         symbol_key = _symbol_observation_key(obs)
         if not symbol_key.strip("|"):
             continue
 
+        latex_key = _normalize_latex(obs.get("latex") or obs.get("symbol"))
+
         existing_idx = symbol_index_by_key.get(symbol_key)
         if existing_idx is None:
-            symbol_id = f"symbol_{_sanitize_id(obs.get('symbol') or obs.get('latex') or symbol_key)}"
+            candidate_indexes = symbol_indexes_by_latex.get(latex_key, [])
+            for idx in candidate_indexes:
+                existing = deduped_symbols[idx]
+                if _symbols_approximately_match(existing, obs):
+                    existing_idx = idx
+                    break
+        if existing_idx is None:
+            for idx, existing in enumerate(deduped_symbols):
+                if _symbols_approximately_match(existing, obs):
+                    existing_idx = idx
+                    break
+        if existing_idx is None:
+            symbol_id_parts = [
+                obs.get("symbol") or obs.get("latex") or symbol_key,
+                obs.get("section_id"),
+                obs.get("dom_node_id"),
+                str(len(deduped_symbols)),
+            ]
+            symbol_id = f"symbol_{_sanitize_id('|'.join(part for part in symbol_id_parts if part))}"
             deduped_symbols.append({
                 "id": symbol_id,
                 "symbol": obs.get("symbol"),
@@ -1144,30 +1713,76 @@ def deduplicate_entities(state: GraphState) -> GraphState:
                 "latex": obs.get("latex"),
                 "context": obs.get("context"),
                 "scope": obs.get("section_id"),
+                "scope_level": obs.get("scope_level"),
                 "section_id": obs.get("section_id"),
+                "section_title": obs.get("section_title"),
                 "dom_node_id": obs.get("dom_node_id"),
                 "is_definition": obs.get("is_definition", False),
+                "role_in_formula": obs.get("role_in_formula"),
+                "normalized_role_in_formula": obs.get("normalized_role_in_formula"),
+                "sibling_symbols": list(obs.get("sibling_symbols", [])),
+                "concept_scope": obs.get("concept_scope"),
                 "parent_formula_ids": [obs["parent_formula_id"]] if obs.get("parent_formula_id") else [],
             })
             symbol_index_by_key[symbol_key] = len(deduped_symbols) - 1
+            if latex_key:
+                symbol_indexes_by_latex.setdefault(latex_key, []).append(len(deduped_symbols) - 1)
         else:
             existing = deduped_symbols[existing_idx]
             if len(obs.get("context", "")) > len(existing.get("context", "")):
                 existing["context"] = obs.get("context")
             if obs.get("is_definition"):
                 existing["is_definition"] = True
+            if not existing.get("section_title") and obs.get("section_title"):
+                existing["section_title"] = obs.get("section_title")
+            if not existing.get("normalized_role_in_formula") and obs.get("normalized_role_in_formula"):
+                existing["normalized_role_in_formula"] = obs.get("normalized_role_in_formula")
+            if not existing.get("role_in_formula") and obs.get("role_in_formula"):
+                existing["role_in_formula"] = obs.get("role_in_formula")
+            if not existing.get("concept_scope") and obs.get("concept_scope"):
+                existing["concept_scope"] = obs.get("concept_scope")
+            for sibling in obs.get("sibling_symbols", []):
+                if sibling not in existing["sibling_symbols"]:
+                    existing["sibling_symbols"].append(sibling)
             parent_formula_id = obs.get("parent_formula_id")
             if parent_formula_id and parent_formula_id not in existing["parent_formula_ids"]:
                 existing["parent_formula_ids"].append(parent_formula_id)
+            symbol_index_by_key[symbol_key] = existing_idx
+            if latex_key and existing_idx not in symbol_indexes_by_latex.get(latex_key, []):
+                symbol_indexes_by_latex.setdefault(latex_key, []).append(existing_idx)
 
     deduped_definitions: List[Dict[str, Any]] = []
-    seen_definitions = set()
-    for defn in state["definition_observations"]:
-        key = _normalize_text(defn.get("term"))
-        if not key or key in seen_definitions:
+    for defn in reconciled["definition_observations"]:
+        defn = dict(defn)
+        defn["math_signatures"] = defn.get("math_signatures") or _extract_math_signatures(defn.get("definition_text"))
+        defn.setdefault("attached_formula_ids", [])
+
+        existing_idx = None
+        for idx, existing in enumerate(deduped_definitions):
+            if _definitions_match(existing, defn):
+                existing_idx = idx
+                break
+
+        if existing_idx is None:
+            deduped_definitions.append(defn)
             continue
-        seen_definitions.add(key)
-        deduped_definitions.append(defn)
+
+        existing = deduped_definitions[existing_idx]
+        if len(defn.get("summary", "")) > len(existing.get("summary", "")):
+            existing["summary"] = defn.get("summary")
+        if len(defn.get("definition_text", "")) > len(existing.get("definition_text", "")):
+            existing["definition_text"] = defn.get("definition_text")
+        if defn.get("is_formal"):
+            existing["is_formal"] = True
+        if defn.get("definition_number") and not existing.get("definition_number"):
+            existing["definition_number"] = defn.get("definition_number")
+        for formula_key in defn.get("attached_formula_keys", []):
+            existing.setdefault("attached_formula_keys", [])
+            if formula_key not in existing["attached_formula_keys"]:
+                existing["attached_formula_keys"].append(formula_key)
+        for signature in defn.get("math_signatures", []):
+            if signature not in existing["math_signatures"]:
+                existing["math_signatures"].append(signature)
 
     deduped_theorems: List[Dict[str, Any]] = []
     seen_theorems = set()
@@ -1177,6 +1792,10 @@ def deduplicate_entities(state: GraphState) -> GraphState:
             continue
         seen_theorems.add(key)
         deduped_theorems.append(thm)
+
+    _attach_formulas_to_definitions(deduped_formulas, deduped_definitions)
+    _propagate_symbol_scope(deduped_symbols, deduped_formulas)
+    deduped_symbols = _adjudicate_ambiguous_symbols(deduped_symbols, resolver=symbol_bucket_resolver)
 
     formula_ids = {formula["id"] for formula in deduped_formulas}
     formula_to_symbol_ids: Dict[str, List[str]] = {formula_id: [] for formula_id in formula_ids}
@@ -1399,6 +2018,7 @@ def build_graph(state: GraphState) -> GraphState:
             "latex": formula["latex"],
             "summary": formula["summary"],
             "aliases": formula.get("aliases", []),
+            "attached_definition_term": formula.get("attached_definition_term"),
             "dom_node_id": formula["dom_node_id"],
             "section_id": formula["section_id"],
         })
@@ -1442,6 +2062,7 @@ def build_graph(state: GraphState) -> GraphState:
             "summary": defn["summary"],
             "is_formal": defn["is_formal"],
             "definition_number": defn.get("definition_number"),
+            "attached_formula_ids": defn.get("attached_formula_ids", []),
             "dom_node_id": defn["dom_node_id"],
             "section_id": defn["section_id"],
         })
@@ -1467,6 +2088,29 @@ def build_graph(state: GraphState) -> GraphState:
     
     # Structural edges from formulas to their symbols
     seen_edges = set()
+    definition_id_by_term = {
+        _normalize_text(defn["term"]): f"def_{_sanitize_id(defn['term'])}"
+        for defn in state["definitions"]
+    }
+
+    # Structural edges from definitions to formulas when local reconciliation linked them
+    for formula in state["formulas"]:
+        attached_term = _normalize_text(formula.get("attached_definition_term"))
+        definition_id = definition_id_by_term.get(attached_term)
+        if not definition_id:
+            continue
+        edge_key = (definition_id, formula["id"], "defines")
+        if edge_key in seen_edges:
+            continue
+        seen_edges.add(edge_key)
+        edges.append({
+            "id": f"{definition_id}_to_{formula['id']}_defines",
+            "source": definition_id,
+            "target": formula["id"],
+            "type": "defines",
+            "evidence": "Local subsection reconciliation linked the definition to its formula representation",
+        })
+
     for formula in state["formulas"]:
         for symbol_id in formula.get("symbol_ids", []):
             edge_key = (formula["id"], symbol_id, "has_symbol")
