@@ -77,6 +77,13 @@ export const colors = {
 
   // Entity type colors
   entity: {
+    formula: {
+      bg: 'bg-amber-50',
+      text: 'text-amber-700',
+      icon: 'text-amber-500',
+      border: 'border-amber-300',
+      hex: '#f59e0b',
+    },
     symbol: {
       bg: 'bg-blue-50',
       text: 'text-blue-700',

@@ -115,7 +115,7 @@ class TooltipResponse(BaseModel):
 class TooltipSuggestionRequest(BaseModel):
     """Request for tooltip suggestions based on knowledge graph"""
     user_expertise: str  # Free-form text describing reader's background/expertise
-    entity_types: Optional[List[str]] = None  # Optional filter: ["symbol", "definition", "theorem"]
+    entity_types: Optional[List[str]] = None  # Optional filter over graph node types
 
 
 class OccurrenceData(BaseModel):
@@ -615,7 +615,7 @@ async def suggest_tooltips_endpoint(
 
     # Validate entity types filter if provided
     if request.entity_types:
-        valid_types = ["symbol", "definition", "theorem"]
+        valid_types = sorted({node.get("type") for node in paper.knowledge_graph.get("nodes", []) if node.get("type")})
         invalid_types = [t for t in request.entity_types if t not in valid_types]
         if invalid_types:
             raise HTTPException(

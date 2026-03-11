@@ -58,6 +58,9 @@ FILTER_USER_PROMPT = """Reader's background and expertise:
 
 Knowledge graph entities from the paper:
 
+FORMULAS:
+{formulas_list}
+
 SYMBOLS:
 {symbols_list}
 
@@ -76,7 +79,7 @@ Return a JSON object with:
 
 Example:
 {{
-  "selected_entity_ids": ["symbol_alpha_t", "def_ELBO", "thm_3.2"],
+  "selected_entity_ids": ["formula_elbo", "symbol_alpha_t", "def_ELBO", "thm_3.2"],
   "reasoning": "Selected RL-specific notation and variational inference concepts that may be unfamiliar to ML engineers without RL background"
 }}
 """
@@ -109,13 +112,23 @@ def filter_entities_by_expertise(
         progress_callback("Analyzing knowledge graph entities...")
 
     # Group entities by type for better prompt formatting
+    formulas = [e for e in entities if e.get('type') == 'formula']
     symbols = [e for e in entities if e.get('type') == 'symbol']
     definitions = [e for e in entities if e.get('type') == 'definition']
     theorems = [e for e in entities if e.get('type') == 'theorem']
 
-    debug_print(f"Entity breakdown: {len(symbols)} symbols, {len(definitions)} definitions, {len(theorems)} theorems")
+    debug_print(
+        f"Entity breakdown: {len(formulas)} formulas, {len(symbols)} symbols, "
+        f"{len(definitions)} definitions, {len(theorems)} theorems"
+    )
 
     # Format entity lists for prompt
+    def format_formulas(formula_list):
+        return "\n".join([
+            f"- {f['id']}: {f.get('label', '')} - {f.get('summary', f.get('latex', ''))[:100]}"
+            for f in formula_list[:50]
+        ]) or "(none)"
+
     def format_symbols(symbols_list):
         return "\n".join([
             f"- {s['id']}: {s.get('symbol', s.get('label', ''))} - {s.get('context', '')[:100]}"
@@ -134,6 +147,7 @@ def filter_entities_by_expertise(
             for t in thms_list[:50]
         ]) or "(none)"
 
+    formulas_text = format_formulas(formulas)
     symbols_text = format_symbols(symbols)
     definitions_text = format_definitions(definitions)
     theorems_text = format_theorems(theorems)
@@ -159,6 +173,7 @@ def filter_entities_by_expertise(
     try:
         response = chain.invoke({
             "expertise_level": expertise_level,
+            "formulas_list": formulas_text,
             "symbols_list": symbols_text,
             "definitions_list": definitions_text,
             "theorems_list": theorems_text
@@ -211,6 +226,19 @@ def generate_tooltip_content(entity: Dict[str, Any]) -> str:
             return context
         else:
             return f"Mathematical symbol: {entity.get('label', entity.get('symbol', ''))}"
+
+    elif entity_type == 'formula':
+        summary = entity.get('summary', '')
+        latex = entity.get('latex', '')
+        label = entity.get('label', entity.get('latex', 'Formula'))
+
+        if summary and latex and latex != label:
+            return f"{label}: {summary}\n\nFormula: {latex}"
+        if summary:
+            return f"{label}: {summary}"
+        if latex:
+            return f"Formula: {latex}"
+        return label
 
     elif entity_type == 'definition':
         # For definitions: use summary (concise) or definition_text (detailed)

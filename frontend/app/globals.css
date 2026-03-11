@@ -78,3 +78,14 @@ body {
   background-color: rgba(139, 92, 246, 0.1);
   border-bottom-color: rgb(139, 92, 246);
 }
+
+/* Clip MathJax output inside compact graph node cards */
+.kg-node-math {
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.kg-node-math mjx-container {
+  max-width: 100%;
+  overflow: hidden;
+}

@@ -172,8 +172,8 @@ export default function TooltipSuggestionsDialog({
         typeMap.get(type)!.push(s);
       });
 
-      // Order: definition, theorem, symbol, other, then alphabetically
-      const typeOrder = ['definition', 'theorem', 'symbol', 'other'];
+      // Order: definition, theorem, formula, symbol, other, then alphabetically
+      const typeOrder = ['definition', 'theorem', 'formula', 'symbol', 'other'];
       const sortedTypes = Array.from(typeMap.keys()).sort((a, b) => {
         const aIdx = typeOrder.indexOf(a);
         const bIdx = typeOrder.indexOf(b);
@@ -436,6 +436,7 @@ export default function TooltipSuggestionsDialog({
                         <option value="symbol" className="text-slate-900">Symbol</option>
                         <option value="definition" className="text-slate-900">Definition</option>
                         <option value="theorem" className="text-slate-900">Theorem</option>
+                        <option value="formula" className="text-slate-900">Formula</option>
                         <option value="other" className="text-slate-900">Other</option>
                       </select>
                     </div>

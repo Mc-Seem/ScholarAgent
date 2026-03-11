@@ -9,6 +9,7 @@ interface ProgressData {
     symbols?: { current: number; total: number };
     definitions?: { current: number; total: number };
     theorems?: { current: number; total: number };
+    formulas?: { current: number; total: number };
     dependencies?: { current: number; total: number };
   };
   error?: string;
@@ -84,17 +85,19 @@ export function KnowledgeGraphProgress({
     return Math.round((stage.current / stage.total) * 100);
   };
 
-  // Check if we're in the dependencies phase (all 3 extraction stages complete)
+  // Check if we're in the dependencies phase (all extraction stages complete)
   const extractionComplete =
     progress.progress.symbols?.current === progress.progress.symbols?.total &&
     progress.progress.definitions?.current === progress.progress.definitions?.total &&
     progress.progress.theorems?.current === progress.progress.theorems?.total &&
+    progress.progress.formulas?.current === progress.progress.formulas?.total &&
     progress.progress.symbols?.total !== undefined;
 
   const extractionStages = [
-    { key: 'symbols', label: 'Symbols', color: 'bg-blue-500' },
+    { key: 'symbols', label: 'Stray Symbols', color: 'bg-blue-500' },
     { key: 'definitions', label: 'Definitions', color: 'bg-emerald-500' },
     { key: 'theorems', label: 'Theorems', color: 'bg-violet-500' },
+    { key: 'formulas', label: 'Formulas', color: 'bg-amber-500' },
   ] as const;
 
   const dependencyStages = [

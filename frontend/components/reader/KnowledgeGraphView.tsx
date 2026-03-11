@@ -27,6 +27,7 @@ import { EmptyState } from '@/components/ui';
 
 // Custom node types
 const nodeTypes = {
+  formula: GraphNode,
   symbol: GraphNode,
   definition: GraphNode,
   theorem: GraphNode,
@@ -34,6 +35,7 @@ const nodeTypes = {
 
 // Edge colors by relationship type
 const edgeColors: Record<string, string> = {
+  has_symbol: '#f59e0b', // amber
   uses: '#6366f1',       // indigo
   depends_on: '#f59e0b', // amber
   defines: '#10b981',    // emerald
@@ -54,6 +56,7 @@ interface ApiNode {
   context?: string;
   definition?: string;
   statement?: string;
+  summary?: string;
   dom_node_id: string;
   section_id: string;
   latex?: string;
@@ -73,9 +76,11 @@ interface GraphData {
   metadata?: {
     node_count: number;
     edge_count: number;
+    formula_count?: number;
     symbol_count: number;
     definition_count: number;
     theorem_count: number;
+    entity_counts?: Record<string, number>;
   };
 }
 
@@ -172,10 +177,11 @@ function KnowledgeGraphViewInner({ paperId, onNavigate, onRegisterFocusHandler }
   const [selectedNode, setSelectedNode] = useState<{
     id: string;
     label: string;
-    nodeType: 'symbol' | 'definition' | 'theorem';
+    nodeType: string;
     context?: string;
     definition?: string;
     statement?: string;
+    summary?: string;
     latex?: string;
     onNavigate: () => void;
   } | null>(null);
@@ -197,8 +203,10 @@ function KnowledgeGraphViewInner({ paperId, onNavigate, onRegisterFocusHandler }
 
   // Filter state
   const [showFilterMenu, setShowFilterMenu] = useState(false);
-  const [visibleNodeTypes, setVisibleNodeTypes] = useState<Set<string>>(new Set(['symbol', 'definition', 'theorem']));
-  const [visibleEdgeTypes, setVisibleEdgeTypes] = useState<Set<string>>(new Set(['uses', 'depends_on', 'defines', 'extends', 'mentions']));
+  const defaultNodeTypes = ['formula', 'symbol', 'definition', 'theorem'];
+  const defaultEdgeTypes = ['has_symbol', 'uses', 'depends_on', 'defines', 'extends', 'mentions'];
+  const [visibleNodeTypes, setVisibleNodeTypes] = useState<Set<string>>(new Set(defaultNodeTypes));
+  const [visibleEdgeTypes, setVisibleEdgeTypes] = useState<Set<string>>(new Set(defaultEdgeTypes));
   const filterMenuRef = useRef<HTMLDivElement>(null);
 
   // React Flow instance for programmatic control
@@ -238,6 +246,7 @@ function KnowledgeGraphViewInner({ paperId, onNavigate, onRegisterFocusHandler }
             context: n.context,
             definition: n.definition,
             statement: n.statement,
+            summary: n.summary,
             latex: n.latex,
             domNodeId: n.dom_node_id,
             onNavigate: () => onNavigateRef.current?.(n.dom_node_id),
@@ -299,8 +308,8 @@ function KnowledgeGraphViewInner({ paperId, onNavigate, onRegisterFocusHandler }
     // Reset focus and filters when rebuilding graph
     setFocusMode(false);
     setFocusedNodeId(null);
-    setVisibleNodeTypes(new Set(['symbol', 'definition', 'theorem']));
-    setVisibleEdgeTypes(new Set(['uses', 'depends_on', 'defines', 'extends', 'mentions']));
+    setVisibleNodeTypes(new Set(defaultNodeTypes));
+    setVisibleEdgeTypes(new Set(defaultEdgeTypes));
     fetchGraphData();
   }, [fetchGraphData]);
 
@@ -417,6 +426,7 @@ function KnowledgeGraphViewInner({ paperId, onNavigate, onRegisterFocusHandler }
       context: node.data.context,
       definition: node.data.definition,
       statement: node.data.statement,
+      summary: node.data.summary,
       latex: node.data.latex,
       onNavigate: node.data.onNavigate,
     });
@@ -464,6 +474,7 @@ function KnowledgeGraphViewInner({ paperId, onNavigate, onRegisterFocusHandler }
         context: nodeData.data.context,
         definition: nodeData.data.definition,
         statement: nodeData.data.statement,
+        summary: nodeData.data.summary,
         latex: nodeData.data.latex,
         onNavigate: nodeData.data.onNavigate,
       });
@@ -514,16 +525,18 @@ function KnowledgeGraphViewInner({ paperId, onNavigate, onRegisterFocusHandler }
       const context = node.data.context?.toLowerCase() || '';
       const definition = node.data.definition?.toLowerCase() || '';
       const statement = node.data.statement?.toLowerCase() || '';
-      return label.includes(query) || context.includes(query) || definition.includes(query) || statement.includes(query);
+      const summary = node.data.summary?.toLowerCase() || '';
+      return label.includes(query) || context.includes(query) || definition.includes(query) || statement.includes(query) || summary.includes(query);
     });
 
     // Sort results:
     // 1. Label matches first, then content matches
-    // 2. Within each group: definitions > theorems > symbols
+    // 2. Within each group: definitions > theorems > formulas > symbols
     const typePriority: Record<string, number> = {
       definition: 0,
       theorem: 1,
-      symbol: 2,
+      formula: 2,
+      symbol: 3,
     };
 
     results.sort((a, b) => {
@@ -605,7 +618,7 @@ function KnowledgeGraphViewInner({ paperId, onNavigate, onRegisterFocusHandler }
   };
 
   // Check if any filters are active
-  const hasActiveFilters = visibleNodeTypes.size < 3 || visibleEdgeTypes.size < 5;
+  const hasActiveFilters = visibleNodeTypes.size < defaultNodeTypes.length || visibleEdgeTypes.size < defaultEdgeTypes.length;
 
   // Compute connections for a node
   const getNodeConnections = useCallback((nodeId: string): { incoming: ConnectionInfo[], outgoing: ConnectionInfo[] } => {
@@ -702,6 +715,7 @@ function KnowledgeGraphViewInner({ paperId, onNavigate, onRegisterFocusHandler }
       case 'symbol': return 'bg-blue-100 text-blue-700';
       case 'definition': return 'bg-emerald-100 text-emerald-700';
       case 'theorem': return 'bg-violet-100 text-violet-700';
+      case 'formula': return 'bg-amber-100 text-amber-700';
       default: return 'bg-slate-100 text-slate-700';
     }
   };
@@ -793,6 +807,7 @@ function KnowledgeGraphViewInner({ paperId, onNavigate, onRegisterFocusHandler }
               <div className="px-3 py-1">
                 <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1">Node Types</div>
                 {[
+                  { type: 'formula', label: 'Formulas', color: 'bg-amber-500' },
                   { type: 'symbol', label: 'Symbols', color: 'bg-blue-500' },
                   { type: 'definition', label: 'Definitions', color: 'bg-emerald-500' },
                   { type: 'theorem', label: 'Theorems', color: 'bg-violet-500' },
@@ -816,6 +831,7 @@ function KnowledgeGraphViewInner({ paperId, onNavigate, onRegisterFocusHandler }
               <div className="px-3 py-1">
                 <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1">Relationship Types</div>
                 {[
+                  { type: 'has_symbol', label: 'Has symbol', color: 'bg-amber-500' },
                   { type: 'uses', label: 'Uses', color: 'bg-indigo-500' },
                   { type: 'depends_on', label: 'Depends on', color: 'bg-amber-500' },
                   { type: 'defines', label: 'Defines', color: 'bg-emerald-500' },
@@ -841,8 +857,8 @@ function KnowledgeGraphViewInner({ paperId, onNavigate, onRegisterFocusHandler }
                   <div className="px-3 py-1">
                     <button
                       onClick={() => {
-                        setVisibleNodeTypes(new Set(['symbol', 'definition', 'theorem']));
-                        setVisibleEdgeTypes(new Set(['uses', 'depends_on', 'defines', 'extends', 'mentions']));
+                        setVisibleNodeTypes(new Set(defaultNodeTypes));
+                        setVisibleEdgeTypes(new Set(defaultEdgeTypes));
                       }}
                       className="text-xs text-indigo-600 hover:text-indigo-800"
                     >
@@ -857,8 +873,8 @@ function KnowledgeGraphViewInner({ paperId, onNavigate, onRegisterFocusHandler }
 
         {/* Stats */}
         {graphData?.metadata && (
-          <div className="text-xs text-slate-500 ml-auto" title="Symbols / Definitions / Theorems / Relationships">
-            {graphData.metadata.symbol_count}S · {graphData.metadata.definition_count}D · {graphData.metadata.theorem_count}T · {graphData.metadata.edge_count}R
+          <div className="text-xs text-slate-500 ml-auto" title="Formulas / Symbols / Definitions / Theorems / Relationships">
+            {(graphData.metadata.formula_count ?? graphData.metadata.entity_counts?.formula ?? 0)}F · {graphData.metadata.symbol_count}S · {graphData.metadata.definition_count}D · {graphData.metadata.theorem_count}T · {graphData.metadata.edge_count}R
           </div>
         )}
       </div>
@@ -888,6 +904,7 @@ function KnowledgeGraphViewInner({ paperId, onNavigate, onRegisterFocusHandler }
                 case 'symbol': return '#3b82f6';
                 case 'definition': return '#10b981';
                 case 'theorem': return '#8b5cf6';
+                case 'formula': return '#f59e0b';
                 default: return '#94a3b8';
               }
             }}
@@ -946,6 +963,7 @@ function KnowledgeGraphViewInner({ paperId, onNavigate, onRegisterFocusHandler }
               context={selectedNode.context}
               definition={selectedNode.definition}
               statement={selectedNode.statement}
+              summary={selectedNode.summary}
               latex={selectedNode.latex}
               onNavigate={() => {
                 selectedNode.onNavigate();

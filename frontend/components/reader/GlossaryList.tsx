@@ -168,6 +168,7 @@ export default function GlossaryList({
 
     // Add AI-generated groups
     const typeLabels: Record<string, string> = {
+      formula: 'Formulas',
       symbol: 'Symbols',
       def: 'Definitions',
       definition: 'Definitions',

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { X, Variable, BookOpen, Lightbulb, Focus, ChevronRight, ChevronDown } from 'lucide-react';
+import { X, Variable, BookOpen, Lightbulb, Focus, ChevronRight, ChevronDown, FunctionSquare } from 'lucide-react';
 import { LatexText } from './LatexText';
 import { Button, IconButton, CollapsibleSection } from '@/components/ui';
 import { colors, textStyles } from '@/lib/design-system';
@@ -9,16 +9,17 @@ import { colors, textStyles } from '@/lib/design-system';
 export interface ConnectionInfo {
   nodeId: string;
   nodeLabel: string;
-  nodeType: 'symbol' | 'definition' | 'theorem';
+  nodeType: string;
   relationshipType: string;
 }
 
 interface NodeInfoPanelProps {
   label: string;
-  nodeType: 'symbol' | 'definition' | 'theorem';
+  nodeType: string;
   context?: string;
   definition?: string;
   statement?: string;
+  summary?: string;
   latex?: string;
   onClose: () => void;
   onNavigate: () => void;
@@ -31,6 +32,14 @@ interface NodeInfoPanelProps {
 
 // Node styling config matching GraphNode - using design system colors
 const nodeConfig = {
+  formula: {
+    bgColor: colors.entity.formula.bg,
+    borderColor: colors.entity.formula.border,
+    textColor: colors.entity.formula.text,
+    icon: FunctionSquare,
+    iconColor: colors.entity.formula.icon,
+    label: 'Formula',
+  },
   symbol: {
     bgColor: colors.entity.symbol.bg,
     borderColor: colors.entity.symbol.border,
@@ -56,6 +65,14 @@ const nodeConfig = {
     label: 'Theorem',
   },
 };
+
+function ensureMathDelimiters(text: string): string {
+  if (!text) return text;
+  if (text.includes('$') || text.includes('\\(') || text.includes('\\[')) {
+    return text;
+  }
+  return `$${text}$`;
+}
 
 // Relationship type colors - using design system
 const relationshipColors: Record<string, string> = {
@@ -83,6 +100,7 @@ export function NodeInfoPanel({
   context,
   definition,
   statement,
+  summary,
   latex,
   onClose,
   onNavigate,
@@ -92,14 +110,20 @@ export function NodeInfoPanel({
   outgoingConnections = [],
   onConnectionClick,
 }: NodeInfoPanelProps) {
-  const config = nodeConfig[nodeType];
+  const config = nodeConfig[nodeType as keyof typeof nodeConfig] || nodeConfig.symbol;
   const Icon = config.icon;
 
   const [incomingExpanded, setIncomingExpanded] = useState(false);
   const [outgoingExpanded, setOutgoingExpanded] = useState(false);
 
   // Determine what content to show based on node type
-  const mainContent = definition || statement || context;
+  const mainContent = definition || statement || summary || context;
+  const formulaTitleIsMath = nodeType === 'formula' && (!latex || label === latex);
+  const headerText = nodeType === 'formula'
+    ? (formulaTitleIsMath ? ensureMathDelimiters(label) : label)
+    : (latex || label);
+  const showFormulaBody = nodeType === 'formula' && latex && latex !== label;
+  const formulaBody = showFormulaBody ? ensureMathDelimiters(latex) : null;
 
   // Group connections by relationship type
   const incomingGrouped = groupByRelationship(incomingConnections);
@@ -117,11 +141,7 @@ export function NodeInfoPanel({
             </span>
           </div>
           <h3 className={`text-base font-semibold ${config.textColor}`}>
-            {latex ? (
-              <LatexText text={latex} className="inline" />
-            ) : (
-              <LatexText text={label} className="inline" />
-            )}
+            <LatexText text={headerText} className="inline" />
           </h3>
         </div>
         <IconButton icon={X} onClick={onClose} label="Close" />
@@ -129,11 +149,22 @@ export function NodeInfoPanel({
 
       {/* Content */}
       <div className="p-4 space-y-3">
+        {showFormulaBody && (
+          <div>
+            <div className={textStyles.sectionHeader + ' mb-2'}>
+              Formula
+            </div>
+            <div className="text-sm text-slate-700 leading-relaxed break-words">
+              <LatexText text={formulaBody || ''} />
+            </div>
+          </div>
+        )}
+
         {/* Main content (definition/statement/context) */}
         {mainContent && (
           <div>
             <div className={textStyles.sectionHeader + ' mb-2'}>
-              {definition ? 'Definition' : statement ? 'Statement' : 'Context'}
+              {definition ? 'Definition' : statement ? 'Statement' : summary ? 'Summary' : 'Context'}
             </div>
             <div className="text-sm text-slate-700 leading-relaxed">
               <LatexText text={mainContent} />
@@ -179,7 +210,8 @@ export function NodeInfoPanel({
                         >
                           <span className={`w-1.5 h-1.5 rounded-full ${
                             conn.nodeType === 'symbol' ? 'bg-blue-500' :
-                            conn.nodeType === 'definition' ? 'bg-emerald-500' : 'bg-violet-500'
+                            conn.nodeType === 'definition' ? 'bg-emerald-500' :
+                            conn.nodeType === 'theorem' ? 'bg-violet-500' : 'bg-amber-500'
                           }`} />
                           <span className="truncate">{conn.nodeLabel}</span>
                         </button>
@@ -218,7 +250,8 @@ export function NodeInfoPanel({
                         >
                           <span className={`w-1.5 h-1.5 rounded-full ${
                             conn.nodeType === 'symbol' ? 'bg-blue-500' :
-                            conn.nodeType === 'definition' ? 'bg-emerald-500' : 'bg-violet-500'
+                            conn.nodeType === 'definition' ? 'bg-emerald-500' :
+                            conn.nodeType === 'theorem' ? 'bg-violet-500' : 'bg-amber-500'
                           }`} />
                           <span className="truncate">{conn.nodeLabel}</span>
                         </button>
