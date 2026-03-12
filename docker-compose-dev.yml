@@ -23,7 +23,8 @@ services:
     container_name: scholaragent-backend
     environment:
       DATABASE_URL: postgresql://scholaragent:scholaragent@postgres:5432/scholaragent
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       KG_MAX_SECTIONS: ${KG_MAX_SECTIONS:-0}
       KG_DEBUG: ${KG_DEBUG:-}
       HTML_INJECTION_DEBUG: ${HTML_INJECTION_DEBUG:-false}

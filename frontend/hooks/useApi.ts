@@ -2,7 +2,8 @@
  * API configuration and base fetch utilities
  */
 
-export const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
+// Browser calls should prefer the app's own /api rewrite unless explicitly overridden.
+export const API_BASE = process.env.NEXT_PUBLIC_API_BASE?.trim() || "";
 
 export interface ApiError {
   detail: string;
@@ -13,7 +14,7 @@ export async function apiFetch<T>(
   endpoint: string,
   options?: RequestInit
 ): Promise<T> {
-  const url = `${API_BASE}${endpoint}`;
+  const url = API_BASE ? `${API_BASE}${endpoint}` : endpoint;
 
   const response = await fetch(url, {
     ...options,

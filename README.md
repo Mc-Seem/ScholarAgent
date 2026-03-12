@@ -71,7 +71,19 @@ That's it! The application will be running with:
 - Backend API at `http://localhost:8000`
 - PostgreSQL database (internal)
 
-**Note**: Get your Anthropic API key from [console.anthropic.com](https://console.anthropic.com/)
+Anthropic example:
+
+```env
+ANTHROPIC_API_KEY=sk-ant-api03-your-key-here
+```
+
+OpenRouter example:
+
+```env
+OPENROUTER_API_KEY=sk-or-v1-your-key-here
+```
+
+Choose the provider and, for OpenRouter, the models in the app's `AI Settings` dialog.
 
 ## Setup from Source
 
@@ -197,13 +209,13 @@ Create a `.env` file in the same directory as `docker-compose.yml`:
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `ANTHROPIC_API_KEY` | **Yes** | - | Your Anthropic API key from [console.anthropic.com](https://console.anthropic.com/) |
+| `ANTHROPIC_API_KEY` | Anthropic: **Yes** | - | Your Anthropic API key from [console.anthropic.com](https://console.anthropic.com/) |
+| `OPENROUTER_API_KEY` | OpenRouter: **Yes** | - | Your OpenRouter API key |
 | `DATABASE_URL` | No | Auto-configured | PostgreSQL connection string (only needed for source setup) |
 | `KG_MAX_SECTIONS` | No | `0` | Limit sections processed in knowledge graph (0 = all sections) |
 | `KG_DEBUG` | No | - | Enable knowledge graph extraction debug logs (set to `1`) |
 | `HTML_INJECTION_DEBUG` | No | `false` | Enable HTML span injection debug logs (set to `true`) |
 | `TOOLTIP_AGENT_DEBUG` | No | `false` | Enable tooltip suggestion debug logs (set to `true`) |
-| `OPENAI_API_KEY` | No | - | For future OpenAI integrations |
 | `LLAMA_CLOUD_API_KEY` | No | - | For future LlamaIndex integrations |
 
 ## Architecture
@@ -221,7 +233,7 @@ arXiv .tar.gz → LaTeXML → HTML5 + MathML → PostgreSQL
 ### Tech Stack
 - **Backend**: FastAPI, PostgreSQL, SQLAlchemy, LangGraph
 - **Frontend**: Next.js, React, MathJax 4, Framer Motion
-- **AI**: Claude Sonnet via Anthropic API
+- **AI**: Anthropic Claude with server-side defaults, or OpenRouter-backed chat models selected in the UI
 - **Compilation**: LaTeXML (Docker)
 
 ## Key Features
@@ -428,4 +440,5 @@ docker compose up -d
 
 - **Issues**: [GitHub Issues](https://github.com/your-repo/issues)
 - **Documentation**: See docs above
-- **API Key**: Get Anthropic API key at [console.anthropic.com](https://console.anthropic.com/)
+- **Anthropic**: Get API keys at [console.anthropic.com](https://console.anthropic.com/)
+- **OpenRouter**: Configure an API key in your `.env`, then choose models in `AI Settings`

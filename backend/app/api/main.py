@@ -19,6 +19,15 @@ from backend.app.database.connection import get_db
 from backend.app.database.models import Paper, Tooltip
 from backend.app.database.models import TooltipSuggestion as TooltipSuggestionModel
 from backend.app.compiler.latexml_compiler import compile_latex_to_html, CompilationResult
+from backend.app.llm import (
+    AIConfig,
+    TASK_HTML_INJECTION,
+    TASK_KNOWLEDGE_GRAPH,
+    TASK_TOOLTIP_FILTER,
+    check_openrouter_models,
+    get_ai_capabilities,
+    validate_ai_config,
+)
 
 app = FastAPI(title="Scholar Agent API")
 app.add_middleware(
@@ -52,6 +61,17 @@ compile_progress: Dict[str, Dict[str, Any]] = {}
 
 # Configuration
 USE_DOCKER = os.getenv("LATEXML_USE_DOCKER", "true").lower() == "true"
+
+
+def _validate_request_ai_config(
+    ai_config: AIConfig | dict[str, Any] | None,
+    *,
+    tasks: tuple[str, ...],
+) -> None:
+    try:
+        validate_ai_config(ai_config, tasks=tasks)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 # =============================================================================
@@ -116,6 +136,7 @@ class TooltipSuggestionRequest(BaseModel):
     """Request for tooltip suggestions based on knowledge graph"""
     user_expertise: str  # Free-form text describing reader's background/expertise
     entity_types: Optional[List[str]] = None  # Optional filter: ["symbol", "definition", "theorem"]
+    ai_config: Optional[AIConfig] = None
 
 
 class OccurrenceData(BaseModel):
@@ -172,6 +193,7 @@ class CreateManualSuggestionRequest(BaseModel):
 class TooltipApplicationRequest(BaseModel):
     """Request to apply suggested tooltips by injecting spans into HTML"""
     suggestions: List[TooltipSuggestion]
+    ai_config: Optional[AIConfig] = None
 
 
 class TooltipApplicationResponse(BaseModel):
@@ -182,6 +204,18 @@ class TooltipApplicationResponse(BaseModel):
     errors: List[str]
 
 
+class KnowledgeGraphBuildRequest(BaseModel):
+    """Optional request-scoped AI settings for graph construction."""
+
+    ai_config: Optional[AIConfig] = None
+
+
+class OpenRouterModelCheckRequest(BaseModel):
+    """Request to validate one or more OpenRouter model ids."""
+
+    models: List[str]
+
+
 # =============================================================================
 # Root
 # =============================================================================
@@ -189,6 +223,24 @@ class TooltipApplicationResponse(BaseModel):
 @app.get("/")
 async def root():
     return {"message": "Scholar Agent API - LaTeX-first MVP"}
+
+
+@app.get("/api/ai/capabilities")
+async def get_ai_capabilities_endpoint():
+    """Return configured AI providers and fixed server-side model defaults."""
+    return get_ai_capabilities()
+
+
+@app.post("/api/ai/openrouter/check-models")
+async def check_openrouter_models_endpoint(request: OpenRouterModelCheckRequest):
+    """Validate OpenRouter models against the live OpenRouter model catalog."""
+    try:
+        return {"results": check_openrouter_models(request.models)}
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Failed to validate OpenRouter models: {exc}",
+        ) from exc
 
 
 # =============================================================================
@@ -623,12 +675,15 @@ async def suggest_tooltips_endpoint(
                 detail=f"Invalid entity types: {', '.join(invalid_types)}. Must be one of: {', '.join(valid_types)}"
             )
 
+    _validate_request_ai_config(request.ai_config, tasks=(TASK_TOOLTIP_FILTER,))
+
     try:
         # Call suggestion agent
         result = suggest_tooltips(
             knowledge_graph=paper.knowledge_graph,
             user_expertise=request.user_expertise,
-            entity_type_filter=request.entity_types
+            entity_type_filter=request.entity_types,
+            ai_config=request.ai_config,
         )
 
         # Cache the suggestions for later use by the apply endpoint
@@ -824,6 +879,8 @@ async def apply_tooltips_endpoint(
     # Store original HTML for rollback
     original_html = paper.html_content
 
+    _validate_request_ai_config(request.ai_config, tasks=(TASK_HTML_INJECTION,))
+
     try:
         # Convert Pydantic models to dicts for injection function
         suggestions_dict = [s.model_dump() for s in request.suggestions]
@@ -863,7 +920,8 @@ async def apply_tooltips_endpoint(
         modified_html, injection_errors = inject_spans_with_ai(
             html_content=paper.html_content,
             sections_data=paper.sections_data or [],
-            suggestions=suggestions_dict
+            suggestions=suggestions_dict,
+            ai_config=request.ai_config,
         )
 
         if not modified_html:
@@ -1075,7 +1133,10 @@ async def knowledge_graph_build_progress(paper_id: str):
     )
 
 
-def _run_kg_build_task(paper_id: str):
+def _run_kg_build_task(
+    paper_id: str,
+    ai_config: AIConfig | dict[str, Any] | None = None,
+):
     """Background task to build knowledge graph."""
     from backend.app.database.connection import SessionLocal
     from backend.app.agents.knowledge_graph import build_kg_for_paper
@@ -1095,7 +1156,11 @@ def _run_kg_build_task(paper_id: str):
 
     try:
         print(f"[KG Build Task] Starting build for paper {paper_id}")
-        graph_data = build_kg_for_paper(paper_id, progress_callback=progress_callback)
+        graph_data = build_kg_for_paper(
+            paper_id,
+            progress_callback=progress_callback,
+            ai_config=ai_config,
+        )
 
         # Store graph data in paper record
         paper = db.query(Paper).filter(Paper.id == paper_id).first()
@@ -1120,7 +1185,12 @@ def _run_kg_build_task(paper_id: str):
 
 
 @app.post("/api/papers/{paper_id}/knowledge-graph/build")
-async def build_knowledge_graph(paper_id: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+async def build_knowledge_graph(
+    paper_id: str,
+    background_tasks: BackgroundTasks,
+    request: Optional[KnowledgeGraphBuildRequest] = None,
+    db: Session = Depends(get_db),
+):
     """
     Trigger knowledge graph construction for a paper (async background task).
 
@@ -1141,11 +1211,17 @@ async def build_knowledge_graph(paper_id: str, background_tasks: BackgroundTasks
     if paper_id in kg_build_progress and kg_build_progress[paper_id].get("stage") == "extracting":
         raise HTTPException(status_code=409, detail="Build already in progress")
 
+    _validate_request_ai_config(request.ai_config if request else None, tasks=(TASK_KNOWLEDGE_GRAPH,))
+
     # Initialize progress tracking
     kg_build_progress[paper_id] = {"stage": "starting", "progress": {}}
 
     # Start background task
-    background_tasks.add_task(_run_kg_build_task, paper_id)
+    background_tasks.add_task(
+        _run_kg_build_task,
+        paper_id,
+        request.ai_config if request else None,
+    )
 
     return {"status": "accepted", "message": "Build started in background"}
 

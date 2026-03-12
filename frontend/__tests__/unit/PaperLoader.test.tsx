@@ -14,6 +14,8 @@ const mockClearPapersError = vi.fn()
 const mockCreateTooltip = vi.fn()
 const mockUpdateTooltip = vi.fn()
 const mockDeleteTooltip = vi.fn()
+const mockFetchTooltips = vi.fn()
+const mockRemoveTooltipOccurrence = vi.fn()
 
 // Mockable state for usePapers hook
 const mockPapersState = {
@@ -25,8 +27,42 @@ const mockPapersState = {
 // Mockable state for useTooltips hook
 const mockTooltipsState = {
   tooltipMap: {} as Record<string, any>,
+  entityTooltipMap: {} as Record<string, any>,
   loading: false,
   error: null as string | null,
+}
+
+const mockAiPreferencesState = {
+  capabilities: {
+    providers: {
+      anthropic: {
+        available: true,
+        label: 'Anthropic',
+        fixed_models: {},
+      },
+      openrouter: {
+        available: true,
+        label: 'OpenRouter',
+        supports_arbitrary_models: true,
+        supports_model_validation: true,
+      },
+    },
+    default_provider: 'anthropic' as const,
+  },
+  effectiveProvider: 'anthropic' as const,
+  providerSummary: 'Anthropic',
+  preferences: {
+    provider: null,
+    openrouterSharedModel: '',
+    openrouterKnowledgeGraphModel: '',
+    openrouterTooltipFilterModel: '',
+    openrouterHtmlInjectionModel: '',
+  },
+  loading: false,
+  error: null as string | null,
+  validationResults: {},
+  validationLoading: false,
+  validationError: null as string | null,
 }
 
 vi.mock('@/hooks/usePapers', () => ({
@@ -52,12 +88,37 @@ vi.mock('@/components/reader/ResizableLayout', () => ({
 vi.mock('@/hooks/useTooltips', () => ({
   useTooltips: () => ({
     tooltipMap: mockTooltipsState.tooltipMap,
+    entityTooltipMap: mockTooltipsState.entityTooltipMap,
     loading: mockTooltipsState.loading,
     error: mockTooltipsState.error,
+    tooltips: [],
     createTooltip: mockCreateTooltip,
     updateTooltip: mockUpdateTooltip,
     deleteTooltip: mockDeleteTooltip,
+    fetchTooltips: mockFetchTooltips,
+    removeTooltipOccurrence: mockRemoveTooltipOccurrence,
   }),
+}))
+
+vi.mock('@/hooks/useAiPreferences', () => ({
+  useAiPreferences: () => ({
+    capabilities: mockAiPreferencesState.capabilities,
+    effectiveProvider: mockAiPreferencesState.effectiveProvider,
+    providerSummary: mockAiPreferencesState.providerSummary,
+    preferences: mockAiPreferencesState.preferences,
+    loading: mockAiPreferencesState.loading,
+    error: mockAiPreferencesState.error,
+    validationResults: mockAiPreferencesState.validationResults,
+    validationLoading: mockAiPreferencesState.validationLoading,
+    validationError: mockAiPreferencesState.validationError,
+    updatePreferences: vi.fn(),
+    buildAiConfig: () => ({ provider: 'anthropic' }),
+    validateOpenRouterModels: vi.fn().mockResolvedValue({}),
+  }),
+}))
+
+vi.mock('@/components/reader/AISettingsDialog', () => ({
+  default: () => null,
 }))
 
 // Mock HTMLRenderer
@@ -78,6 +139,7 @@ describe('PaperLoader', () => {
     mockPapersState.loading = false
     mockPapersState.error = null
     mockTooltipsState.tooltipMap = {}
+    mockTooltipsState.entityTooltipMap = {}
     mockTooltipsState.loading = false
     mockTooltipsState.error = null
   })

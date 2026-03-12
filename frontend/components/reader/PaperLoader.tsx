@@ -8,9 +8,12 @@ import ResizableLayout from "./ResizableLayout";
 import NavigationPanel from "./NavigationPanel";
 import TooltipPanel from "./TooltipPanel";
 import TooltipSuggestionsDialog, { StoredSuggestion } from "./TooltipSuggestionsDialog";
+import AISettingsDialog from "./AISettingsDialog";
 import TooltipEditModal from "./TooltipEditModal";
 import SearchBar from "./SearchBar";
 import { parseTOC, TOCNode } from "@/utils/parseTOC";
+import { API_BASE } from "@/hooks/useApi";
+import { useAiPreferences } from "@/hooks/useAiPreferences";
 import { Loader2, Upload, ExternalLink, Trash2, RefreshCw, FileText, AlertCircle, Network } from "lucide-react";
 
 /**
@@ -66,6 +69,7 @@ export default function PaperLoader() {
 
   // Tooltip suggestion state
   const [showSuggestionDialog, setShowSuggestionDialog] = useState(false);
+  const [showAiSettingsDialog, setShowAiSettingsDialog] = useState(false);
   const [userExpertise, setUserExpertise] = useState<string>("");
 
   // Tooltip edit state
@@ -93,6 +97,21 @@ export default function PaperLoader() {
     deleteTooltip,
     removeTooltipOccurrence,
   } = useTooltips(selectedPaperId);
+
+  const {
+    capabilities: aiCapabilities,
+    effectiveProvider,
+    providerSummary,
+    preferences: aiPreferences,
+    loading: aiCapabilitiesLoading,
+    error: aiCapabilitiesError,
+    validationResults,
+    validationLoading,
+    validationError,
+    updatePreferences,
+    buildAiConfig,
+    validateOpenRouterModels,
+  } = useAiPreferences();
 
   // Load papers on mount
   useEffect(() => {
@@ -242,6 +261,14 @@ export default function PaperLoader() {
   const handleBuildGraph = async () => {
     if (!selectedPaperId) return;
 
+    const aiConfig = buildAiConfig();
+    if (!aiConfig) {
+      setShowAiSettingsDialog(true);
+      setStatus('Configure AI settings before running AI actions');
+      setTimeout(() => setStatus(""), 5000);
+      return;
+    }
+
     setStatus("Building knowledge graph...");
     clearPapersError();
 
@@ -249,8 +276,14 @@ export default function PaperLoader() {
     window.dispatchEvent(new CustomEvent('kg-build-start'));
 
     try {
-      const res = await fetch(`/api/papers/${selectedPaperId}/knowledge-graph/build`, {
+      const res = await fetch(`${API_BASE}/api/papers/${selectedPaperId}/knowledge-graph/build`, {
         method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          ai_config: aiConfig,
+        }),
       });
 
       if (!res.ok) {
@@ -286,15 +319,24 @@ export default function PaperLoader() {
   const handleRegenerateAI = async () => {
     if (!selectedPaperId || !userExpertise) return;
 
+    const aiConfig = buildAiConfig();
+    if (!aiConfig) {
+      setShowAiSettingsDialog(true);
+      setStatus('Configure AI settings before running AI actions');
+      setTimeout(() => setStatus(""), 5000);
+      return;
+    }
+
     setStatus('Generating AI tooltip suggestions...');
 
     try {
-      const response = await fetch(`http://localhost:8000/api/papers/${selectedPaperId}/tooltips/suggest`, {
+      const response = await fetch(`${API_BASE}/api/papers/${selectedPaperId}/tooltips/suggest`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           user_expertise: userExpertise,
           entity_types: null,
+          ai_config: aiConfig,
         }),
       });
 
@@ -349,6 +391,14 @@ export default function PaperLoader() {
   const handleApplySuggestions = async (selectedSuggestions: StoredSuggestion[]) => {
     if (!selectedPaperId) return;
 
+    const aiConfig = buildAiConfig();
+    if (!aiConfig) {
+      setShowAiSettingsDialog(true);
+      setStatus('Configure AI settings before running AI actions');
+      setTimeout(() => setStatus(''), 5000);
+      return;
+    }
+
     setStatus('Applying tooltips...');
 
     try {
@@ -363,11 +413,12 @@ export default function PaperLoader() {
         occurrences: [], // Backend will find occurrences
       }));
 
-      const response = await fetch(`http://localhost:8000/api/papers/${selectedPaperId}/tooltips/apply`, {
+      const response = await fetch(`${API_BASE}/api/papers/${selectedPaperId}/tooltips/apply`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           suggestions: suggestionsForBackend,
+          ai_config: aiConfig,
         }),
       });
 
@@ -684,6 +735,9 @@ export default function PaperLoader() {
         mainPanel={mainPanel}
         rightPanel={rightPanel}
         onExpertiseChange={setUserExpertise}
+        onOpenAiSettings={() => setShowAiSettingsDialog(true)}
+        aiSettingsSummary={providerSummary}
+        aiSettingsDisabled={!aiCapabilities && aiCapabilitiesLoading}
       />
 
       {/* Tooltip Suggestions Dialog */}
@@ -697,6 +751,21 @@ export default function PaperLoader() {
           onRegenerateAI={handleRegenerateAI}
         />
       )}
+
+      <AISettingsDialog
+        isOpen={showAiSettingsDialog}
+        capabilities={aiCapabilities}
+        preferences={aiPreferences}
+        effectiveProvider={effectiveProvider}
+        loading={aiCapabilitiesLoading}
+        error={aiCapabilitiesError}
+        validationResults={validationResults}
+        validationLoading={validationLoading}
+        validationError={validationError}
+        onClose={() => setShowAiSettingsDialog(false)}
+        onSave={updatePreferences}
+        onValidateOpenRouterModels={validateOpenRouterModels}
+      />
 
       {/* Tooltip Edit Modal */}
       <TooltipEditModal

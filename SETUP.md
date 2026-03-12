@@ -119,7 +119,16 @@ cp .env.example .env
 Edit `.env`:
 ```
 DATABASE_URL=postgresql://scholaragent:scholaragent@localhost/scholaragent
+ANTHROPIC_API_KEY=your-anthropic-key
 ```
+
+For OpenRouter instead:
+```
+DATABASE_URL=postgresql://scholaragent:scholaragent@localhost/scholaragent
+OPENROUTER_API_KEY=your-openrouter-key
+```
+
+Then choose the provider and, for OpenRouter, the models in the app's `AI Settings` dialog.
 
 ### 5. Database Migrations
 

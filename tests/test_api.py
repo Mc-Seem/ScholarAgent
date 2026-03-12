@@ -22,6 +22,54 @@ class TestRootEndpoint:
         assert "Scholar Agent" in data["message"]
 
 
+class TestAiEndpoints:
+    """Tests for AI capability and model-check endpoints."""
+
+    def test_get_ai_capabilities(self, api_client, monkeypatch):
+        monkeypatch.setattr(
+            "backend.app.api.main.get_ai_capabilities",
+            lambda: {
+                "providers": {
+                    "anthropic": {"available": True, "label": "Anthropic", "fixed_models": {}},
+                    "openrouter": {
+                        "available": True,
+                        "label": "OpenRouter",
+                        "supports_arbitrary_models": True,
+                        "supports_model_validation": True,
+                    },
+                },
+                "default_provider": "anthropic",
+            },
+        )
+
+        response = api_client.get("/api/ai/capabilities")
+
+        assert response.status_code == 200
+        assert response.json()["providers"]["anthropic"]["available"] is True
+
+    def test_check_openrouter_models(self, api_client, monkeypatch):
+        monkeypatch.setattr(
+            "backend.app.api.main.check_openrouter_models",
+            lambda models: [
+                {
+                    "model": models[0],
+                    "exists": True,
+                    "compatibility": "good",
+                    "detail": "Supports function calling.",
+                    "supported_parameters": ["tools", "tool_choice"],
+                }
+            ],
+        )
+
+        response = api_client.post(
+            "/api/ai/openrouter/check-models",
+            json={"models": ["anthropic/claude-3.7-sonnet"]},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["results"][0]["compatibility"] == "good"
+
+
 class TestPapersListEndpoint:
     """Tests for GET /api/papers."""
 

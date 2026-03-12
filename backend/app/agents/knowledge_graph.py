@@ -25,8 +25,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from dotenv import load_dotenv
 from langgraph.graph import StateGraph, END
-from langchain_anthropic import ChatAnthropic
 from langchain_core.prompts import ChatPromptTemplate
+from backend.app.llm import AIConfig, TASK_KNOWLEDGE_GRAPH, create_chat_model
 
 # Import shared utilities
 from backend.app.agents.utils import (
@@ -71,6 +71,7 @@ class GraphState(TypedDict):
 
     # Progress reporting (optional callback)
     progress_callback: NotRequired[Any]
+    ai_config: NotRequired[AIConfig | dict[str, Any] | None]
 
 
 # =============================================================================
@@ -528,7 +529,10 @@ def extract_symbols(state: GraphState) -> GraphState:
 
     print(f"\n[1/4] Extracting symbols from {len(sections_to_process)} sections (using {worker_count} workers)...")
 
-    llm = ChatAnthropic(model="claude-sonnet-4-5-20250929")
+    llm = create_chat_model(
+        task=TASK_KNOWLEDGE_GRAPH,
+        config=state.get("ai_config"),
+    )
     structured_llm = llm.with_structured_output(SymbolExtractionOutput)
 
     prompt = ChatPromptTemplate.from_messages([
@@ -640,7 +644,10 @@ def extract_definitions(state: GraphState) -> GraphState:
 
     print(f"\n[2/4] Extracting definitions from {len(sections_to_process)} sections (using {worker_count} workers)...")
 
-    llm = ChatAnthropic(model="claude-sonnet-4-5-20250929")
+    llm = create_chat_model(
+        task=TASK_KNOWLEDGE_GRAPH,
+        config=state.get("ai_config"),
+    )
     structured_llm = llm.with_structured_output(DefinitionExtractionOutput)
 
     prompt = ChatPromptTemplate.from_messages([
@@ -753,7 +760,10 @@ def extract_theorems(state: GraphState) -> GraphState:
 
     print(f"\n[3/4] Extracting theorems from {len(sections_to_process)} sections (using {worker_count} workers)...")
 
-    llm = ChatAnthropic(model="claude-sonnet-4-5-20250929")
+    llm = create_chat_model(
+        task=TASK_KNOWLEDGE_GRAPH,
+        config=state.get("ai_config"),
+    )
     structured_llm = llm.with_structured_output(TheoremExtractionOutput)
 
     prompt = ChatPromptTemplate.from_messages([
@@ -866,7 +876,10 @@ def extract_dependencies(state: GraphState) -> GraphState:
 
     print(f"\n[4/4] Extracting relationships from {len(sections_to_process)} sections (using {worker_count} workers)...")
 
-    llm = ChatAnthropic(model="claude-sonnet-4-5-20250929")
+    llm = create_chat_model(
+        task=TASK_KNOWLEDGE_GRAPH,
+        config=state.get("ai_config"),
+    )
     structured_llm = llm.with_structured_output(RelationshipExtractionOutput)
 
     prompt = ChatPromptTemplate.from_messages([
@@ -1177,7 +1190,11 @@ def create_knowledge_graph_workflow() -> StateGraph:
     return workflow
 
 
-def build_kg_for_paper(paper_id: str, progress_callback=None) -> Dict[str, Any]:
+def build_kg_for_paper(
+    paper_id: str,
+    progress_callback=None,
+    ai_config: AIConfig | dict[str, Any] | None = None,
+) -> Dict[str, Any]:
     """
     Build knowledge graph for a paper.
 
@@ -1206,6 +1223,7 @@ def build_kg_for_paper(paper_id: str, progress_callback=None) -> Dict[str, Any]:
         "graph_data": {},
         "errors": [],
         "progress_callback": progress_callback,
+        "ai_config": ai_config,
     }
     
     result = app.invoke(initial_state)

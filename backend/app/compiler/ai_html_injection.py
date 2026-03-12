@@ -20,8 +20,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from dotenv import load_dotenv
 from langgraph.graph import StateGraph, END
-from langchain_anthropic import ChatAnthropic
 from langchain_core.prompts import ChatPromptTemplate
+from backend.app.llm import AIConfig, TASK_HTML_INJECTION, create_chat_model
 
 # Import shared utilities
 from backend.app.agents.utils import (
@@ -67,6 +67,7 @@ class InjectionState(TypedDict):
     modified_html: str
     injection_count: int
     errors: List[str]
+    ai_config: AIConfig | Dict[str, Any] | None
 
 
 # =============================================================================
@@ -202,8 +203,9 @@ def process_sections(state: InjectionState) -> InjectionState:
     if num_batches > 1:
         print(f"[HTML Injection] Processing {total_entities} entities in {num_batches} batches of {BATCH_SIZE}")
 
-    llm = ChatAnthropic(
-        model=os.getenv("HTML_INJECTION_MODEL", "claude-haiku-4-5-20251001"),
+    llm = create_chat_model(
+        task=TASK_HTML_INJECTION,
+        config=state.get("ai_config"),
         max_tokens=8000,
     )
     structured_llm = llm.with_structured_output(SectionInjectionOutput)
@@ -539,7 +541,8 @@ def create_injection_workflow() -> StateGraph:
 def inject_spans_with_ai(
     html_content: str,
     sections_data: List[Dict[str, Any]],
-    suggestions: List[Dict[str, Any]]
+    suggestions: List[Dict[str, Any]],
+    ai_config: AIConfig | Dict[str, Any] | None = None,
 ) -> Tuple[str, List[str]]:
     """
     Inject <span class="kg-entity"> tags using AI model.
@@ -574,6 +577,7 @@ def inject_spans_with_ai(
         "modified_html": "",
         "injection_count": 0,
         "errors": [],
+        "ai_config": ai_config,
     }
 
     result = app.invoke(initial_state)

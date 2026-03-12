@@ -8,8 +8,8 @@ Part of Phase 2: Semantic Tooltips implementation.
 import os
 from typing import List, Dict, Any, Optional, Callable
 from pydantic import BaseModel, Field
-from langchain_anthropic import ChatAnthropic
 from langchain_core.prompts import ChatPromptTemplate
+from backend.app.llm import AIConfig, TASK_TOOLTIP_FILTER, create_chat_model
 
 # Debug mode controlled by environment variable
 DEBUG = os.getenv("TOOLTIP_AGENT_DEBUG", "false").lower() == "true"
@@ -85,7 +85,8 @@ Example:
 def filter_entities_by_expertise(
     entities: List[Dict[str, Any]],
     expertise_level: str,
-    progress_callback: Optional[Callable[[str], None]] = None
+    progress_callback: Optional[Callable[[str], None]] = None,
+    ai_config: AIConfig | Dict[str, Any] | None = None,
 ) -> List[Dict[str, Any]]:
     """
     Use LLM to filter entities based on user expertise.
@@ -151,12 +152,11 @@ def filter_entities_by_expertise(
     if progress_callback:
         progress_callback("Filtering entities with AI based on your expertise...")
 
-    llm = ChatAnthropic(model="claude-sonnet-4-5-20250929")
-    structured_llm = llm.with_structured_output(FilterOutput)
-
-    chain = prompt | structured_llm
-
     try:
+        llm = create_chat_model(task=TASK_TOOLTIP_FILTER, config=ai_config)
+        structured_llm = llm.with_structured_output(FilterOutput)
+        chain = prompt | structured_llm
+
         response = chain.invoke({
             "expertise_level": expertise_level,
             "symbols_list": symbols_text,
@@ -257,7 +257,8 @@ def suggest_tooltips(
     knowledge_graph: Dict[str, Any],
     user_expertise: str,
     entity_type_filter: Optional[List[str]] = None,
-    progress_callback: Optional[Callable[[str], None]] = None
+    progress_callback: Optional[Callable[[str], None]] = None,
+    ai_config: AIConfig | Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     """
     Main function to suggest tooltips based on knowledge graph.
@@ -304,7 +305,12 @@ def suggest_tooltips(
     # Filter by expertise
     if progress_callback:
         progress_callback("Filtering entities based on your expertise...")
-    filtered_entities = filter_entities_by_expertise(entities_to_consider, user_expertise, progress_callback)
+    filtered_entities = filter_entities_by_expertise(
+        entities_to_consider,
+        user_expertise,
+        progress_callback,
+        ai_config=ai_config,
+    )
 
     # Generate suggestions
     debug_print(f"Generating tooltip content for {len(filtered_entities)} entities...")

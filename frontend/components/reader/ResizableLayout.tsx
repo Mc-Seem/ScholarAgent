@@ -10,6 +10,9 @@ interface ResizableLayoutProps {
   mainPanel: ReactNode;
   rightPanel: ReactNode;
   onExpertiseChange?: (expertise: string) => void;
+  onOpenAiSettings?: () => void;
+  aiSettingsSummary?: string;
+  aiSettingsDisabled?: boolean;
 }
 
 const STORAGE_KEYS = {
@@ -25,6 +28,9 @@ export default function ResizableLayout({
   mainPanel,
   rightPanel,
   onExpertiseChange,
+  onOpenAiSettings,
+  aiSettingsSummary,
+  aiSettingsDisabled,
 }: ResizableLayoutProps) {
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [rightCollapsed, setRightCollapsed] = useState(false);
@@ -111,6 +117,20 @@ export default function ResizableLayout({
           </span>
         </div>
         <div className="flex items-center gap-2">
+          {onOpenAiSettings && (
+            <button
+              onClick={onOpenAiSettings}
+              disabled={aiSettingsDisabled}
+              className="rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+              title="AI settings"
+            >
+              {aiSettingsSummary && (
+                <span className="inline-flex items-center rounded-full bg-indigo-100 px-2.5 py-1 text-[11px] font-medium text-indigo-700 transition-colors hover:bg-indigo-200">
+                  {aiSettingsSummary}
+                </span>
+              )}
+            </button>
+          )}
           <button
             onClick={() => setShowExpertiseModal(true)}
             className="flex items-center gap-1 px-2 py-1 text-xs text-indigo-600 hover:bg-indigo-50 rounded transition-colors"

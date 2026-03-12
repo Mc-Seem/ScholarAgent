@@ -5,6 +5,7 @@ import { X, Check, ChevronDown, ChevronRight, Sparkles, Loader2, Plus, Trash2 } 
 import { LatexText } from './LatexText';
 import { Button, IconButton, CollapsibleSection } from '@/components/ui';
 import { componentStyles, textStyles } from '@/lib/design-system';
+import { API_BASE } from '@/hooks/useApi';
 
 interface CollapsibleGroupState {
   [key: string]: boolean;
@@ -62,7 +63,7 @@ export default function TooltipSuggestionsDialog({
   const loadSuggestions = async () => {
     setLoading(true);
     try {
-      const response = await fetch(`http://localhost:8000/api/papers/${paperId}/suggestions`);
+      const response = await fetch(`${API_BASE}/api/papers/${paperId}/suggestions`);
       if (response.ok) {
         const data = await response.json();
         setSuggestions(data);
@@ -83,7 +84,7 @@ export default function TooltipSuggestionsDialog({
 
     setCreating(true);
     try {
-      const response = await fetch(`http://localhost:8000/api/papers/${paperId}/suggestions/manual`, {
+      const response = await fetch(`${API_BASE}/api/papers/${paperId}/suggestions/manual`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -110,7 +111,7 @@ export default function TooltipSuggestionsDialog({
 
   const handleDeleteSuggestion = async (suggestionId: string) => {
     try {
-      const response = await fetch(`http://localhost:8000/api/papers/${paperId}/suggestions/${suggestionId}`, {
+      const response = await fetch(`${API_BASE}/api/papers/${paperId}/suggestions/${suggestionId}`, {
         method: 'DELETE',
       });
 
