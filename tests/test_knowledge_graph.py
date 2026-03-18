@@ -901,3 +901,121 @@ def test_symbol_adjudication_hook_merges_ambiguous_bucket():
 
     assert len(state["symbols"]) == 1
     assert state["symbols"][0]["is_definition"] is True
+
+
+def test_definition_formula_adjudication_hook_attaches_ambiguous_match():
+    state = {
+        "paper_id": "paper-13",
+        "sections": [],
+        "equations": [],
+        "citations": [],
+        "latex_source": None,
+        "symbol_observations": [],
+        "formula_observations": [
+            {
+                "label": "Preference quantity",
+                "latex": "$Q_{KTO}$",
+                "summary": "KTO training loss signal.",
+                "section_id": "sec-3",
+                "dom_node_id": "dom-formula-1",
+                "source_type": "formula",
+                "formula_key": "Preference quantity",
+                "symbols": [],
+            }
+        ],
+        "definition_observations": [
+            {
+                "term": "KTO loss",
+                "definition_text": "The KTO loss is the paper's training loss.",
+                "summary": "Training loss used by the KTO method.",
+                "is_formal": False,
+                "definition_number": None,
+                "section_id": "sec-1",
+                "dom_node_id": "dom-def-1",
+            },
+            {
+                "term": "KTO score",
+                "definition_text": "An auxiliary score computed for KTO analysis.",
+                "summary": "Training signal used in KTO analysis.",
+                "is_formal": False,
+                "definition_number": None,
+                "section_id": "sec-2",
+                "dom_node_id": "dom-def-2",
+            },
+        ],
+        "theorem_observations": [],
+        "symbols": [],
+        "formulas": [],
+        "definitions": [],
+        "theorems": [],
+        "relationships": [],
+        "graph_data": {},
+        "errors": [],
+    }
+
+    def fake_resolver(bucket):
+        assert bucket["formula"]["label"] == "Preference quantity"
+        return next(
+            definition["id"]
+            for definition in bucket["definitions"]
+            if definition["term"] == "KTO loss"
+        )
+
+    deduped = deduplicate_entities(state, definition_formula_resolver=fake_resolver)
+    state.update(deduped)
+
+    assert state["formulas"][0]["attached_definition_term"] == "KTO loss"
+    assert state["formulas"][0]["attachment_provenance"]["source"] == "llm_adjudication"
+    kto_definition = next(defn for defn in state["definitions"] if defn["term"] == "KTO loss")
+    assert kto_definition["attached_formula_ids"] == [state["formulas"][0]["id"]]
+
+
+def test_definition_formula_adjudication_hook_can_keep_formula_unattached():
+    state = {
+        "paper_id": "paper-14",
+        "sections": [],
+        "equations": [],
+        "citations": [],
+        "latex_source": None,
+        "symbol_observations": [],
+        "formula_observations": [
+            {
+                "label": "Policy objective",
+                "latex": "$J(\\theta) = \\mathbb{E}[r]$",
+                "summary": "Optimization objective for the policy.",
+                "section_id": "sec-3",
+                "dom_node_id": "dom-formula-1",
+                "source_type": "formula",
+                "formula_key": "Policy objective",
+                "symbols": [],
+            }
+        ],
+        "definition_observations": [
+            {
+                "term": "Value estimator",
+                "definition_text": "An estimator of expected future return.",
+                "summary": "Expected-return estimator.",
+                "is_formal": False,
+                "definition_number": None,
+                "section_id": "sec-1",
+                "dom_node_id": "dom-def-1",
+            }
+        ],
+        "theorem_observations": [],
+        "symbols": [],
+        "formulas": [],
+        "definitions": [],
+        "theorems": [],
+        "relationships": [],
+        "graph_data": {},
+        "errors": [],
+    }
+
+    def fake_resolver(_bucket):
+        return None
+
+    deduped = deduplicate_entities(state, definition_formula_resolver=fake_resolver)
+    state.update(deduped)
+
+    assert state["formulas"][0].get("attached_definition_term") is None
+    assert state["definitions"][0]["attached_formula_ids"] == []

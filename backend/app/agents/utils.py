@@ -10,7 +10,7 @@ Common functionality used across knowledge_graph, html_injection, and other agen
 
 import os
 import time
-from typing import Callable, List, Dict, Any
+from typing import Callable, List, Dict, Any, Optional
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from bs4 import BeautifulSoup
 
@@ -66,7 +66,9 @@ def run_with_retry(
     base_delay: float = 2.0,
     timeout_seconds: int = 120,
     func_args: tuple = (),
-    func_kwargs: dict = None
+    func_kwargs: dict = None,
+    profile: Optional[Dict[str, Any]] = None,
+    profile_stage: Optional[str] = None,
 ):
     """
     Run a function with exponential backoff retry logic.
@@ -88,13 +90,61 @@ def run_with_retry(
     if func_kwargs is None:
         func_kwargs = {}
     last_exception = None
+    total_elapsed_seconds = 0.0
+
+    def _extract_usage_metrics(result: Any) -> Dict[str, int]:
+        usage = getattr(result, "usage_metadata", None)
+        if usage is None:
+            response_metadata = getattr(result, "response_metadata", None)
+            if isinstance(response_metadata, dict):
+                usage = response_metadata.get("token_usage") or response_metadata.get("usage")
+        if not isinstance(usage, dict):
+            return {}
+
+        input_tokens = usage.get("input_tokens") or usage.get("prompt_tokens") or 0
+        output_tokens = usage.get("output_tokens") or usage.get("completion_tokens") or 0
+        total_tokens = usage.get("total_tokens") or (input_tokens + output_tokens)
+        return {
+            "input_tokens": int(input_tokens),
+            "output_tokens": int(output_tokens),
+            "total_tokens": int(total_tokens),
+        }
+
+    def _record_profile(result: Any, attempts_used: int, retries_used: int) -> None:
+        if profile is None or not profile_stage:
+            return
+        stage_profile = profile.setdefault(profile_stage, {
+            "calls": 0,
+            "attempts": 0,
+            "retries": 0,
+            "wall_time_seconds": 0.0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "usage_available_calls": 0,
+        })
+        stage_profile["calls"] += 1
+        stage_profile["attempts"] += attempts_used
+        stage_profile["retries"] += retries_used
+        stage_profile["wall_time_seconds"] += total_elapsed_seconds
+
+        usage_metrics = _extract_usage_metrics(result)
+        if usage_metrics:
+            stage_profile["usage_available_calls"] += 1
+            for key, value in usage_metrics.items():
+                stage_profile[key] += value
 
     for attempt in range(max_retries + 1):  # +1 because first call is attempt 0
+        started_at = time.perf_counter()
         try:
             # Run with timeout
-            return run_with_timeout(func, timeout_seconds, *func_args, **func_kwargs)
+            result = run_with_timeout(func, timeout_seconds, *func_args, **func_kwargs)
+            total_elapsed_seconds += time.perf_counter() - started_at
+            _record_profile(result, attempts_used=attempt + 1, retries_used=attempt)
+            return result
 
         except TimeoutException as e:
+            total_elapsed_seconds += time.perf_counter() - started_at
             last_exception = e
             if attempt < max_retries:
                 delay = base_delay * (2 ** attempt)  # Exponential backoff
@@ -105,6 +155,7 @@ def run_with_retry(
 
         except Exception as e:
             last_exception = e
+            total_elapsed_seconds += time.perf_counter() - started_at
 
             # Check if error is retryable
             if not is_retryable_error(e):

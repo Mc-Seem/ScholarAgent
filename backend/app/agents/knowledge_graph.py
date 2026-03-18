@@ -80,6 +80,7 @@ class GraphState(TypedDict):
 
     # Progress reporting (optional callback)
     progress_callback: NotRequired[Any]
+    llm_profile: NotRequired[Dict[str, Any]]
 
 
 # =============================================================================
@@ -180,6 +181,11 @@ class SymbolDedupCluster(BaseModel):
 class SymbolDedupAdjudicationOutput(BaseModel):
     """Structured output for ambiguous symbol deduplication buckets."""
     clusters: List[SymbolDedupCluster] = Field(default_factory=list, description="Duplicate clusters within the candidate bucket")
+
+
+class FormulaDefinitionAdjudicationOutput(BaseModel):
+    """Structured output for one ambiguous formula-definition attachment decision."""
+    definition_id: Optional[str] = Field(default=None, description="ID of the matching definition, or null if no safe match exists")
 
 
 # =============================================================================
@@ -430,6 +436,26 @@ SYMBOL_DEDUP_USER_PROMPT = """Candidate symbol bucket:
 {symbol_bucket}
 
 Return only the duplicate clusters."""
+
+FORMULA_DEFINITION_DEDUP_SYSTEM_PROMPT = """You are adjudicating whether one formula entity matches one of several candidate definition entities inside the same paper.
+
+Your task is to decide whether the formula is the mathematical rendering of one candidate definition.
+
+Rules:
+- Be conservative. If unsure, return no match.
+- Match on combined evidence: term overlap, conceptual summary overlap, and shared math expression.
+- Do not match solely because both mention optimization or objective language.
+- Choose at most one definition.
+- Prefer exact conceptual correspondence over broad topical similarity.
+"""
+
+FORMULA_DEFINITION_DEDUP_USER_PROMPT = """Formula candidate:
+{formula_candidate}
+
+Definition candidates:
+{definition_candidates}
+
+Return the best matching definition id, or null if none is clearly correct."""
 
 
 # =============================================================================
@@ -723,6 +749,17 @@ def _llm_dedup_enabled() -> bool:
     return os.getenv("KG_LLM_DEDUP_ENABLED", "false").lower() == "true"
 
 
+def _make_attachment_provenance(source: str, reason: str, score: Optional[int] = None) -> Dict[str, Any]:
+    """Create compact provenance metadata for formula-definition attachments."""
+    provenance = {
+        "source": source,
+        "reason": reason,
+    }
+    if score is not None:
+        provenance["score"] = score
+    return provenance
+
+
 def _normalize_formula_role(role: Optional[str]) -> Optional[str]:
     """Map free-form role descriptions into a small stable vocabulary."""
     normalized = _normalize_text(role)
@@ -797,6 +834,10 @@ def reconcile_local_subsection_observations(state: GraphState) -> GraphState:
                 if attached_definition:
                     formula["attached_definition_term"] = attached_definition.get("term")
                     formula["attached_definition_section_id"] = section_id
+                    formula["attachment_provenance"] = _make_attachment_provenance(
+                        source="local_reconciliation",
+                        reason="same_section_label_or_math_match",
+                    )
                     attached_definition.setdefault("attached_formula_keys", [])
                     formula_key = formula.get("formula_key") or formula.get("label") or formula.get("latex")
                     if formula_key and formula_key not in attached_definition["attached_formula_keys"]:
@@ -972,6 +1013,13 @@ def _attach_formulas_to_definitions(
                 definition = deduped_definitions[idx]
                 if formula["id"] not in definition["attached_formula_ids"]:
                     definition["attached_formula_ids"].append(formula["id"])
+                formula.setdefault(
+                    "attachment_provenance",
+                    _make_attachment_provenance(
+                        source="prelinked_attachment",
+                        reason="carried_from_prior_reconciliation",
+                    ),
+                )
                 break
             continue
 
@@ -998,10 +1046,25 @@ def _attach_formulas_to_definitions(
             match_score = _definition_formula_match_score(definition, formula)
             if label_key and label_key == _normalize_text(definition.get("term")):
                 formula["attached_definition_term"] = definition.get("term")
+                formula["attachment_provenance"] = _make_attachment_provenance(
+                    source="deterministic_match",
+                    reason="exact_term_match",
+                    score=match_score,
+                )
             elif latex_key and latex_key in (definition.get("math_signatures") or []):
                 formula["attached_definition_term"] = definition.get("term")
+                formula["attachment_provenance"] = _make_attachment_provenance(
+                    source="deterministic_match",
+                    reason="shared_math_signature",
+                    score=match_score,
+                )
             elif match_score >= 4:
                 formula["attached_definition_term"] = definition.get("term")
+                formula["attachment_provenance"] = _make_attachment_provenance(
+                    source="deterministic_match",
+                    reason="multi_signal_match",
+                    score=match_score,
+                )
             else:
                 continue
 
@@ -1009,6 +1072,143 @@ def _attach_formulas_to_definitions(
             if formula["id"] not in definition["attached_formula_ids"]:
                 definition["attached_formula_ids"].append(formula["id"])
             break
+
+
+def _build_definition_formula_adjudication_buckets(
+    deduped_formulas: List[Dict[str, Any]],
+    deduped_definitions: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Build small unresolved formula-definition candidate sets for optional adjudication."""
+    buckets: List[Dict[str, Any]] = []
+    for formula in deduped_formulas:
+        if formula.get("attached_definition_term"):
+            continue
+
+        candidate_definitions: List[Dict[str, Any]] = []
+        for definition in deduped_definitions:
+            match_score = _definition_formula_match_score(definition, formula)
+            if match_score < 2:
+                continue
+            candidate_definitions.append({
+                "definition": definition,
+                "score": match_score,
+            })
+
+        if not candidate_definitions:
+            continue
+
+        candidate_definitions.sort(key=lambda item: item["score"], reverse=True)
+        top_score = candidate_definitions[0]["score"]
+        filtered_candidates = [
+            item["definition"]
+            for item in candidate_definitions
+            if item["score"] >= max(2, top_score - 1)
+        ][:4]
+
+        if 1 <= len(filtered_candidates) <= 4:
+            buckets.append({
+                "formula": formula,
+                "definitions": filtered_candidates,
+            })
+    return buckets
+
+
+def _format_formula_candidate_for_prompt(formula: Dict[str, Any]) -> str:
+    """Serialize a formula candidate for adjudication."""
+    return "\n".join([
+        f"id: {formula['id']}",
+        f"label: {formula.get('label')}",
+        f"latex: {formula.get('latex')}",
+        f"summary: {formula.get('summary')}",
+        f"section_title: {formula.get('section_title')}",
+        f"aliases: {', '.join(formula.get('aliases', [])) or 'none'}",
+    ])
+
+
+def _format_definition_candidates_for_prompt(definitions: List[Dict[str, Any]]) -> str:
+    """Serialize definition candidates for adjudication."""
+    chunks = []
+    for definition in definitions:
+        chunks.append("\n".join([
+            f"id: {definition['id']}",
+            f"term: {definition.get('term')}",
+            f"summary: {definition.get('summary')}",
+            f"definition_text: {definition.get('definition_text')}",
+            f"math_signatures: {', '.join(definition.get('math_signatures', [])) or 'none'}",
+            f"section_id: {definition.get('section_id')}",
+        ]))
+    return "\n\n".join(chunks)
+
+
+def _resolve_formula_definition_bucket_with_llm(bucket: Dict[str, Any]) -> Optional[str]:
+    """Use the LLM to decide whether a formula matches one candidate definition."""
+    llm = ChatAnthropic(model="claude-sonnet-4-5-20250929")
+    structured_llm = llm.with_structured_output(FormulaDefinitionAdjudicationOutput)
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", FORMULA_DEFINITION_DEDUP_SYSTEM_PROMPT),
+        ("user", FORMULA_DEFINITION_DEDUP_USER_PROMPT),
+    ])
+    chain = prompt | structured_llm
+
+    response = run_with_retry(
+        func=chain.invoke,
+        max_retries=3,
+        base_delay=2.0,
+        timeout_seconds=60,
+        func_args=({
+            "formula_candidate": _format_formula_candidate_for_prompt(bucket["formula"]),
+            "definition_candidates": _format_definition_candidates_for_prompt(bucket["definitions"]),
+        },),
+        profile=bucket.get("llm_profile"),
+        profile_stage="kg.dedup.definition_formula_adjudication",
+    )
+    return response.definition_id
+
+
+def _apply_formula_definition_adjudications(
+    deduped_formulas: List[Dict[str, Any]],
+    deduped_definitions: List[Dict[str, Any]],
+    resolver: Optional[Any] = None,
+    llm_profile: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Optionally attach unresolved formulas to definitions using a resolver or live LLM."""
+    active_resolver = resolver
+    if active_resolver is None and _llm_dedup_enabled():
+        active_resolver = _resolve_formula_definition_bucket_with_llm
+    if active_resolver is None:
+        return
+
+    buckets = _build_definition_formula_adjudication_buckets(deduped_formulas, deduped_definitions)
+    if not buckets:
+        return
+
+    definition_by_id = {
+        definition["id"]: definition
+        for definition in deduped_definitions
+        if definition.get("id")
+    }
+    for bucket in buckets:
+        bucket["llm_profile"] = llm_profile
+        formula = bucket["formula"]
+        if formula.get("attached_definition_term"):
+            continue
+
+        selected_definition_id = active_resolver(bucket)
+        if not selected_definition_id:
+            continue
+
+        definition = definition_by_id.get(selected_definition_id)
+        if not definition:
+            continue
+
+        formula["attached_definition_term"] = definition.get("term")
+        formula["attached_definition_section_id"] = definition.get("section_id")
+        formula["attachment_provenance"] = _make_attachment_provenance(
+            source="llm_adjudication",
+            reason="ambiguous_definition_formula_bucket",
+        )
+        if formula["id"] not in definition["attached_formula_ids"]:
+            definition["attached_formula_ids"].append(formula["id"])
 
 
 def _propagate_symbol_scope(
@@ -1084,7 +1284,7 @@ def _format_symbol_bucket_for_prompt(symbol_bucket: List[Dict[str, Any]]) -> str
     return "\n\n".join(lines)
 
 
-def _resolve_symbol_bucket_with_llm(symbol_bucket: List[Dict[str, Any]]) -> List[List[str]]:
+def _resolve_symbol_bucket_with_llm(symbol_bucket: List[Dict[str, Any]], llm_profile: Optional[Dict[str, Any]] = None) -> List[List[str]]:
     """Use the LLM to resolve an ambiguous symbol bucket into duplicate clusters."""
     llm = ChatAnthropic(model="claude-sonnet-4-5-20250929")
     structured_llm = llm.with_structured_output(SymbolDedupAdjudicationOutput)
@@ -1102,6 +1302,8 @@ def _resolve_symbol_bucket_with_llm(symbol_bucket: List[Dict[str, Any]]) -> List
         func_args=({
             "symbol_bucket": _format_symbol_bucket_for_prompt(symbol_bucket),
         },),
+        profile=llm_profile,
+        profile_stage="kg.dedup.symbol_adjudication",
     )
     return [cluster.symbol_ids for cluster in response.clusters if len(cluster.symbol_ids) >= 2]
 
@@ -1148,11 +1350,12 @@ def _merge_symbol_clusters(
 def _adjudicate_ambiguous_symbols(
     deduped_symbols: List[Dict[str, Any]],
     resolver: Optional[Any] = None,
+    llm_profile: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     """Optionally adjudicate ambiguous symbol buckets with a resolver or live LLM."""
     active_resolver = resolver
     if active_resolver is None and _llm_dedup_enabled():
-        active_resolver = _resolve_symbol_bucket_with_llm
+        active_resolver = lambda bucket: _resolve_symbol_bucket_with_llm(bucket, llm_profile=llm_profile)
     if active_resolver is None:
         return deduped_symbols
 
@@ -1183,6 +1386,7 @@ def extract_stray_symbols(state: GraphState) -> GraphState:
     ])
 
     chain = prompt | structured_llm
+    llm_profile = state.setdefault("llm_profile", {})
 
     symbols = []
     errors = []
@@ -1219,7 +1423,9 @@ def extract_stray_symbols(state: GraphState) -> GraphState:
                     max_retries=3,
                     base_delay=2.0,
                     timeout_seconds=120,
-                    func_args=(invoke_args,)
+                    func_args=(invoke_args,),
+                    profile=llm_profile,
+                    profile_stage="kg.extract_stray_symbols",
                 )
             except TimeoutException as te:
                 print(f"⏱ Timeout after all retries!")
@@ -1298,6 +1504,7 @@ def extract_formulas(state: GraphState) -> GraphState:
     ])
 
     chain = prompt | structured_llm
+    llm_profile = state.setdefault("llm_profile", {})
 
     formulas = []
     errors = []
@@ -1326,7 +1533,9 @@ def extract_formulas(state: GraphState) -> GraphState:
                     max_retries=3,
                     base_delay=2.0,
                     timeout_seconds=120,
-                    func_args=(invoke_args,)
+                    func_args=(invoke_args,),
+                    profile=llm_profile,
+                    profile_stage="kg.extract_formulas",
                 )
             except TimeoutException:
                 print("⏱ Timeout after all retries!")
@@ -1408,6 +1617,7 @@ def extract_definitions(state: GraphState) -> GraphState:
     ])
 
     chain = prompt | structured_llm
+    llm_profile = state.setdefault("llm_profile", {})
 
     definitions = []
     errors = []
@@ -1444,7 +1654,9 @@ def extract_definitions(state: GraphState) -> GraphState:
                     max_retries=3,
                     base_delay=2.0,
                     timeout_seconds=120,
-                    func_args=(invoke_args,)
+                    func_args=(invoke_args,),
+                    profile=llm_profile,
+                    profile_stage="kg.extract_definitions",
                 )
             except TimeoutException as te:
                 print(f"⏱ Timeout after all retries!")
@@ -1521,6 +1733,7 @@ def extract_theorems(state: GraphState) -> GraphState:
     ])
 
     chain = prompt | structured_llm
+    llm_profile = state.setdefault("llm_profile", {})
 
     theorems = []
     errors = []
@@ -1557,7 +1770,9 @@ def extract_theorems(state: GraphState) -> GraphState:
                     max_retries=3,
                     base_delay=2.0,
                     timeout_seconds=120,
-                    func_args=(invoke_args,)
+                    func_args=(invoke_args,),
+                    profile=llm_profile,
+                    profile_stage="kg.extract_theorems",
                 )
             except TimeoutException as te:
                 print(f"⏱ Timeout after all retries!")
@@ -1618,11 +1833,16 @@ def extract_theorems(state: GraphState) -> GraphState:
     return {"theorem_observations": theorems, "errors": errors}
 
 
-def deduplicate_entities(state: GraphState, symbol_bucket_resolver: Optional[Any] = None) -> GraphState:
+def deduplicate_entities(
+    state: GraphState,
+    symbol_bucket_resolver: Optional[Any] = None,
+    definition_formula_resolver: Optional[Any] = None,
+) -> GraphState:
     """Normalize local observations into paper-level entities."""
     print("\n[5/7] Deduplicating extracted entities...")
 
     reconciled = reconcile_local_subsection_observations(state)
+    llm_profile = state.setdefault("llm_profile", {})
 
     deduped_formulas: List[Dict[str, Any]] = []
     formula_index_by_key: Dict[str, int] = {}
@@ -1649,6 +1869,7 @@ def deduplicate_entities(state: GraphState, symbol_bucket_resolver: Optional[Any
                 "dom_node_id": formula.get("dom_node_id"),
                 "attached_definition_term": formula.get("attached_definition_term"),
                 "attached_definition_section_id": formula.get("attached_definition_section_id"),
+                "attachment_provenance": formula.get("attachment_provenance"),
             }
             deduped_formulas.append(formula_entry)
             formula_index_by_key[formula_key] = len(deduped_formulas) - 1
@@ -1665,6 +1886,8 @@ def deduplicate_entities(state: GraphState, symbol_bucket_resolver: Optional[Any
             if not existing.get("attached_definition_term") and formula.get("attached_definition_term"):
                 existing["attached_definition_term"] = formula.get("attached_definition_term")
                 existing["attached_definition_section_id"] = formula.get("attached_definition_section_id")
+            if not existing.get("attachment_provenance") and formula.get("attachment_provenance"):
+                existing["attachment_provenance"] = formula.get("attachment_provenance")
             formula_symbol_links[existing["id"]].extend(formula.get("symbols", []))
 
     symbol_observations = list(reconciled["symbol_observations"])
@@ -1764,6 +1987,13 @@ def deduplicate_entities(state: GraphState, symbol_bucket_resolver: Optional[Any
                 break
 
         if existing_idx is None:
+            definition_id_parts = [
+                defn.get("term"),
+                defn.get("section_id"),
+                defn.get("dom_node_id"),
+                str(len(deduped_definitions)),
+            ]
+            defn["id"] = f"definition_{_sanitize_id('|'.join(part for part in definition_id_parts if part))}"
             deduped_definitions.append(defn)
             continue
 
@@ -1794,8 +2024,18 @@ def deduplicate_entities(state: GraphState, symbol_bucket_resolver: Optional[Any
         deduped_theorems.append(thm)
 
     _attach_formulas_to_definitions(deduped_formulas, deduped_definitions)
+    _apply_formula_definition_adjudications(
+        deduped_formulas,
+        deduped_definitions,
+        resolver=definition_formula_resolver,
+        llm_profile=llm_profile,
+    )
     _propagate_symbol_scope(deduped_symbols, deduped_formulas)
-    deduped_symbols = _adjudicate_ambiguous_symbols(deduped_symbols, resolver=symbol_bucket_resolver)
+    deduped_symbols = _adjudicate_ambiguous_symbols(
+        deduped_symbols,
+        resolver=symbol_bucket_resolver,
+        llm_profile=llm_profile,
+    )
 
     formula_ids = {formula["id"] for formula in deduped_formulas}
     formula_to_symbol_ids: Dict[str, List[str]] = {formula_id: [] for formula_id in formula_ids}
@@ -1836,6 +2076,7 @@ def extract_dependencies(state: GraphState) -> GraphState:
     ])
 
     chain = prompt | structured_llm
+    llm_profile = state.setdefault("llm_profile", {})
 
     # Prepare entity lists for context with summaries (pass ALL entities to each section)
     formula_list = [
@@ -1895,7 +2136,9 @@ def extract_dependencies(state: GraphState) -> GraphState:
                     max_retries=3,
                     base_delay=2.0,
                     timeout_seconds=120,
-                    func_args=(invoke_args,)
+                    func_args=(invoke_args,),
+                    profile=llm_profile,
+                    profile_stage="kg.extract_dependencies",
                 )
             except TimeoutException as te:
                 print(f"⏱ Timeout after all retries!")
@@ -2019,6 +2262,7 @@ def build_graph(state: GraphState) -> GraphState:
             "summary": formula["summary"],
             "aliases": formula.get("aliases", []),
             "attached_definition_term": formula.get("attached_definition_term"),
+            "attachment_provenance": formula.get("attachment_provenance"),
             "dom_node_id": formula["dom_node_id"],
             "section_id": formula["section_id"],
         })
@@ -2108,7 +2352,11 @@ def build_graph(state: GraphState) -> GraphState:
             "source": definition_id,
             "target": formula["id"],
             "type": "defines",
-            "evidence": "Local subsection reconciliation linked the definition to its formula representation",
+            "evidence": (
+                formula.get("attachment_provenance", {}).get("reason")
+                or "Definition linked to its formula representation"
+            ),
+            "provenance": formula.get("attachment_provenance"),
         })
 
     for formula in state["formulas"]:
@@ -2168,6 +2416,7 @@ def build_graph(state: GraphState) -> GraphState:
             "symbol_count": len([n for n in nodes if n["type"] == "symbol"]),
             "definition_count": len([n for n in nodes if n["type"] == "definition"]),
             "theorem_count": len([n for n in nodes if n["type"] == "theorem"]),
+            "llm_profile": state.get("llm_profile", {}),
         }
     }
 
@@ -2176,6 +2425,31 @@ def build_graph(state: GraphState) -> GraphState:
     print(f"  → {len(edges)} edges")
 
     return state
+
+
+def _print_llm_profile_summary(llm_profile: Dict[str, Any]) -> None:
+    """Print a compact LLM stage profile for KG debug runs."""
+    if not llm_profile:
+        print("\nLLM profile: no recorded calls")
+        return
+
+    print("\nLLM profile by stage:")
+    ranked_stages = sorted(
+        llm_profile.items(),
+        key=lambda item: item[1].get("wall_time_seconds", 0.0),
+        reverse=True,
+    )
+    for stage_name, metrics in ranked_stages:
+        calls = metrics.get("calls", 0)
+        retries = metrics.get("retries", 0)
+        elapsed = metrics.get("wall_time_seconds", 0.0)
+        total_tokens = metrics.get("total_tokens", 0)
+        usage_calls = metrics.get("usage_available_calls", 0)
+        usage_suffix = f", tokens={total_tokens}" if usage_calls else ", tokens=n/a"
+        print(
+            f"  - {stage_name}: calls={calls}, retries={retries}, "
+            f"time={elapsed:.2f}s{usage_suffix}"
+        )
 
 
 # =============================================================================
@@ -2256,12 +2530,15 @@ def build_kg_for_paper(paper_id: str, progress_callback=None) -> Dict[str, Any]:
         "graph_data": {},
         "errors": [],
         "progress_callback": progress_callback,
+        "llm_profile": {},
     }
     
     result = app.invoke(initial_state)
     
     if result["errors"]:
         print(f"Warnings during extraction: {result['errors']}")
+    if get_debug_flag("KG_DEBUG"):
+        _print_llm_profile_summary(result.get("llm_profile", {}))
     
     return result["graph_data"]
 
