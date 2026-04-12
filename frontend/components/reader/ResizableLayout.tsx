@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, ReactNode } from 'react';
+import { useState, useEffect, useRef, ReactNode, RefObject } from 'react';
 import { Panel, Group, Separator } from 'react-resizable-panels';
 import type { PanelImperativeHandle } from 'react-resizable-panels';
 import { ChevronLeft, ChevronRight, Menu, SidebarClose, User, X, RotateCcw } from 'lucide-react';
@@ -9,6 +9,7 @@ interface ResizableLayoutProps {
   leftPanel: ReactNode;
   mainPanel: ReactNode;
   rightPanel: ReactNode;
+  mainScrollRef?: RefObject<HTMLDivElement | null>;
   onExpertiseChange?: (expertise: string) => void;
 }
 
@@ -24,6 +25,7 @@ export default function ResizableLayout({
   leftPanel,
   mainPanel,
   rightPanel,
+  mainScrollRef,
   onExpertiseChange,
 }: ResizableLayoutProps) {
   const [leftCollapsed, setLeftCollapsed] = useState(false);
@@ -156,7 +158,7 @@ export default function ResizableLayout({
 
         {/* Middle Panel - Main Content */}
         <Panel id="main-panel" defaultSize={55} minSize={30} className="bg-slate-50">
-          <div className="h-full overflow-y-auto">
+          <div ref={mainScrollRef} className="h-full overflow-y-auto">
             {mainPanel}
           </div>
         </Panel>
