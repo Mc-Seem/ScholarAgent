@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 import { HTMLRenderer } from '@/components/reader/HTMLRenderer'
 
 // Mock the MathJaxNode component
@@ -147,5 +147,22 @@ describe('HTMLRenderer', () => {
 
     const article = container.querySelector('article')
     expect(article).toHaveClass('html-renderer')
+  })
+
+  it('routes internal anchor links through the navigation callback', () => {
+    const onInternalLinkNavigate = vi.fn()
+    const html = '<p>See <a href="#ref-1">[1]</a></p>'
+
+    render(
+      <HTMLRenderer
+        {...mockProps}
+        html={html}
+        onInternalLinkNavigate={onInternalLinkNavigate}
+      />
+    )
+
+    fireEvent.click(screen.getByText('[1]'))
+
+    expect(onInternalLinkNavigate).toHaveBeenCalledWith('#ref-1')
   })
 })

@@ -17,6 +17,7 @@ interface HTMLRendererProps {
   onTooltipDelete: (tooltipId: string) => void;
   onTooltipRemoveOccurrence?: (tooltipId: string, domNodeId: string) => void;
   onEntityClick?: (entityId: string) => void;
+  onInternalLinkNavigate?: (href: string) => void;
 }
 
 /**
@@ -35,7 +36,8 @@ export function HTMLRenderer({
   onTooltipUpdate,
   onTooltipDelete,
   onTooltipRemoveOccurrence,
-  onEntityClick
+  onEntityClick,
+  onInternalLinkNavigate,
 }: HTMLRendererProps) {
   // Counter for generating stable keys for kg-entity spans
   let entitySpanCounter = 0;
@@ -62,6 +64,28 @@ export function HTMLRenderer({
             mathml={domNode}
           />
         );
+      }
+
+      // Route in-document links through the reader navigation so we can offer a jump-back action.
+      if (domNode.name === 'a') {
+        const { class: className, href, ...restAttribs } = domNode.attribs || {};
+
+        if (href?.startsWith('#') && onInternalLinkNavigate) {
+          return (
+            <a
+              {...restAttribs}
+              key={`${href}-${domNode.startIndex ?? Math.random().toString(36)}`}
+              href={href}
+              className={className}
+              onClick={(e) => {
+                e.preventDefault();
+                onInternalLinkNavigate(href);
+              }}
+            >
+              {domToReact(domNode.children as DOMNode[], options)}
+            </a>
+          );
+        }
       }
 
       // Handle .kg-entity spans - make them clickable for detail view

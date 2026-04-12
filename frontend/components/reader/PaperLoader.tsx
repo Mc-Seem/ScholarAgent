@@ -11,7 +11,7 @@ import TooltipSuggestionsDialog, { StoredSuggestion } from "./TooltipSuggestions
 import TooltipEditModal from "./TooltipEditModal";
 import SearchBar from "./SearchBar";
 import { parseTOC, TOCNode } from "@/utils/parseTOC";
-import { Loader2, Upload, ExternalLink, Trash2, RefreshCw, FileText, AlertCircle, Network } from "lucide-react";
+import { Loader2, Upload, ExternalLink, Trash2, RefreshCw, FileText, AlertCircle, Network, CornerUpLeft, X } from "lucide-react";
 
 /**
  * Build TOC hierarchy from flat sections array (from backend).
@@ -44,6 +44,11 @@ function buildTOCFromSections(sections: Section[]): TOCNode[] {
   return root;
 }
 
+interface ReturnNavigationState {
+  scrollTop: number;
+  sourceDataId?: string | null;
+}
+
 export default function PaperLoader() {
   const {
     papers,
@@ -74,12 +79,14 @@ export default function PaperLoader() {
 
   // Search state
   const [showSearch, setShowSearch] = useState(false);
+  const [returnNavigation, setReturnNavigation] = useState<ReturnNavigationState | null>(null);
 
   // Active tooltip state (for detail view in right sidebar)
   const [activeEntityId, setActiveEntityId] = useState<string | null>(null);
 
   // Store focus graph node handler from NavigationPanel
   const focusGraphNodeRef = useRef<((nodeId: string) => void) | null>(null);
+  const mainScrollRef = useRef<HTMLDivElement>(null);
 
   const {
     tooltips: allTooltips,
@@ -415,19 +422,84 @@ export default function PaperLoader() {
     return parseTOC(currentPaper.html_content);
   }, [currentPaper?.sections, currentPaper?.html_content]);
 
+  const flashElement = useCallback((element: Element | null) => {
+    if (!element) return;
+
+    element.classList.add('toc-flash');
+    window.setTimeout(() => {
+      element.classList.remove('toc-flash');
+    }, 1500);
+  }, []);
+
+  const storeReturnNavigation = useCallback(() => {
+    const scrollContainer = mainScrollRef.current;
+    if (!scrollContainer) return false;
+
+    const currentlyVisible = document.elementFromPoint(
+      Math.max(0, window.innerWidth / 2),
+      Math.max(0, window.innerHeight / 2)
+    )?.closest('[data-id]') as HTMLElement | null;
+
+    setReturnNavigation({
+      scrollTop: scrollContainer.scrollTop,
+      sourceDataId: currentlyVisible?.getAttribute('data-id'),
+    });
+
+    return true;
+  }, []);
+
   // Handle navigation to section
   const handleNavigate = useCallback((dataId: string) => {
     const element = document.querySelector(`[data-id="${dataId}"]`);
-    if (element) {
-      element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (!element || !storeReturnNavigation()) return;
 
-      // Add flash effect
-      element.classList.add('toc-flash');
-      setTimeout(() => {
-        element.classList.remove('toc-flash');
-      }, 1500);
+    element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    flashElement(element);
+  }, [flashElement, storeReturnNavigation]);
+
+  const handleInternalLinkNavigate = useCallback((href: string) => {
+    const targetId = href.startsWith('#') ? decodeURIComponent(href.slice(1)) : href;
+    if (!targetId || !storeReturnNavigation()) return;
+
+    const escapedTargetId =
+      typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+        ? CSS.escape(targetId)
+        : targetId.replace(/"/g, '\\"');
+
+    const target = document.getElementById(targetId)
+      || document.querySelector(`[name="${escapedTargetId}"]`)
+      || document.querySelector(`[data-id="${escapedTargetId}"]`);
+
+    if (!target) return;
+
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    flashElement(target);
+  }, [flashElement, storeReturnNavigation]);
+
+  const handleReturnToPreviousSpot = useCallback(() => {
+    const scrollContainer = mainScrollRef.current;
+    if (!scrollContainer || !returnNavigation) return;
+
+    scrollContainer.scrollTo({
+      top: returnNavigation.scrollTop,
+      behavior: 'smooth',
+    });
+
+    if (returnNavigation.sourceDataId) {
+      window.setTimeout(() => {
+        const sourceElement = document.querySelector(
+          `[data-id="${returnNavigation.sourceDataId}"]`
+        );
+        flashElement(sourceElement);
+      }, 250);
     }
-  }, []);
+
+    setReturnNavigation(null);
+  }, [flashElement, returnNavigation]);
+
+  useEffect(() => {
+    setReturnNavigation(null);
+  }, [selectedPaperId]);
 
   // Handle tooltip edit from panel
   const handleTooltipEdit = useCallback((tooltip: any) => {
@@ -616,6 +688,27 @@ export default function PaperLoader() {
       {/* Content */}
       {currentPaper?.html_content ? (
         <div className="max-w-4xl mx-auto bg-white shadow-xl rounded-2xl border border-slate-100 p-8 md:p-12 min-h-[60vh]">
+          {returnNavigation && (
+            <div className="sticky top-4 z-20 mb-4 flex justify-end">
+              <div className="inline-flex items-center rounded-full border border-slate-200 bg-white/95 pr-1 shadow-sm backdrop-blur">
+                <button
+                  onClick={handleReturnToPreviousSpot}
+                  className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-700 transition hover:text-indigo-700"
+                >
+                  <CornerUpLeft size={16} />
+                  Back to previous spot
+                </button>
+                <button
+                  onClick={() => setReturnNavigation(null)}
+                  className="rounded-full p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+                  aria-label="Dismiss jump back"
+                  title="Dismiss"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            </div>
+          )}
           <HTMLRenderer
             html={currentPaper.html_content}
             paperId={currentPaper.id}
@@ -626,6 +719,7 @@ export default function PaperLoader() {
             onTooltipDelete={handleDeleteTooltip}
             onTooltipRemoveOccurrence={handleRemoveTooltipOccurrence}
             onEntityClick={setActiveEntityId}
+            onInternalLinkNavigate={handleInternalLinkNavigate}
           />
         </div>
       ) : currentPaper && !currentPaper.has_html ? (
@@ -683,6 +777,7 @@ export default function PaperLoader() {
         leftPanel={leftPanel}
         mainPanel={mainPanel}
         rightPanel={rightPanel}
+        mainScrollRef={mainScrollRef}
         onExpertiseChange={setUserExpertise}
       />
 
