@@ -1,38 +1,47 @@
-# Knowledge Graph Scaffold Reference
+# Knowledge Graph Pipeline
 
-A concise reference for the LangGraph-based knowledge graph extraction pipeline.
+Reference for the LangGraph-based knowledge graph extraction pipeline.
+
+> **Status**: The formula entity type and three-stage deduplication pipeline are implemented but still being refined. See `docs/kg-formula-entity-plan.md` and `docs/kg-deduplication-plan.md` for the design plans. See `docs/kg-todos.md` for the current backlog.
 
 ## Architecture Overview
 
 ```
-┌─────────────────────────┐
-│     load_paper_data     │  ← Load pre-extracted sections from DB
-└────────────┬────────────┘
-             │
-             ├──────────────────┬──────────────────┐
-             ▼                  ▼                  ▼
-┌────────────────────┐ ┌────────────────────┐ ┌────────────────────┐
-│  extract_symbols   │ │extract_definitions │ │  extract_theorems  │
-│      (LLM)         │ │       (LLM)        │ │       (LLM)        │
-└─────────┬──────────┘ └─────────┬──────────┘ └─────────┬──────────┘
-          │                      │                      │
-          └──────────────────────┼──────────────────────┘
-                                 ▼
-                    ┌─────────────────────────┐
-                    │  extract_dependencies   │  ← Needs all entities
-                    │         (LLM)           │
-                    └────────────┬────────────┘
-                                 ▼
-                    ┌─────────────────────────┐
-                    │      build_graph        │  ← Pure logic, no LLM
-                    └────────────┬────────────┘
-                                 ▼
-                           graph_data
+┌─────────────────────┐
+│    load_paper_data   │  ← Load pre-extracted sections from DB
+└──────────┬──────────┘
+           │
+   ┌───────┼───────────────┬──────────────────┬──────────────────┐
+   ▼       ▼               ▼                  ▼                  ▼
+┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
+│extract_stray │ │extract_      │ │extract_      │ │extract_      │
+│_symbols      │ │definitions   │ │theorems      │ │formulas      │
+│    (LLM)     │ │    (LLM)     │ │    (LLM)     │ │    (LLM)     │
+└──────┬───────┘ └──────┬───────┘ └──────┬───────┘ └──────┬───────┘
+       │                │                │                │
+       └────────────────┼────────────────┼────────────────┘
+                        ▼
+          ┌─────────────────────────────┐
+          │  deduplicate_entities        │  ← 3-stage dedup (see below)
+          │  (no LLM, deterministic)     │
+          └──────────────┬──────────────┘
+                         ▼
+          ┌─────────────────────────────┐
+          │  extract_dependencies        │  ← LLM, operates on deduplicated set
+          └──────────────┬──────────────┘
+                         ▼
+          ┌─────────────────────────────┐
+          │      build_graph             │  ← Pure logic, assembles nodes + edges
+          └──────────────┬──────────────┘
+                         ▼
+                    graph_data
 ```
 
 **Key Features:**
-- Stages 1-3 run **in parallel** (symbols, definitions, theorems)
-- Stage 4 (dependencies) waits for all entities to complete
+- Stages 1-4 run **in parallel** (stray symbols, definitions, theorems, formulas)
+- Formula extraction also emits formula-scoped symbol observations
+- Deduplication runs after all extractions complete (fan-in)
+- Dependency extraction operates on the deduplicated entity set
 - Real-time progress via SSE
 
 ---
@@ -49,65 +58,97 @@ class GraphState(TypedDict):
     citations: List[Dict]
     latex_source: Optional[str]
 
-    # Agent-extracted (use Annotated for parallel updates)
-    symbols: Annotated[List[Dict], operator.add]
-    definitions: Annotated[List[Dict], operator.add]
-    theorems: Annotated[List[Dict], operator.add]
+    # Agent-extracted observations (Annotated for parallel updates)
+    symbol_observations: Annotated[List[Dict], operator.add]
+    formula_observations: Annotated[List[Dict], operator.add]
+    definition_observations: Annotated[List[Dict], operator.add]
+    theorem_observations: Annotated[List[Dict], operator.add]
 
-    # Sequential stages
+    # Deduplicated entities
+    symbols: List[Dict]
+    formulas: List[Dict]
+    definitions: List[Dict]
+    theorems: List[Dict]
+
+    # Relationships
     relationships: List[Dict]
+
+    # Final output
     graph_data: Dict
+
+    # Error tracking
     errors: Annotated[List[str], operator.add]
 
     # Optional
     progress_callback: NotRequired[Any]
+    llm_profile: NotRequired[Dict]
 ```
-
-**Note:** `Annotated[..., operator.add]` enables LangGraph to merge concurrent list updates.
 
 ---
 
-## Pydantic Output Schemas
+## Entity Types
 
-### Symbol
+Four first-class entity types in the pipeline:
 
-```python
-class Symbol(BaseModel):
-    symbol: str       # e.g., "α_t"
-    latex: str        # e.g., "$\\alpha_t$" (dollar-wrapped for rendering)
-    context: str      # Brief explanation (1 sentence)
-    is_definition: bool
-```
+| Type | Pydantic Model | ID Pattern | Description |
+|------|---------------|------------|-------------|
+| **Symbol** | `SymbolObservation` | `symbol_{name}_{hash}` | Mathematical notation, either paper-level (stray) or formula-scoped |
+| **Definition** | `Definition` | `definition_{term}_{hash}` | Concept-level prose definitions |
+| **Theorem** | `Theorem` | `theorem_{type}_{number}` | Theorems, lemmas, corollaries, propositions |
+| **Formula** | `Formula` | `formula_{label_or_latex}` | Named or important formulas explicitly present in the paper |
 
-### Definition
-
-```python
-class Definition(BaseModel):
-    term: str
-    definition_text: str  # Use $...$ for math
-    is_formal: bool
-    definition_number: Optional[str]  # e.g., "Definition 3.2"
-```
-
-### Theorem
+### Formula Model
 
 ```python
-class Theorem(BaseModel):
-    type: str         # theorem/lemma/corollary/proposition
-    number: str       # e.g., "3.2"
-    name: Optional[str]
-    statement: str    # Use $...$ for math
+class Formula(BaseModel):
+    label: Optional[str]        # Explicit name (e.g., "ELBO"), else null
+    latex: str                  # Exact formula as written
+    summary: str                # 1-2 sentence role description
+    symbols: List[SymbolObservation]  # Formula-scoped symbol observations
 ```
 
-### Relationship
+### Stray vs Formula-Scoped Symbols
 
-```python
-class Relationship(BaseModel):
-    from_entity: str
-    to_entity: str
-    relationship_type: str  # uses/depends_on/defines/mentions
-    evidence_text: str
-```
+- **Stray symbols**: Introduced in prose, tables, or text without a formula parent
+- **Formula-scoped symbols**: Emitted during formula extraction, attached to their parent formula
+
+Both are extracted separately but merged into unified `symbol` nodes during deduplication.
+
+---
+
+## Deduplication Pipeline (3-stage)
+
+Implemented in `deduplicate_entities()`, following the design in `docs/kg-deduplication-plan.md`:
+
+### Stage 1: Local Subsection Reconciliation (`reconcile_local_subsection_observations`)
+- Runs before global dedup
+- Catches obvious cross-type overlaps within the same subsection (e.g., a definition and formula for the same concept in the same passage)
+- Uses shared `section_id`, nearby `dom_node_id`, overlapping names/aliases, and math signatures
+- Can attach formulas to definitions and mark stray symbols as formula-scoped when evidence is strong
+
+### Stage 2: Within-Type Global Merging
+- **Formulas**: Merged by normalized `label → latex → summary` key
+- **Symbols**: Merged by normalized `latex + context` key
+- **Definitions**: Merged by normalized `term`
+- **Theorems**: Merged by normalized `type + number`
+
+### Stage 3: Cross-Type Reconciliation
+- Reconciles merged entities across types using precedence rules
+- Default precedence: `definition > formula`, `stray symbol > formula-scoped symbol`
+- Operations: `promote` (keep canonical), `attach` (keep as representation), `absorb` (collapse with provenance), `keep_separate`
+- Currently deterministic; LLM adjudication for ambiguous buckets is planned but not yet implemented
+
+---
+
+## Edge Types
+
+| Edge Type | Direction | Description |
+|-----------|-----------|-------------|
+| `has_symbol` | formula → symbol | Structural edge for formula-contained notation |
+| `defines` | definition → symbol/formula | Definition introduces a concept |
+| `uses` | theorem → formula/symbol, formula → definition/symbol | Usage relationship |
+| `depends_on` | entity → entity | Dependency (retained where useful) |
+| `mentions` | entity → entity | Weakest relationship class |
 
 ---
 
@@ -116,45 +157,32 @@ class Relationship(BaseModel):
 ```python
 workflow = StateGraph(GraphState)
 
-# Add nodes
+# Nodes
 workflow.add_node("load_data", load_paper_data)
-workflow.add_node("extract_symbols", extract_symbols)
+workflow.add_node("extract_stray_symbols", extract_stray_symbols)
 workflow.add_node("extract_definitions", extract_definitions)
 workflow.add_node("extract_theorems", extract_theorems)
+workflow.add_node("extract_formulas", extract_formulas)
+workflow.add_node("deduplicate_entities", deduplicate_entities)
 workflow.add_node("extract_dependencies", extract_dependencies)
 workflow.add_node("build_graph", build_graph)
 
 # Parallel extraction (fan-out from load_data)
-workflow.add_edge("load_data", "extract_symbols")
+workflow.add_edge("load_data", "extract_stray_symbols")
 workflow.add_edge("load_data", "extract_definitions")
 workflow.add_edge("load_data", "extract_theorems")
+workflow.add_edge("load_data", "extract_formulas")
 
-# Fan-in to dependencies (waits for all three)
-workflow.add_edge("extract_symbols", "extract_dependencies")
-workflow.add_edge("extract_definitions", "extract_dependencies")
-workflow.add_edge("extract_theorems", "extract_dependencies")
+# Fan-in to deduplication
+workflow.add_edge("extract_stray_symbols", "deduplicate_entities")
+workflow.add_edge("extract_definitions", "deduplicate_entities")
+workflow.add_edge("extract_theorems", "deduplicate_entities")
+workflow.add_edge("extract_formulas", "deduplicate_entities")
 
-# Sequential finish
+# Sequential: dedup → dependencies → graph
+workflow.add_edge("deduplicate_entities", "extract_dependencies")
 workflow.add_edge("extract_dependencies", "build_graph")
 workflow.add_edge("build_graph", END)
-```
-
----
-
-## Node Output Format
-
-Each extraction function returns **only the keys it updates** (critical for parallelism):
-
-```python
-# Correct (parallel-safe)
-def extract_symbols(state: GraphState):
-    symbols = [...]  # extraction logic
-    return {"symbols": symbols, "errors": state.get("errors", [])}
-
-# Wrong (causes concurrent update error)
-def extract_symbols(state: GraphState):
-    state["symbols"] = [...]
-    return state  # Returns all keys including paper_id
 ```
 
 ---
@@ -165,59 +193,87 @@ def extract_symbols(state: GraphState):
 {
   "nodes": [
     {
+      "id": "formula_elbo",
+      "type": "formula",
+      "label": "ELBO",
+      "latex": "\\mathcal{L} = ...",
+      "summary": "Evidence lower bound used for variational inference",
+      "aliases": ["ELBO"],
+      "attached_definition_term": "Evidence Lower Bound",
+      "dom_node_id": "eq_123",
+      "section_id": "sec_3_2"
+    },
+    {
       "id": "symbol_alpha_t",
       "type": "symbol",
       "label": "α_t",
       "latex": "$\\alpha_t$",
       "context": "Noise scaling parameter",
-      "dom_node_id": "abc123",
-      "section_id": "abc123"
+      "scope": "paper_level",
+      "dom_node_id": "p_456",
+      "section_id": "sec_3_2"
     },
     {
-      "id": "def_diffusion_process",
+      "id": "definition_diffusion_process",
       "type": "definition",
       "label": "Diffusion Process",
       "definition": "A stochastic process...",
-      "dom_node_id": "def456"
+      "dom_node_id": "def_789"
     },
     {
-      "id": "thm_3.2",
+      "id": "theorem_3_2",
       "type": "theorem",
       "label": "Theorem 3.2",
       "statement": "The reverse process converges...",
-      "dom_node_id": "thm789"
+      "dom_node_id": "thm_012"
     }
   ],
   "edges": [
     {
-      "id": "thm_3.2_uses_def_diffusion_process",
-      "source": "thm_3.2",
-      "target": "def_diffusion_process",
-      "type": "uses"
+      "id": "formula_elbo_has_symbol_alpha_t",
+      "source": "formula_elbo",
+      "target": "symbol_alpha_t",
+      "type": "has_symbol"
     }
   ],
   "metadata": {
     "paper_id": "...",
-    "node_count": 42,
-    "edge_count": 15,
+    "formula_count": 5,
     "symbol_count": 20,
     "definition_count": 12,
-    "theorem_count": 10
+    "theorem_count": 10,
+    "edge_count": 15
   }
 }
 ```
 
 ---
 
-## Progress Tracking
+## Frontend Entity Support
 
-### Backend (callback)
+All four entity types are supported in the frontend:
 
-```python
-def progress_callback(stage: str, current: int, total: int):
-    """Called after each section is processed."""
-    # stage: "symbols" | "definitions" | "theorems" | "dependencies"
-```
+| Component | Support |
+|-----------|---------|
+| `GraphNode.tsx` | Formula nodes with amber styling, math label rendering, secondary latex preview |
+| `NodeInfoPanel.tsx` | Formula body display with LaTeX rendering |
+| `KnowledgeGraphView.tsx` | Formula filter toggle, formula count in metadata |
+| `KnowledgeGraphProgress.tsx` | Formula progress bar during extraction |
+| `GlossaryList.tsx` | Formula grouping in glossary |
+| `TooltipSuggestionsDialog.tsx` | Formula entity type option |
+
+### Entity Colors
+
+| Type | Color |
+|------|-------|
+| Formula | Amber (`bg-amber-50`, `border-amber-300`) |
+| Symbol | Blue (`#3b82f6`) |
+| Definition | Emerald (`#10b981`) |
+| Theorem | Violet (`#8b5cf6`) |
+
+---
+
+## Progress Tracking (SSE)
 
 ### SSE Event Format
 
@@ -228,7 +284,7 @@ def progress_callback(stage: str, current: int, total: int):
     "symbols": {"current": 2, "total": 5},
     "definitions": {"current": 1, "total": 5},
     "theorems": {"current": 3, "total": 5},
-    "dependencies": {"current": 0, "total": 5}
+    "formulas": {"current": 0, "total": 5}
   }
 }
 ```
@@ -238,7 +294,10 @@ def progress_callback(stage: str, current: int, total: int):
 ```json
 {
   "stage": "complete",
-  "node_count": 42,
+  "formula_count": 5,
+  "symbol_count": 20,
+  "definition_count": 12,
+  "theorem_count": 10,
   "edge_count": 15
 }
 ```
@@ -249,7 +308,7 @@ def progress_callback(stage: str, current: int, total: int):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `KG_MAX_SECTIONS` | `5` | Limit sections processed (0 = all) |
+| `KG_MAX_SECTIONS` | `0` | Limit sections processed (0 = all) |
 | `KG_DEBUG` | unset | Show verbose content previews |
 | `ANTHROPIC_API_KEY` | required | Claude API key |
 
@@ -259,12 +318,13 @@ def progress_callback(stage: str, current: int, total: int):
 
 | File | Purpose |
 |------|---------|
-| `backend/app/agents/knowledge_graph.py` | LangGraph pipeline, extraction agents |
+| `backend/app/agents/knowledge_graph.py` | Full pipeline: extraction agents, dedup, graph assembly, LangGraph workflow |
 | `backend/app/api/main.py` | SSE endpoint, build endpoint |
 | `backend/app/compiler/latexml_compiler.py` | Section extraction (Phase 0) |
 | `frontend/components/reader/KnowledgeGraphView.tsx` | Graph visualization |
 | `frontend/components/reader/KnowledgeGraphProgress.tsx` | Progress UI |
-| `frontend/components/reader/GraphNode.tsx` | Custom node renderer |
+| `frontend/components/reader/GraphNode.tsx` | Custom node renderer (supports formula, symbol, definition, theorem) |
+| `frontend/components/reader/NodeInfoPanel.tsx` | Node detail panel with formula body display |
 
 ---
 
@@ -275,16 +335,12 @@ def progress_callback(stage: str, current: int, total: int):
 1. Create Pydantic model in `knowledge_graph.py`
 2. Add extraction function with progress reporting
 3. Update `GraphState` with new field (use `Annotated` if parallel)
-4. Add node to workflow, connect edges appropriately
-5. Update `build_graph` to convert entities to nodes
-6. Update frontend `GraphNode` with styling for new type
+4. Add node to workflow, connect edges to `deduplicate_entities`
+5. Update `deduplicate_entities` to handle the new type
+6. Update `build_graph` to convert entities to nodes
+7. Update frontend `GraphNode.tsx` with styling for new type
+8. Update `NodeInfoPanel.tsx` if special display is needed
 
 ### Modifying Prompts
 
-Prompts are defined as module-level constants:
-- `SYMBOL_SYSTEM_PROMPT` / `SYMBOL_USER_PROMPT`
-- `DEFINITION_SYSTEM_PROMPT` / `DEFINITION_USER_PROMPT`
-- `THEOREM_SYSTEM_PROMPT` / `THEOREM_USER_PROMPT`
-- `DEPENDENCY_SYSTEM_PROMPT` / `DEPENDENCY_USER_PROMPT`
-
-**Important:** Escape curly braces in examples: `$\\mathbb{{R}}$` not `$\\mathbb{R}$`
+Prompts are defined as module-level constants. Escape curly braces in examples: `$\\mathbb{{R}}$` not `$\\mathbb{R}$`
