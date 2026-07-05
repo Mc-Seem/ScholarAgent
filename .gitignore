@@ -63,3 +63,7 @@ Thumbs.db
 *.swp
 *.swo
 *~
+
+# Agentic Stuff
+.junie/
+.agentbridge
