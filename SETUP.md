@@ -474,10 +474,8 @@ npm uninstall <package>
 
 After setup is complete:
 
-1. Read `Design Document.md` for architecture overview
-2. Review `REWORK_PLAN.md` for current refactoring status
-3. Check `TESTING.md` for testing guidelines
-4. Explore `AGENTS.md` for custom slash commands
+1. Read `docs/` for architecture, testing, and design system docs
+2. Explore `AGENTS.md` for custom slash commands
 
 ---
 

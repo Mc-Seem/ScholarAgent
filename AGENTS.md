@@ -1,108 +1,75 @@
-# Project Agents
+# Scholar Agent
 
-Custom agents for Scholar Agent development. Use these slash commands for specialized tasks.
+Interactive academic paper reader that compiles arXiv LaTeX sources into HTML5 with semantic annotations, knowledge graphs, and AI-powered tooltips.
+
+## Quick Start
+- **Backend**: `uv run uvicorn backend.app.api.main:app --reload --port 8000` (from project root)
+- **Frontend**: `npm run dev` (from `frontend/`)
+- **Electron**: `npm run dev:desktop`
+
+## Key Commands
+- **Run Tests**: `.venv/bin/pytest tests/` (backend) | `cd frontend && npm test` (frontend)
+- **Database**: `cd backend && alembic upgrade head` | `alembic revision -m "description"`
+
+## Architecture
+arXiv .tar.gz → LaTeXML (Docker) → HTML5 + MathML → PostgreSQL → data-id injection → Knowledge Graph extraction (LLM) → Semantic tooltip injection.
+
+**Stack**: FastAPI, PostgreSQL, SQLAlchemy, Alembic, LangGraph, Next.js, html-react-parser, MathJax 4, Framer Motion, React Flow.
+
+## Documentation
+
+All reference docs are in `docs/`:
+
+| File | Purpose |
+|------|---------|
+| `docs/backend-architecture.md` | Backend module structure, models, API endpoints, HTML injection |
+| `docs/frontend-architecture.md` | Frontend component tree, data flow, entity styling, API integration |
+| `docs/kg-pipeline.md` | KG extraction pipeline architecture (LangGraph, schemas, progress) |
+| `docs/kg-todos.md` | KG feature backlog and completed items |
+| `docs/design-system.md` | Design tokens, reusable components, color palette, entity styling |
+| `docs/testing.md` | Test strategy, running tests, coverage goals, CI/CD |
+| `docs/roadmap.md` | Feature roadmap (multi-paper, chat, QoL) |
+| `docs/kg-deduplication-plan.md` | KG dedup design plan (in-progress) |
+| `docs/kg-formula-entity-plan.md` | Formula entity design plan (in-progress) |
+
+## Database Models
+- **Paper**: filename, HTML content, KG (JSONB), sections/equations data.
+- **Tooltip**: Linked to paper + entity (semantic) or DOM node (paragraph comment).
+
+## Debugging
+- **Backend**: `SCHOLAR_DEBUG=true` for logs.
+- **Database**: `psql -U scholaragent -d scholaragent`.
+- **Frontend**: React DevTools, monitor SSE streams for KG progress.
+- **Env**: `DATABASE_URL`, `ANTHROPIC_API_KEY`, `KG_MAX_SECTIONS`, `KG_DEBUG`, `HTML_INJECTION_DEBUG`, `TOOLTIP_AGENT_DEBUG` in `.env`.
 
 ---
+
+# Custom Agents
 
 ## /latex-compile
 **Purpose**: Compile LaTeX sources to HTML using LaTeXML.
-
-**Tasks**:
-- Analyze LaTeX source structure and identify main .tex file
-- Run LaTeXML compilation (via Docker or direct command)
-- Parse compilation errors and suggest fixes
-- Validate HTML output structure
-- Verify MathML generation for formulas
-- Check for bibliography resolution (.bib/.bbl files)
-
 **When to use**: When working on LaTeX → HTML compilation pipeline, debugging compilation errors, or validating output structure.
-
----
 
 ## /db-migrate
 **Purpose**: Manage PostgreSQL database schema changes using Alembic.
-
-**Tasks**:
-- Create new Alembic migration files
-- Review migration scripts for correctness
-- Run upgrades/downgrades
-- Inspect current schema state
-- Troubleshoot migration errors
-- Suggest optimal indexes and constraints
-
 **When to use**: When modifying database schema (adding tables, columns, indexes), or troubleshooting migration issues.
-
----
 
 ## /test-integration
 **Purpose**: Run and analyze end-to-end integration tests.
-
-**Tasks**:
-- Execute full workflow: upload → compile → display → tooltip
-- Verify HTML structure and data-id attributes
-- Test API endpoints (CRUD operations)
-- Validate tooltip persistence in database
-- Check frontend rendering (MathJax, html-react-parser)
-- Generate test reports
-
 **When to use**: After major changes to verify full system functionality, or when debugging cross-layer issues.
-
----
 
 ## /frontend-debug
 **Purpose**: Debug frontend rendering and interaction issues.
-
-**Tasks**:
-- Analyze React component trees and state
-- Debug html-react-parser parsing issues
-- Troubleshoot MathJax SRE rendering
-- Inspect tooltip positioning and animations (Framer Motion)
-- Review DOM structure and data-id attributes
-- Check event handlers and user interactions
-
 **When to use**: When investigating frontend bugs, rendering issues, or interaction problems with tooltips/math.
-
----
 
 ## /api-design
 **Purpose**: Review and refine FastAPI endpoint design.
-
-**Tasks**:
-- Ensure RESTful patterns and conventions
-- Validate request/response schemas
-- Check error handling and status codes
-- Review CORS configuration
-- Suggest performance optimizations
-- Verify authentication/authorization (when added)
-
 **When to use**: When designing new endpoints, refactoring existing API, or reviewing API architecture.
-
----
 
 ## /docker-setup
 **Purpose**: Manage Docker containers for LaTeXML compilation.
-
-**Tasks**:
-- Configure LaTeXML Docker image (engrafo or official)
-- Set up volume mounts for source files
-- Debug container execution issues
-- Optimize container performance
-- Review Docker Compose configuration
-- Troubleshoot permission issues
-
 **When to use**: When setting up LaTeXML environment, debugging container issues, or optimizing compilation performance.
-
----
 
 ## /cleanup-code
 **Purpose**: Remove obsolete code during the rework phase.
-
-**Tasks**:
-- Identify and remove unused imports
-- Delete deprecated parser files (PDF, markdown)
-- Clean up obsolete API endpoints
-- Remove unused dependencies from pyproject.toml and package.json
-- Update import statements after deletions
-- Verify no broken references remain
-
 **When to use**: During Phase 1 of rework (cleanup), or periodic maintenance to remove dead code.

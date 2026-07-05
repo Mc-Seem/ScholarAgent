@@ -377,11 +377,15 @@ ScholarAgent/
 
 ## Documentation
 
-- [`CLAUDE.md`](CLAUDE.md) - Project overview & quick reference
-- [`Design Document.md`](Design%20Document.md) - Architecture details
-- [`SETUP.md`](SETUP.md) - Detailed development setup
-- [`TESTING.md`](TESTING.md) - Test strategy & guidelines
-- [`KNOWLEDGE_GRAPH_SCAFFOLD.md`](KNOWLEDGE_GRAPH_SCAFFOLD.md) - KG pipeline architecture
+All reference docs are in `docs/`:
+
+- `docs/backend-architecture.md` - Backend module structure, models, API endpoints
+- `docs/frontend-architecture.md` - Frontend component tree, data flow, entity styling
+- `docs/kg-pipeline.md` - Knowledge graph extraction pipeline architecture
+- `docs/kg-todos.md` - Knowledge graph feature backlog
+- `docs/design-system.md` - Design tokens, reusable components, color palette
+- `docs/testing.md` - Test strategy and guidelines
+- `docs/roadmap.md` - Feature roadmap
 
 ## Common Issues
 
