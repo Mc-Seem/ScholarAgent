@@ -27,7 +27,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from dotenv import load_dotenv
 from langgraph.graph import StateGraph, END
-from langchain_anthropic import ChatAnthropic
 from langchain_core.prompts import ChatPromptTemplate
 
 # Import shared utilities
@@ -38,6 +37,7 @@ from backend.app.agents.utils import (
     filter_processable_sections,
     get_debug_flag,
 )
+from backend.app.utils.llm_factory import get_llm, get_structured_llm
 
 # Load environment variables
 load_dotenv()
@@ -1142,8 +1142,8 @@ def _format_definition_candidates_for_prompt(definitions: List[Dict[str, Any]]) 
 
 def _resolve_formula_definition_bucket_with_llm(bucket: Dict[str, Any]) -> Optional[str]:
     """Use the LLM to decide whether a formula matches one candidate definition."""
-    llm = ChatAnthropic(model="claude-sonnet-4-5-20250929")
-    structured_llm = llm.with_structured_output(FormulaDefinitionAdjudicationOutput)
+    llm = get_llm("kg_extraction")
+    structured_llm = get_structured_llm(llm, FormulaDefinitionAdjudicationOutput)
     prompt = ChatPromptTemplate.from_messages([
         ("system", FORMULA_DEFINITION_DEDUP_SYSTEM_PROMPT),
         ("user", FORMULA_DEFINITION_DEDUP_USER_PROMPT),
@@ -1162,6 +1162,8 @@ def _resolve_formula_definition_bucket_with_llm(bucket: Dict[str, Any]) -> Optio
         profile=bucket.get("llm_profile"),
         profile_stage="kg.dedup.definition_formula_adjudication",
     )
+    if response is None:
+        return None
     return response.definition_id
 
 
@@ -1286,8 +1288,8 @@ def _format_symbol_bucket_for_prompt(symbol_bucket: List[Dict[str, Any]]) -> str
 
 def _resolve_symbol_bucket_with_llm(symbol_bucket: List[Dict[str, Any]], llm_profile: Optional[Dict[str, Any]] = None) -> List[List[str]]:
     """Use the LLM to resolve an ambiguous symbol bucket into duplicate clusters."""
-    llm = ChatAnthropic(model="claude-sonnet-4-5-20250929")
-    structured_llm = llm.with_structured_output(SymbolDedupAdjudicationOutput)
+    llm = get_llm("kg_extraction")
+    structured_llm = get_structured_llm(llm, SymbolDedupAdjudicationOutput)
     prompt = ChatPromptTemplate.from_messages([
         ("system", SYMBOL_DEDUP_SYSTEM_PROMPT),
         ("user", SYMBOL_DEDUP_USER_PROMPT),
@@ -1305,6 +1307,8 @@ def _resolve_symbol_bucket_with_llm(symbol_bucket: List[Dict[str, Any]], llm_pro
         profile=llm_profile,
         profile_stage="kg.dedup.symbol_adjudication",
     )
+    if response is None:
+        return []
     return [cluster.symbol_ids for cluster in response.clusters if len(cluster.symbol_ids) >= 2]
 
 
@@ -1377,8 +1381,8 @@ def extract_stray_symbols(state: GraphState) -> GraphState:
 
     print(f"\n[1/5] Extracting stray symbols from {len(sections_to_process)} sections (using {worker_count} workers)...")
 
-    llm = ChatAnthropic(model="claude-sonnet-4-5-20250929")
-    structured_llm = llm.with_structured_output(StraySymbolExtractionOutput)
+    llm = get_llm("kg_extraction")
+    structured_llm = get_structured_llm(llm, StraySymbolExtractionOutput)
 
     prompt = ChatPromptTemplate.from_messages([
         ("system", STRAY_SYMBOL_SYSTEM_PROMPT),
@@ -1495,8 +1499,8 @@ def extract_formulas(state: GraphState) -> GraphState:
 
     print(f"\n[4/5] Extracting formulas from {len(sections_to_process)} sections (using {worker_count} workers)...")
 
-    llm = ChatAnthropic(model="claude-sonnet-4-5-20250929")
-    structured_llm = llm.with_structured_output(FormulaExtractionOutput)
+    llm = get_llm("kg_extraction")
+    structured_llm = get_structured_llm(llm, FormulaExtractionOutput)
 
     prompt = ChatPromptTemplate.from_messages([
         ("system", FORMULA_SYSTEM_PROMPT),
@@ -1608,8 +1612,8 @@ def extract_definitions(state: GraphState) -> GraphState:
 
     print(f"\n[2/5] Extracting definitions from {len(sections_to_process)} sections (using {worker_count} workers)...")
 
-    llm = ChatAnthropic(model="claude-sonnet-4-5-20250929")
-    structured_llm = llm.with_structured_output(DefinitionExtractionOutput)
+    llm = get_llm("kg_extraction")
+    structured_llm = get_structured_llm(llm, DefinitionExtractionOutput)
 
     prompt = ChatPromptTemplate.from_messages([
         ("system", DEFINITION_SYSTEM_PROMPT),
@@ -1724,8 +1728,8 @@ def extract_theorems(state: GraphState) -> GraphState:
 
     print(f"\n[3/5] Extracting theorems from {len(sections_to_process)} sections (using {worker_count} workers)...")
 
-    llm = ChatAnthropic(model="claude-sonnet-4-5-20250929")
-    structured_llm = llm.with_structured_output(TheoremExtractionOutput)
+    llm = get_llm("kg_extraction")
+    structured_llm = get_structured_llm(llm, TheoremExtractionOutput)
 
     prompt = ChatPromptTemplate.from_messages([
         ("system", THEOREM_SYSTEM_PROMPT),
@@ -2067,8 +2071,8 @@ def extract_dependencies(state: GraphState) -> GraphState:
 
     print(f"\n[6/7] Extracting relationships from {len(sections_to_process)} sections (using {worker_count} workers)...")
 
-    llm = ChatAnthropic(model="claude-sonnet-4-5-20250929")
-    structured_llm = llm.with_structured_output(RelationshipExtractionOutput)
+    llm = get_llm("kg_extraction")
+    structured_llm = get_structured_llm(llm, RelationshipExtractionOutput)
 
     prompt = ChatPromptTemplate.from_messages([
         ("system", DEPENDENCY_SYSTEM_PROMPT),

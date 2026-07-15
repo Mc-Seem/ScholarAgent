@@ -8,8 +8,8 @@ Part of Phase 2: Semantic Tooltips implementation.
 import os
 from typing import List, Dict, Any, Optional, Callable
 from pydantic import BaseModel, Field
-from langchain_anthropic import ChatAnthropic
 from langchain_core.prompts import ChatPromptTemplate
+from backend.app.utils.llm_factory import get_llm, get_structured_llm
 
 # Debug mode controlled by environment variable
 DEBUG = os.getenv("TOOLTIP_AGENT_DEBUG", "false").lower() == "true"
@@ -165,8 +165,8 @@ def filter_entities_by_expertise(
     if progress_callback:
         progress_callback("Filtering entities with AI based on your expertise...")
 
-    llm = ChatAnthropic(model="claude-sonnet-4-5-20250929")
-    structured_llm = llm.with_structured_output(FilterOutput)
+    llm = get_llm("tooltip_suggestion")
+    structured_llm = get_structured_llm(llm, FilterOutput)
 
     chain = prompt | structured_llm
 

@@ -20,7 +20,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from dotenv import load_dotenv
 from langgraph.graph import StateGraph, END
-from langchain_anthropic import ChatAnthropic
 from langchain_core.prompts import ChatPromptTemplate
 
 # Import shared utilities
@@ -31,6 +30,7 @@ from backend.app.agents.utils import (
     filter_processable_sections,
     get_debug_flag,
 )
+from backend.app.utils.llm_factory import get_llm, get_structured_llm
 
 load_dotenv()
 
@@ -202,11 +202,11 @@ def process_sections(state: InjectionState) -> InjectionState:
     if num_batches > 1:
         print(f"[HTML Injection] Processing {total_entities} entities in {num_batches} batches of {BATCH_SIZE}")
 
-    llm = ChatAnthropic(
-        model=os.getenv("HTML_INJECTION_MODEL", "claude-haiku-4-5-20251001"),
+    llm = get_llm(
+        "html_injection",
         max_tokens=8000,
     )
-    structured_llm = llm.with_structured_output(SectionInjectionOutput)
+    structured_llm = get_structured_llm(llm, SectionInjectionOutput)
 
     prompt = ChatPromptTemplate.from_messages([
         ("system", INJECTION_SYSTEM_PROMPT),

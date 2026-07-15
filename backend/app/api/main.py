@@ -19,6 +19,7 @@ from backend.app.database.connection import get_db
 from backend.app.database.models import Paper, Tooltip
 from backend.app.database.models import TooltipSuggestion as TooltipSuggestionModel
 from backend.app.compiler.latexml_compiler import compile_latex_to_html, CompilationResult
+from backend.app.api.settings_routes import router as settings_router
 
 app = FastAPI(title="Scholar Agent API")
 app.add_middleware(
@@ -29,6 +30,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.include_router(settings_router)
 
 @app.get("/health")
 async def health_check():

@@ -105,3 +105,25 @@ class TooltipSuggestion(Base):
 
     def __repr__(self):
         return f"<TooltipSuggestion(id={self.id[:8]}..., label={self.entity_label})>"
+
+
+class LLMConfig(Base):
+    """Stores LLM provider configuration (provider, API key, models per workflow).
+
+    Only one row should have is_active=True at a time (enforced at the application layer).
+    API keys are encrypted at rest using Fernet symmetric encryption.
+    """
+    __tablename__ = "llm_configs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    provider = Column(String(64), nullable=False)  # "anthropic" | "openai" | "ollama" | "custom"
+    base_url = Column(String(512), nullable=True)   # Custom endpoint URL (e.g. Ollama Cloud)
+    api_key_enc = Column(Text, nullable=True)       # Fernet-encrypted API key
+    # Per-workflow model names: {"kg_extraction": "...", "html_injection": "...", "tooltip_suggestion": "..."}
+    models = Column(JSON, nullable=False, default=dict)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+    def __repr__(self):
+        return f"<LLMConfig(id={self.id}, provider={self.provider}, active={self.is_active})>"

@@ -11,7 +11,8 @@ import TooltipSuggestionsDialog, { StoredSuggestion } from "./TooltipSuggestions
 import TooltipEditModal from "./TooltipEditModal";
 import SearchBar from "./SearchBar";
 import { parseTOC, TOCNode } from "@/utils/parseTOC";
-import { Loader2, Upload, ExternalLink, Trash2, RefreshCw, FileText, AlertCircle, Network } from "lucide-react";
+import { Loader2, Upload, ExternalLink, Trash2, RefreshCw, FileText, AlertCircle, Network, Settings } from "lucide-react";
+import SettingsDialog from "./SettingsDialog";
 
 /**
  * Build TOC hierarchy from flat sections array (from backend).
@@ -74,6 +75,9 @@ export default function PaperLoader() {
 
   // Search state
   const [showSearch, setShowSearch] = useState(false);
+
+  // Settings dialog state
+  const [showSettings, setShowSettings] = useState(false);
 
   // Active tooltip state (for detail view in right sidebar)
   const [activeEntityId, setActiveEntityId] = useState<string | null>(null);
@@ -465,7 +469,14 @@ export default function PaperLoader() {
   const mainPanel = (
     <div className="py-8 px-4">
       {/* Header */}
-      <div className="max-w-5xl mx-auto mb-8 text-center">
+      <div className="max-w-5xl mx-auto mb-8 text-center relative">
+        <button
+          onClick={() => setShowSettings(true)}
+          className="absolute right-0 top-0 p-2 text-slate-400 hover:text-indigo-600 hover:bg-slate-100 rounded-lg transition-colors"
+          title="LLM Provider Settings"
+        >
+          <Settings size={20} />
+        </button>
         <h1 className="text-4xl font-extrabold text-slate-900 tracking-tight mb-2">
           Scholar Agent <span className="text-indigo-600">Reader</span>
         </h1>
@@ -711,6 +722,9 @@ export default function PaperLoader() {
 
       {/* Search Bar */}
       <SearchBar isOpen={showSearch} onClose={() => setShowSearch(false)} />
+
+      {/* Settings Dialog */}
+      <SettingsDialog isOpen={showSettings} onClose={() => setShowSettings(false)} />
     </>
   );
 }
