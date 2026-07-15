@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import { X, Trash2, Network } from 'lucide-react';
-import type { Tooltip } from '@/hooks/useTooltips';
+import type { Tooltip } from '../../hooks/useTooltips';
 
 interface TooltipDetailViewProps {
   tooltip: Tooltip | null;

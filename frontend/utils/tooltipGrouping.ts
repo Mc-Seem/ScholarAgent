@@ -8,7 +8,7 @@
  * - By tag (future)
  */
 
-import type { Tooltip } from '@/hooks/useTooltips';
+import type { Tooltip } from '../hooks/useTooltips';
 import type { TOCNode } from './parseTOC';
 
 export interface TooltipGroup {

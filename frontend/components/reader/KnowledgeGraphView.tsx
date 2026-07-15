@@ -23,7 +23,8 @@ import { KnowledgeGraphProgress } from './KnowledgeGraphProgress';
 import { EdgeInfoPanel } from './EdgeInfoPanel';
 import { NodeInfoPanel, ConnectionInfo } from './NodeInfoPanel';
 import { Loader2, AlertCircle, Network, Search, X, Focus, Maximize2, Filter, ChevronDown } from 'lucide-react';
-import { EmptyState } from '@/components/ui';
+import { EmptyState } from '../ui';
+import { apiUrl } from '../../hooks/useApi';
 
 // Custom node types
 const nodeTypes = {
@@ -223,7 +224,7 @@ function KnowledgeGraphViewInner({ paperId, onNavigate, onRegisterFocusHandler }
     setLoading(true);
     setError(null);
 
-    fetch(`/api/papers/${paperId}/knowledge-graph`)
+    fetch(apiUrl(`/api/papers/${paperId}/knowledge-graph`))
       .then(res => {
         if (!res.ok) {
           if (res.status === 404) {

@@ -13,7 +13,7 @@
 
 import { ButtonHTMLAttributes, ReactNode } from 'react';
 import { LucideIcon, Loader2 } from 'lucide-react';
-import { componentStyles } from '@/lib/design-system';
+import { componentStyles } from '../../lib/design-system';
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: 'primary' | 'secondary' | 'ghost' | 'icon';

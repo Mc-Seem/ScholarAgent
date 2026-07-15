@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
-import { usePapers, Paper, PaperDetail, Section } from "@/hooks/usePapers";
-import { useTooltips } from "@/hooks/useTooltips";
+import { usePapers, Paper, PaperDetail } from "../../hooks/usePapers";
+import { useTooltips } from "../../hooks/useTooltips";
+import { apiUrl } from "../../hooks/useApi";
 import { HTMLRenderer } from "./HTMLRenderer";
 import ResizableLayout from "./ResizableLayout";
 import NavigationPanel from "./NavigationPanel";
@@ -10,40 +11,9 @@ import TooltipPanel from "./TooltipPanel";
 import TooltipSuggestionsDialog, { StoredSuggestion } from "./TooltipSuggestionsDialog";
 import TooltipEditModal from "./TooltipEditModal";
 import SearchBar from "./SearchBar";
-import { parseTOC, TOCNode } from "@/utils/parseTOC";
+import { getPaperTOC } from "../../utils/paperTOC";
 import { Loader2, Upload, ExternalLink, Trash2, RefreshCw, FileText, AlertCircle, Network, Settings } from "lucide-react";
 import SettingsDialog from "./SettingsDialog";
-
-/**
- * Build TOC hierarchy from flat sections array (from backend).
- * The backend provides a flat list with parent_id references.
- */
-function buildTOCFromSections(sections: Section[]): TOCNode[] {
-  const nodeMap = new Map<string, TOCNode>();
-  const root: TOCNode[] = [];
-
-  // Create nodes
-  for (const section of sections) {
-    nodeMap.set(section.id, {
-      id: section.id,
-      title: section.title_html, // Use title_html to preserve MathML
-      level: section.level,
-      children: [],
-    });
-  }
-
-  // Build hierarchy
-  for (const section of sections) {
-    const node = nodeMap.get(section.id)!;
-    if (section.parent_id && nodeMap.has(section.parent_id)) {
-      nodeMap.get(section.parent_id)!.children.push(node);
-    } else {
-      root.push(node);
-    }
-  }
-
-  return root;
-}
 
 export default function PaperLoader() {
   const {
@@ -159,9 +129,7 @@ export default function PaperLoader() {
     // Connect directly to the backend — Next.js rewrites buffer SSE streams,
     // so we bypass the proxy. Use window.location.hostname so this works for
     // both localhost and remote machines without requiring NEXT_PUBLIC_API_URL.
-    const backendUrl = process.env.NEXT_PUBLIC_API_URL ||
-      `${window.location.protocol}//${window.location.hostname}:8000`;
-    const eventSource = new EventSource(`${backendUrl}/api/papers/${paperId}/compile/progress`);
+    const eventSource = new EventSource(apiUrl(`/api/papers/${paperId}/compile/progress`));
 
     eventSource.onmessage = (event) => {
       try {
@@ -253,7 +221,7 @@ export default function PaperLoader() {
     window.dispatchEvent(new CustomEvent('kg-build-start'));
 
     try {
-      const res = await fetch(`/api/papers/${selectedPaperId}/knowledge-graph/build`, {
+      const res = await fetch(apiUrl(`/api/papers/${selectedPaperId}/knowledge-graph/build`), {
         method: 'POST',
       });
 
@@ -293,7 +261,7 @@ export default function PaperLoader() {
     setStatus('Generating AI tooltip suggestions...');
 
     try {
-      const response = await fetch(`http://localhost:8000/api/papers/${selectedPaperId}/tooltips/suggest`, {
+      const response = await fetch(apiUrl(`/api/papers/${selectedPaperId}/tooltips/suggest`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -367,7 +335,7 @@ export default function PaperLoader() {
         occurrences: [], // Backend will find occurrences
       }));
 
-      const response = await fetch(`http://localhost:8000/api/papers/${selectedPaperId}/tooltips/apply`, {
+      const response = await fetch(apiUrl(`/api/papers/${selectedPaperId}/tooltips/apply`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -409,15 +377,10 @@ export default function PaperLoader() {
   const loading = papersLoading || tooltipsLoading || !!status;
 
   // Use pre-extracted sections from backend, with fallback to client-side parsing
-  const toc = useMemo(() => {
-    // Prefer pre-extracted sections from backend (Phase 0 optimization)
-    if (currentPaper?.sections && currentPaper.sections.length > 0) {
-      return buildTOCFromSections(currentPaper.sections);
-    }
-    // Fallback: parse on client-side for papers compiled before Phase 0
-    if (!currentPaper?.html_content) return [];
-    return parseTOC(currentPaper.html_content);
-  }, [currentPaper?.sections, currentPaper?.html_content]);
+  const toc = useMemo(
+    () => getPaperTOC(currentPaper?.sections, currentPaper?.html_content ?? null),
+    [currentPaper?.sections, currentPaper?.html_content],
+  );
 
   // Handle navigation to section
   const handleNavigate = useCallback((dataId: string) => {

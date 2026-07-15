@@ -3,12 +3,22 @@
   "version": "1.0.0",
   "description": "",
   "main": "electron/main.cjs",
+  "workspaces": [
+    "theia/*"
+  ],
   "scripts": {
     "dev": "next dev --webpack",
     "dev:web": "next dev --webpack",
     "dev:backend": "uv run --project .. python -m uvicorn backend.app.api.main:app --reload --port 8000 --app-dir .. --reload-dir ..",
     "dev:electron": "wait-on http://localhost:3000 && electron .",
     "dev:desktop": "concurrently -k -n backend,frontend,electron -c green,blue,magenta \"npm run dev:backend\" \"npm run dev:web\" \"npm run dev:electron\"",
+    "theia:compile": "npm run compile --workspace @scholar-agent/theia-extension",
+    "theia:build:browser": "npm run theia:compile && npm run bundle --workspace @scholar-agent/theia-browser",
+    "theia:build:electron": "npm run theia:compile && npm run bundle --workspace @scholar-agent/theia-electron",
+    "dev:theia:browser": "npm run theia:build:browser && npm run start --workspace @scholar-agent/theia-browser",
+    "dev:theia:electron": "npm run theia:build:electron && npm run start --workspace @scholar-agent/theia-electron",
+    "dev:theia": "concurrently -k -n backend,theia -c green,blue \"npm run dev:backend\" \"npm run dev:theia:browser\"",
+    "dev:theia:desktop": "concurrently -k -n backend,theia -c green,magenta \"npm run dev:backend\" \"npm run dev:theia:electron\"",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
@@ -21,6 +31,9 @@
   "author": "",
   "license": "ISC",
   "type": "module",
+  "engines": {
+    "node": ">=24 <25"
+  },
   "dependencies": {
     "@tailwindcss/typography": "^0.5.19",
     "@types/dagre": "^0.7.54",
@@ -39,6 +52,9 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.18",
+    "@tailwindcss/cli": "4.1.18",
+    "@theia/core": "1.73.0",
+    "@theia/electron": "1.73.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
@@ -49,7 +65,7 @@
     "@vitest/coverage-v8": "^4.0.18",
     "autoprefixer": "^10.4.24",
     "concurrently": "^9.2.1",
-    "electron": "^34.3.0",
+    "electron": "39.8.7",
     "happy-dom": "^20.7.0",
     "jsdom": "^28.1.0",
     "postcss": "^8.5.6",
@@ -57,5 +73,10 @@
     "typescript": "^5.9.3",
     "vitest": "^4.0.18",
     "wait-on": "^7.2.0"
+  },
+  "allowScripts": {
+    "drivelist@12.0.2": true,
+    "electron@39.8.7": true,
+    "@theia/ffmpeg@1.73.0": true
   }
 }

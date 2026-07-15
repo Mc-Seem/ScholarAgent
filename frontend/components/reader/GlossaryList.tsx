@@ -2,10 +2,10 @@
 
 import { useState, useMemo } from 'react';
 import { ChevronRight, ChevronDown, Edit2, Trash2, Sparkles, User as UserIcon } from 'lucide-react';
-import type { Tooltip } from '@/hooks/useTooltips';
+import type { Tooltip } from '../../hooks/useTooltips';
 import { LatexText } from './LatexText';
-import { EmptyState, CollapsibleSection, IconButton } from '@/components/ui';
-import { componentStyles } from '@/lib/design-system';
+import { EmptyState, CollapsibleSection, IconButton } from '../ui';
+import { componentStyles } from '../../lib/design-system';
 
 interface GlossaryListProps {
   tooltips: Tooltip[];

@@ -11,7 +11,7 @@
  */
 
 import { ReactNode } from 'react';
-import { componentStyles } from '@/lib/design-system';
+import { componentStyles } from '../../lib/design-system';
 
 interface CardProps {
   children: ReactNode;

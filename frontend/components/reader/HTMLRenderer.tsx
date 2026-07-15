@@ -5,7 +5,7 @@ import parse, { Element, domToReact, DOMNode, HTMLReactParserOptions } from 'htm
 import { MathJaxNode } from './MathJaxNode';
 import { InteractiveNode } from './InteractiveNode';
 import { ContextMenu } from './ContextMenu';
-import type { Tooltip } from '@/hooks/useTooltips';
+import type { Tooltip } from '../../hooks/useTooltips';
 
 interface HTMLRendererProps {
   html: string;
@@ -161,7 +161,7 @@ export function HTMLRenderer({
   return (
     <>
       <article className="html-renderer prose prose-slate prose-indigo max-w-none">
-      <style jsx global>{`
+      <style>{`
         .html-renderer {
           line-height: 1.8;
         }

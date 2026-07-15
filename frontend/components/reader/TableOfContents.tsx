@@ -2,8 +2,8 @@
 
 import { useEffect, useRef } from 'react';
 import { FileText } from 'lucide-react';
-import type { TOCNode } from '@/utils/parseTOC';
-import { EmptyState, TreeView } from '@/components/ui';
+import type { TOCNode } from '../../utils/parseTOC';
+import { EmptyState, TreeView } from '../ui';
 
 interface TableOfContentsProps {
   nodes: TOCNode[];

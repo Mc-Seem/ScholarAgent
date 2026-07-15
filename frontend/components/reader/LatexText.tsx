@@ -29,8 +29,9 @@ export function LatexText({ text, className = '' }: LatexTextProps) {
     const typeset = async () => {
       if (typeof window !== 'undefined' && window.MathJax?.typesetPromise && containerRef.current) {
         try {
-          // Skip if element is not visible (e.g., hidden by parent)
-          if (!containerRef.current.offsetParent) {
+          // Skip content in an explicitly hidden tab without rejecting fixed-position
+          // or test-environment elements whose offsetParent is legitimately null.
+          if (containerRef.current.closest('[hidden], .hidden')) {
             return;
           }
           // Wait for MathJax startup if needed

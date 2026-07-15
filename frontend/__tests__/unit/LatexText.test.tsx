@@ -84,8 +84,8 @@ describe('LatexText', () => {
       <LatexText text="Test" className="custom-class" />
     )
 
-    const div = container.querySelector('div')
-    expect(div).toHaveClass('custom-class')
+    const span = container.querySelector('span')
+    expect(span).toHaveClass('custom-class')
   })
 
   it('handles complex LaTeX expressions', () => {

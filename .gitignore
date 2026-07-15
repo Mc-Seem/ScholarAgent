@@ -53,9 +53,13 @@ uv.lock
 frontend/.next/
 frontend/node_modules/
 frontend/package-lock.json
+frontend/.toolchains/
 frontend/coverage/
 frontend/.turbo/
 frontend/tsconfig.tsbuildinfo
+frontend/theia/*/src-gen/
+frontend/theia/*/gen-esbuild.*.mjs
+frontend/theia/*/esbuild.mjs
 
 # OS
 .DS_Store

@@ -24,6 +24,7 @@ export default defineConfig({
     // Ignore some patterns that might be in the codebase
     exclude: [
       '**/node_modules/**',
+      '**/theia/**',
       '**/dist/**',
       '**/cypress/**',
       '**/.{idea,git,cache,output,temp}/**',

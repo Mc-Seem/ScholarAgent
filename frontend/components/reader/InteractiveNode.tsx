@@ -3,7 +3,7 @@
 import React, { useState, useRef, useCallback, ReactNode } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { MessageSquarePlus, X, Pencil, Trash2 } from 'lucide-react';
-import type { Tooltip } from '@/hooks/useTooltips';
+import type { Tooltip } from '../../hooks/useTooltips';
 import { LatexText } from './LatexText';
 import { ContextMenu } from './ContextMenu';
 
@@ -159,34 +159,6 @@ export function InteractiveNode({
           onRemoveOccurrence={handleRemoveOccurrence}
         />
       )}
-
-      <style jsx global>{`
-        .interactive-node {
-          position: relative;
-          cursor: pointer;
-          transition: background-color 0.2s ease;
-          border-radius: 2px;
-        }
-
-        .interactive-node:hover {
-          background-color: rgba(99, 102, 241, 0.05);
-        }
-
-        .interactive-node.has-tooltip {
-          background-color: rgba(99, 102, 241, 0.08);
-          border-left: 3px solid #6366f1;
-          padding-left: 0.75em;
-        }
-
-        .interactive-node.has-tooltip:hover {
-          background-color: rgba(99, 102, 241, 0.15);
-        }
-
-        .interactive-node.is-active {
-          background-color: rgba(99, 102, 241, 0.15);
-          outline: 2px solid rgba(99, 102, 241, 0.3);
-        }
-      `}</style>
     </>
   );
 }

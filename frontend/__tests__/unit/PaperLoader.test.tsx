@@ -71,7 +71,7 @@ global.confirm = mockConfirm
 
 describe('PaperLoader', () => {
   beforeEach(() => {
-    vi.clearAllMocks()
+    vi.resetAllMocks()
     mockConfirm.mockReturnValue(true)
     // Reset mock states
     mockPapersState.papers = []

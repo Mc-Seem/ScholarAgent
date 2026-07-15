@@ -3,8 +3,8 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { Plus, MessageSquare, BookOpen } from 'lucide-react';
 import { Panel, Group, Separator } from 'react-resizable-panels';
-import type { Tooltip, EntityTooltipMap } from '@/hooks/useTooltips';
-import type { TOCNode } from '@/utils/parseTOC';
+import type { Tooltip, EntityTooltipMap } from '../../hooks/useTooltips';
+import type { TOCNode } from '../../utils/parseTOC';
 import TooltipList from './TooltipList';
 import GlossaryList from './GlossaryList';
 import TooltipDetailView from './TooltipDetailView';

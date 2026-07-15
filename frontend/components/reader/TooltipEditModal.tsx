@@ -3,8 +3,8 @@
 import { useState, useEffect } from 'react';
 import { X, Save } from 'lucide-react';
 import { LatexText } from './LatexText';
-import { componentStyles, textStyles } from '@/lib/design-system';
-import type { Tooltip } from '@/hooks/useTooltips';
+import { componentStyles, textStyles } from '../../lib/design-system';
+import type { Tooltip } from '../../hooks/useTooltips';
 
 interface TooltipEditModalProps {
   isOpen: boolean;

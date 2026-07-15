@@ -1,0 +1,171 @@
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+@import "../../../../../styles/reader-interactions.css";
+@plugin "@tailwindcss/typography";
+@source "../../../../../components/reader/**/*.{ts,tsx}";
+@source "../../../../../components/ui/**/*.{ts,tsx}";
+@source "../**/*.{ts,tsx}";
+@custom-variant dark (&:where(.theia-dark, .theia-dark *));
+
+.scholar-widget {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  color: var(--theia-foreground);
+  background: var(--theia-editor-background);
+  font-family: var(--theia-ui-font-family);
+}
+
+.scholar-side-widget {
+  overflow: auto;
+  background: var(--theia-sideBar-background);
+}
+
+.scholar-reader-widget {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.scholar-reader-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 34px;
+  padding: 0.25rem 0.5rem;
+  border-bottom: 1px solid var(--theia-editorGroup-border);
+  background: var(--theia-editorGroupHeader-tabsBackground);
+}
+
+.scholar-reader-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.scholar-library-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.5rem;
+}
+
+.scholar-library-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.45rem 0.5rem;
+  border: 1px solid var(--theia-widget-border);
+  border-radius: 4px;
+  background: var(--theia-list-inactiveSelectionBackground);
+}
+
+.scholar-library-item:hover {
+  background: var(--theia-list-hoverBackground);
+}
+
+.scholar-library-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.scholar-toolbar-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  min-height: 26px;
+  padding: 0.2rem 0.45rem;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: var(--theia-button-foreground);
+  background: var(--theia-button-background);
+  cursor: pointer;
+}
+
+.scholar-toolbar-button:hover:not(:disabled) {
+  background: var(--theia-button-hoverBackground);
+}
+
+.scholar-toolbar-button.secondary {
+  color: var(--theia-secondaryButton-foreground);
+  background: var(--theia-secondaryButton-background);
+}
+
+.scholar-toolbar-button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.scholar-field {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--theia-input-border, transparent);
+  border-radius: 3px;
+  color: var(--theia-input-foreground);
+  background: var(--theia-input-background);
+}
+
+.scholar-empty,
+.scholar-error,
+.scholar-loading {
+  padding: 1rem;
+  color: var(--theia-descriptionForeground);
+  text-align: center;
+}
+
+.scholar-error {
+  color: var(--theia-errorForeground);
+}
+
+.scholar-widget .bg-white {
+  background-color: var(--theia-editor-background);
+}
+
+.scholar-widget .text-gray-900,
+.scholar-widget .text-gray-800,
+.scholar-widget .text-gray-700 {
+  color: var(--theia-foreground);
+}
+
+.scholar-widget .text-gray-600,
+.scholar-widget .text-gray-500,
+.scholar-widget .text-gray-400 {
+  color: var(--theia-descriptionForeground);
+}
+
+@keyframes toc-flash {
+  0%, 100% { background-color: transparent; }
+  50% { background-color: rgba(99, 102, 241, 0.2); }
+}
+
+.toc-flash {
+  animation: toc-flash 1.5s ease-in-out;
+}
+
+.kg-entity {
+  padding: 0 1px;
+  border-bottom: 1px dotted rgba(99, 102, 241, 0.5);
+  cursor: help;
+  transition: all 0.2s ease;
+}
+
+.kg-entity:hover {
+  border-bottom-color: rgb(99, 102, 241);
+  background-color: rgba(99, 102, 241, 0.1);
+}
+
+.kg-entity[data-entity-type="symbol"] { border-bottom-color: rgba(59, 130, 246, 0.5); }
+.kg-entity[data-entity-type="definition"] { border-bottom-color: rgba(16, 185, 129, 0.5); }
+.kg-entity[data-entity-type="theorem"] { border-bottom-color: rgba(139, 92, 246, 0.5); }
+
+.kg-node-math,
+.kg-node-math mjx-container {
+  max-width: 100%;
+  overflow: hidden;
+}

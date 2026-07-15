@@ -1,0 +1,34 @@
+{
+  "private": true,
+  "name": "@scholar-agent/theia-browser",
+  "version": "0.1.0",
+  "dependencies": {
+    "@scholar-agent/theia-extension": "0.1.0",
+    "@theia/core": "1.73.0",
+    "@theia/preferences": "1.73.0"
+  },
+  "devDependencies": {
+    "@theia/cli": "1.73.0"
+  },
+  "scripts": {
+    "rebuild": "theia rebuild:browser --cacheRoot ../..",
+    "bundle": "npm run rebuild && theia build --mode development",
+    "bundle:production": "npm run rebuild && theia build --mode production",
+    "start": "theia start --hostname 0.0.0.0 --port 3000",
+    "watch": "npm run rebuild && theia build --watch --mode development"
+  },
+  "theia": {
+    "target": "browser",
+    "frontend": {
+      "config": {
+        "applicationName": "Scholar Agent",
+        "reloadOnReconnect": true
+      }
+    },
+    "backend": {
+      "config": {
+        "frontendConnectionTimeout": 3000
+      }
+    }
+  }
+}

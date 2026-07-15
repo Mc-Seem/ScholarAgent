@@ -1,0 +1,25 @@
+.interactive-node {
+  position: relative;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+  border-radius: 2px;
+}
+
+.interactive-node:hover {
+  background-color: rgba(99, 102, 241, 0.05);
+}
+
+.interactive-node.has-tooltip {
+  background-color: rgba(99, 102, 241, 0.08);
+  border-left: 3px solid #6366f1;
+  padding-left: 0.75em;
+}
+
+.interactive-node.has-tooltip:hover,
+.interactive-node.is-active {
+  background-color: rgba(99, 102, 241, 0.15);
+}
+
+.interactive-node.is-active {
+  outline: 2px solid rgba(99, 102, 241, 0.3);
+}

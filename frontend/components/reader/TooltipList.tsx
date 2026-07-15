@@ -2,8 +2,8 @@
 
 import { useState, useMemo } from 'react';
 import { ChevronRight, ChevronDown, Pin, Edit2, Trash2, FileText } from 'lucide-react';
-import type { Tooltip } from '@/hooks/useTooltips';
-import type { TOCNode } from '@/utils/parseTOC';
+import type { Tooltip } from '../../hooks/useTooltips';
+import type { TOCNode } from '../../utils/parseTOC';
 import {
   SectionGroupingStrategy,
   FlatGroupingStrategy,
@@ -11,10 +11,10 @@ import {
   sortTooltipsByPriority,
   type TooltipGroup,
   type GroupingStrategy,
-} from '@/utils/tooltipGrouping';
+} from '../../utils/tooltipGrouping';
 import { LatexText } from './LatexText';
-import { EmptyState, IconButton, TreeView } from '@/components/ui';
-import { componentStyles } from '@/lib/design-system';
+import { EmptyState, IconButton, TreeView } from '../ui';
+import { componentStyles } from '../../lib/design-system';
 
 interface TooltipListProps {
   tooltips: Tooltip[];

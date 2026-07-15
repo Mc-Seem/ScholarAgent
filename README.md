@@ -79,7 +79,7 @@ That's it! The application will be running with:
 
 **Required:**
 - Python 3.12+ with `uv` package manager
-- Node.js 18+ with npm
+- Node.js 24 with npm (required by the Theia pilot)
 - PostgreSQL 14+
 - Docker (for LaTeXML compilation)
 - Git
@@ -191,6 +191,28 @@ cd frontend && npm run dev
 
 Access the app at `http://localhost:3000`
 
+### Experimental Theia Pilot
+
+The existing Next.js client remains the default and fallback. The isolated
+Theia Platform pilot reuses the same reader components and FastAPI backend.
+
+```bash
+# Browser workbench + backend (from frontend/, requires Node.js 24)
+npm run dev:theia
+
+# Electron workbench + backend
+npm run dev:theia:desktop
+
+# Build either target without starting it
+npm run theia:build:browser
+npm run theia:build:electron
+```
+
+The pilot provides one central tab per paper, native split view and layout
+restoration, Papers/Navigation/Annotations views, commands, keybindings, and
+status-bar progress. Set `window.__SCHOLAR_API_BASE__` before frontend startup
+to override the default `http://<current-host>:8000` API URL.
+
 ## Environment Variables
 
 Create a `.env` file in the same directory as `docker-compose.yml`:
@@ -220,7 +242,7 @@ arXiv .tar.gz → LaTeXML → HTML5 + MathML → PostgreSQL
 
 ### Tech Stack
 - **Backend**: FastAPI, PostgreSQL, SQLAlchemy, LangGraph
-- **Frontend**: Next.js, React, MathJax 4, Framer Motion
+- **Frontend**: Next.js reference client; Theia Platform pilot; React, MathJax 4, Framer Motion
 - **AI**: Claude Sonnet via Anthropic API
 - **Compilation**: LaTeXML (Docker)
 

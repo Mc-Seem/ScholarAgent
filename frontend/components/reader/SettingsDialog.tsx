@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { X, Save, Loader2, CheckCircle2, AlertCircle, Eye, EyeOff, Zap } from 'lucide-react';
-import { componentStyles, textStyles } from '@/lib/design-system';
-import { apiFetch } from '@/hooks/useApi';
+import { componentStyles, textStyles } from '../../lib/design-system';
+import { apiFetch } from '../../hooks/useApi';
 import { ModelSelect } from './ModelSelect';
 
 // ---- Types ----

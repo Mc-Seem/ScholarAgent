@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { List, Network } from 'lucide-react';
 import TableOfContents from './TableOfContents';
 import { KnowledgeGraphView } from './KnowledgeGraphView';
-import type { TOCNode } from '@/utils/parseTOC';
+import type { TOCNode } from '../../utils/parseTOC';
 
 interface NavigationPanelProps {
   paperId: string;

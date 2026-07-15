@@ -3,8 +3,8 @@
 import { useState } from 'react';
 import { X, Variable, BookOpen, Lightbulb, Focus, ChevronRight, ChevronDown, FunctionSquare } from 'lucide-react';
 import { LatexText } from './LatexText';
-import { Button, IconButton, CollapsibleSection } from '@/components/ui';
-import { colors, textStyles } from '@/lib/design-system';
+import { Button, IconButton, CollapsibleSection } from '../ui';
+import { colors, textStyles } from '../../lib/design-system';
 
 export interface ConnectionInfo {
   nodeId: string;

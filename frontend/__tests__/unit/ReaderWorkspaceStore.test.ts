@@ -1,0 +1,147 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+import {
+  ReaderWorkspaceStore,
+  type ReaderWorkspaceApi,
+} from '@/lib/reader-workspace-store'
+import type { Paper, PaperDetail } from '@/hooks/usePapers'
+import type { Tooltip } from '@/hooks/useTooltips'
+
+const paperSummary = (id: string): Paper => ({
+  id,
+  filename: `${id}.tar.gz`,
+  arxiv_id: null,
+  uploaded_at: '2026-07-15T00:00:00Z',
+  compiled_at: '2026-07-15T00:01:00Z',
+  has_html: true,
+})
+
+const paperDetail = (id: string): PaperDetail => ({
+  ...paperSummary(id),
+  html_content: `<article data-id="${id}">${id}</article>`,
+  sections: [],
+  equations: [],
+  citations: [],
+  paper_metadata: { title: id },
+  has_knowledge_graph: false,
+})
+
+const tooltip = (paperId: string, entityId: string): Tooltip => ({
+  id: `${paperId}-${entityId}`,
+  paper_id: paperId,
+  dom_node_id: null,
+  entity_id: entityId,
+  user_id: 'test-user',
+  content: entityId,
+  is_pinned: false,
+  created_at: '2026-07-15T00:00:00Z',
+  updated_at: '2026-07-15T00:00:00Z',
+})
+
+describe('ReaderWorkspaceStore', () => {
+  let api: ReaderWorkspaceApi
+
+  beforeEach(() => {
+    api = {
+      listPapers: vi.fn().mockResolvedValue([paperSummary('paper-a'), paperSummary('paper-b')]),
+      getPaper: vi.fn((paperId: string) => Promise.resolve(paperDetail(paperId))),
+      listTooltips: vi.fn((paperId: string) => Promise.resolve([tooltip(paperId, `${paperId}-entity`)])),
+    }
+  })
+
+  it('loads the library and exposes loading completion to subscribers', async () => {
+    const store = new ReaderWorkspaceStore(api)
+    const snapshots = [store.getSnapshot()]
+    const unsubscribe = store.subscribe(() => snapshots.push(store.getSnapshot()))
+
+    await store.loadLibrary()
+    unsubscribe()
+
+    expect(store.getSnapshot().papers.map(paper => paper.id)).toEqual(['paper-a', 'paper-b'])
+    expect(store.getSnapshot().libraryLoading).toBe(false)
+    expect(snapshots.some(snapshot => snapshot.libraryLoading)).toBe(true)
+  })
+
+  it('deduplicates concurrent loads and reuses a loaded paper on reactivation', async () => {
+    const store = new ReaderWorkspaceStore(api)
+
+    await Promise.all([
+      store.openPaper('paper-a'),
+      store.openPaper('paper-a'),
+    ])
+    store.activatePaper('paper-a')
+    await store.openPaper('paper-a')
+
+    expect(api.getPaper).toHaveBeenCalledTimes(1)
+    expect(api.listTooltips).toHaveBeenCalledTimes(1)
+    expect(store.getSnapshot().activePaperId).toBe('paper-a')
+  })
+
+  it('keeps paper and active-entity state isolated across two open tabs', async () => {
+    const store = new ReaderWorkspaceStore(api)
+
+    await store.openPaper('paper-a')
+    store.setActiveEntity('paper-a', 'entity-a')
+    await store.openPaper('paper-b')
+    store.setActiveEntity('paper-b', 'entity-b')
+
+    const snapshot = store.getSnapshot()
+    expect(snapshot.openPaperIds).toEqual(['paper-a', 'paper-b'])
+    expect(snapshot.papersById['paper-a']?.paper_metadata?.title).toBe('paper-a')
+    expect(snapshot.papersById['paper-b']?.paper_metadata?.title).toBe('paper-b')
+    expect(snapshot.activeEntityByPaperId).toEqual({
+      'paper-a': 'entity-a',
+      'paper-b': 'entity-b',
+    })
+  })
+
+  it('refreshes an inactive paper without switching the active tab', async () => {
+    const store = new ReaderWorkspaceStore(api)
+    await store.openPaper('paper-a')
+    await store.openPaper('paper-b')
+
+    await store.refreshPaper('paper-a')
+
+    expect(store.getSnapshot().activePaperId).toBe('paper-b')
+    expect(api.getPaper).toHaveBeenCalledTimes(3)
+  })
+
+  it('publishes created and updated annotations to every subscriber', async () => {
+    const created = tooltip('paper-a', 'entity-a')
+    api.createTooltip = vi.fn().mockResolvedValue(created)
+    api.updateTooltip = vi.fn().mockResolvedValue({
+      ...created,
+      content: 'Updated explanation',
+      is_pinned: true,
+    })
+    const store = new ReaderWorkspaceStore(api)
+    await store.openPaper('paper-a')
+
+    await store.createTooltip('paper-a', 'node-a', 'Initial explanation')
+    await store.updateTooltip('paper-a', created.id, {
+      content: 'Updated explanation',
+      isPinned: true,
+    })
+
+    expect(store.getSnapshot().tooltipsByPaperId['paper-a']).toContainEqual(
+      expect.objectContaining({
+        id: created.id,
+        content: 'Updated explanation',
+        is_pinned: true,
+      }),
+    )
+  })
+
+  it('rejects an empty id without calling the API and records load failures', async () => {
+    const store = new ReaderWorkspaceStore(api)
+
+    await expect(store.openPaper('')).rejects.toThrow('Paper id is required')
+    expect(api.getPaper).not.toHaveBeenCalled()
+
+    vi.mocked(api.getPaper).mockRejectedValueOnce(new Error('Backend unavailable'))
+    await expect(store.openPaper('paper-a')).rejects.toThrow('Backend unavailable')
+
+    expect(store.getSnapshot().paperErrors['paper-a']).toBe('Backend unavailable')
+    expect(store.getSnapshot().loadingPaperIds).not.toContain('paper-a')
+  })
+})

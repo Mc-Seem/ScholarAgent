@@ -14,7 +14,7 @@
  */
 
 import { LucideIcon } from 'lucide-react';
-import { colors, textStyles, spacing, borders } from '@/lib/design-system';
+import { colors, textStyles, spacing, borders } from '../../lib/design-system';
 
 interface EmptyStateProps {
   icon: LucideIcon;

@@ -1,0 +1,38 @@
+{
+  "private": true,
+  "name": "@scholar-agent/theia-electron",
+  "productName": "Scholar Agent",
+  "version": "0.1.0",
+  "main": "lib/backend/electron-main.js",
+  "dependencies": {
+    "@scholar-agent/theia-extension": "0.1.0",
+    "@theia/core": "1.73.0",
+    "@theia/electron": "1.73.0",
+    "@theia/preferences": "1.73.0"
+  },
+  "devDependencies": {
+    "@theia/cli": "1.73.0",
+    "electron": "39.8.7"
+  },
+  "scripts": {
+    "rebuild": "theia rebuild:electron --cacheRoot ../..",
+    "bundle": "npm run rebuild && theia build --mode development",
+    "bundle:production": "npm run rebuild && theia build --mode production",
+    "start": "theia start",
+    "watch": "npm run rebuild && theia build --watch --mode development"
+  },
+  "theia": {
+    "target": "electron",
+    "frontend": {
+      "config": {
+        "applicationName": "Scholar Agent",
+        "reloadOnReconnect": true
+      }
+    },
+    "backend": {
+      "config": {
+        "frontendConnectionTimeout": -1
+      }
+    }
+  }
+}

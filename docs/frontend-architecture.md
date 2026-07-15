@@ -93,6 +93,39 @@ PaperLoader.tsx
     └── Tab: Glossary → GlossaryList (entity_id tooltips)
 ```
 
+## Theia Platform Pilot
+
+The pilot lives beside the Next.js reference client and reuses its reader
+components. It does not change backend endpoints or database models.
+
+```
+frontend/theia/
+├── browser-app/                 # Theia browser product
+├── electron-app/                # Theia Electron product
+└── scholar-extension/
+    └── src/browser/
+        ├── scholar-paper-widget.tsx    # Dynamic central tab per paper
+        ├── scholar-side-widgets.tsx    # Papers, Navigation, Annotations
+        ├── scholar-contribution.ts     # Layout, commands, keybindings, status
+        └── scholar-frontend-module.ts  # Dependency injection and factories
+```
+
+`ReaderWorkspaceStore` is framework-independent and shared by every widget.
+It caches paper details and tooltips by paper ID, deduplicates concurrent loads,
+and keeps active-entity state isolated per tab. Activating an already loaded
+tab therefore does not refetch it. `HttpReaderWorkspaceApi` supplies the common
+FastAPI client and compilation SSE subscription.
+
+Theia persists widget factory options (`paperId` and label), so paper tabs,
+split groups, and side-view layout restore across restarts. The Next.js
+`PaperLoader` remains available as the comparison baseline and fallback.
+
+```bash
+cd frontend
+npm run dev:theia             # browser + backend
+npm run dev:theia:desktop     # Electron + backend
+```
+
 ## Entity Styling
 
 ### Knowledge Graph Node Types
