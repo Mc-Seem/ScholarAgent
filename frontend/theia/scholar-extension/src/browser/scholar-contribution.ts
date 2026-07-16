@@ -16,6 +16,7 @@ import {
   FrontendApplicationContribution,
   KeybindingContribution,
   KeybindingRegistry,
+  SingleTextInputDialog,
   StatusBar,
   StatusBarAlignment,
   ViewContainer,
@@ -27,14 +28,18 @@ import {
 } from '@theia/core/lib/browser/shell/tab-bar-toolbar'
 import { inject, injectable } from '@theia/core/shared/inversify'
 
+import type { Paper, PaperDetail } from '../../../../hooks/usePapers'
 import type { Tooltip } from '../../../../hooks/useTooltips'
 import { ensureMathJax } from './mathjax-loader'
 import { ScholarCommands } from './scholar-commands'
 import { navigateToPaperElement, paperLabel } from './scholar-react'
 import {
   SCHOLAR_ANNOTATIONS_WIDGET_ID,
+  SCHOLAR_LIBRARY_CONTEXT_MENU,
   SCHOLAR_LIBRARY_WIDGET_ID,
   SCHOLAR_NAVIGATION_WIDGET_ID,
+  ScholarLibraryWidget,
+  isScholarLibraryTreeNode,
 } from './scholar-side-widgets'
 import {
   SCHOLAR_PAPER_CONTEXT_MENU,
@@ -47,10 +52,15 @@ import {
   SCHOLAR_TREE_CONTEXT_MENU,
   isScholarTreeNode,
 } from './scholar-native-widgets'
-import { ScholarPaperWidget } from './scholar-paper-widget'
+import {
+  SCHOLAR_PAPER_FACTORY_ID,
+  ScholarPaperWidget,
+  type ScholarPaperWidgetOptions,
+} from './scholar-paper-widget'
 import { ScholarWorkspaceService } from './scholar-workspace-service'
 
 const STATUS_BAR_ID = 'scholar-agent.active-paper'
+const UPLOAD_ACCEPT = '.tar.gz,.tgz,.zip,.tex'
 
 @injectable()
 export class ScholarContribution implements
@@ -61,6 +71,8 @@ export class ScholarContribution implements
   TabBarToolbarContribution {
   private readonly toDispose = new DisposableCollection()
   private readonly onToolbarItemsChangedEmitter = new Emitter<void>()
+  private pendingUploadInput: HTMLInputElement | undefined
+  private pendingUploadCleanup: (() => void) | undefined
 
   constructor(
     @inject(ScholarWorkspaceService) private readonly store: ScholarWorkspaceService,
@@ -117,11 +129,15 @@ export class ScholarContribution implements
   }
 
   onStop(): void {
+    this.pendingUploadCleanup?.()
     this.toDispose.dispose()
     void this.statusBar.removeElement(STATUS_BAR_ID)
   }
 
   registerCommands(commands: CommandRegistry): void {
+    const isLibraryCommandVisible = (argument: unknown): boolean => argument === undefined
+      || argument instanceof ScholarLibraryWidget
+
     commands.registerCommand(ScholarCommands.SHOW_LIBRARY, {
       execute: () => this.showView(SCHOLAR_LIBRARY_WIDGET_ID, 'left'),
     })
@@ -133,6 +149,25 @@ export class ScholarContribution implements
     })
     commands.registerCommand(ScholarCommands.REFRESH_LIBRARY, {
       execute: () => this.store.loadLibrary(),
+      isVisible: isLibraryCommandVisible,
+    })
+    commands.registerCommand(ScholarCommands.UPLOAD_LATEX, {
+      execute: () => this.uploadLatexFile(),
+      isVisible: isLibraryCommandVisible,
+    })
+    commands.registerCommand(ScholarCommands.IMPORT_ARXIV, {
+      execute: () => this.importArxiv(),
+      isVisible: isLibraryCommandVisible,
+    })
+    commands.registerCommand(ScholarCommands.OPEN_PAPER, {
+      execute: (argument: unknown) => this.openPaper(argument, false),
+      isEnabled: (argument: unknown) => Boolean(this.paperIdOf(argument)),
+      isVisible: (argument: unknown) => Boolean(this.paperIdOf(argument)),
+    })
+    commands.registerCommand(ScholarCommands.OPEN_PAPER_TO_SIDE, {
+      execute: (argument: unknown) => this.openPaper(argument, true),
+      isEnabled: (argument: unknown) => Boolean(this.paperIdOf(argument)),
+      isVisible: (argument: unknown) => Boolean(this.paperIdOf(argument)),
     })
     commands.registerCommand(ScholarCommands.FIND_IN_PAPER, {
       execute: () => this.activePaperWidget?.openSearch(),
@@ -189,22 +224,22 @@ export class ScholarContribution implements
     commands.registerCommand(ScholarCommands.COMPILE_PAPER, {
       execute: (argument: unknown) => this.compilePaperFromWidget(argument),
       isEnabled: (argument: unknown) => this.canCompilePaper(argument),
-      isVisible: (argument: unknown) => Boolean(this.paperWidgetOf(argument)),
+      isVisible: (argument: unknown) => Boolean(this.paperIdOf(argument)),
     })
     commands.registerCommand(ScholarCommands.BUILD_KNOWLEDGE_GRAPH, {
       execute: (argument: unknown) => this.buildKnowledgeGraphFromWidget(argument),
       isEnabled: (argument: unknown) => this.canBuildKnowledgeGraph(argument),
-      isVisible: (argument: unknown) => Boolean(this.paperWidgetOf(argument)),
+      isVisible: (argument: unknown) => Boolean(this.paperIdOf(argument)),
     })
     commands.registerCommand(ScholarCommands.DELETE_PAPER, {
       execute: (argument: unknown) => this.deletePaperFromWidget(argument),
-      isEnabled: (argument: unknown) => Boolean(this.paperWidgetOf(argument)),
-      isVisible: (argument: unknown) => Boolean(this.paperWidgetOf(argument)),
+      isEnabled: (argument: unknown) => Boolean(this.paperIdOf(argument)),
+      isVisible: (argument: unknown) => Boolean(this.paperIdOf(argument)),
     })
     commands.registerCommand(ScholarCommands.OPEN_GRAPH, {
       execute: (argument: unknown) => this.openGraphFromWidget(argument),
       isEnabled: (argument: unknown) => this.canOpenGraph(argument),
-      isVisible: (argument: unknown) => Boolean(this.paperWidgetOf(argument)),
+      isVisible: (argument: unknown) => Boolean(this.paperIdOf(argument)),
     })
   }
 
@@ -237,6 +272,27 @@ export class ScholarContribution implements
       priority: 40,
       onDidChange: this.onToolbarItemsChangedEmitter.event,
     }))
+    this.toDispose.push(registry.registerItem({
+      id: ScholarCommands.REFRESH_LIBRARY.id,
+      command: ScholarCommands.REFRESH_LIBRARY.id,
+      group: 'navigation',
+      priority: 10,
+      onDidChange: this.onToolbarItemsChangedEmitter.event,
+    }))
+    this.toDispose.push(registry.registerItem({
+      id: ScholarCommands.UPLOAD_LATEX.id,
+      command: ScholarCommands.UPLOAD_LATEX.id,
+      group: 'navigation',
+      priority: 20,
+      onDidChange: this.onToolbarItemsChangedEmitter.event,
+    }))
+    this.toDispose.push(registry.registerItem({
+      id: ScholarCommands.IMPORT_ARXIV.id,
+      command: ScholarCommands.IMPORT_ARXIV.id,
+      group: 'navigation',
+      priority: 30,
+      onDidChange: this.onToolbarItemsChangedEmitter.event,
+    }))
   }
 
   registerMenus(menus: MenuModelRegistry): void {
@@ -252,13 +308,29 @@ export class ScholarContribution implements
       commandId: ScholarCommands.SHOW_ANNOTATIONS.id,
       order: 'a30',
     })
-    menus.registerMenuAction(CommonMenus.VIEW_VIEWS, {
-      commandId: ScholarCommands.REFRESH_LIBRARY.id,
-      order: 'b10',
-    })
     menus.registerMenuAction(CommonMenus.EDIT_FIND, {
       commandId: ScholarCommands.FIND_IN_PAPER.id,
       order: 'a10',
+    })
+    menus.registerMenuAction(SCHOLAR_LIBRARY_CONTEXT_MENU, {
+      commandId: ScholarCommands.OPEN_PAPER.id,
+      order: 'a10',
+    })
+    menus.registerMenuAction(SCHOLAR_LIBRARY_CONTEXT_MENU, {
+      commandId: ScholarCommands.OPEN_PAPER_TO_SIDE.id,
+      order: 'a20',
+    })
+    menus.registerMenuAction(SCHOLAR_LIBRARY_CONTEXT_MENU, {
+      commandId: ScholarCommands.COMPILE_PAPER.id,
+      order: 'b10',
+    })
+    menus.registerMenuAction(SCHOLAR_LIBRARY_CONTEXT_MENU, {
+      commandId: ScholarCommands.BUILD_KNOWLEDGE_GRAPH.id,
+      order: 'b20',
+    })
+    menus.registerMenuAction(SCHOLAR_LIBRARY_CONTEXT_MENU, {
+      commandId: ScholarCommands.DELETE_PAPER.id,
+      order: 'c10',
     })
     menus.registerMenuAction(SCHOLAR_PAPER_CONTEXT_MENU, {
       commandId: ScholarCommands.ADD_ANNOTATION.id,
@@ -315,67 +387,88 @@ export class ScholarContribution implements
       : undefined
   }
 
-  private paperWidgetOf(argument: unknown): ScholarPaperWidget | undefined {
+  /**
+   * Resolves a paper id from any of the objects our paper-related commands may receive:
+   * a `ScholarPaperWidget` (toolbar/command palette on an open paper), a library tree node
+   * (context menu / Enter / double-click in the library), or `undefined` (command palette,
+   * falling back to the active paper widget). Any other object is rejected without falling
+   * back to the active paper, so foreign widgets never leak into paper actions.
+   */
+  private paperIdOf(argument: unknown): string | undefined {
     if (argument === undefined) {
-      return this.activePaperWidget
+      return this.activePaperWidget?.options.paperId
     }
-    return argument instanceof ScholarPaperWidget ? argument : undefined
+    if (argument instanceof ScholarPaperWidget) {
+      return argument.options.paperId
+    }
+    if (isScholarLibraryTreeNode(argument)) {
+      return argument.paperId
+    }
+    return undefined
+  }
+
+  private paperOf(paperId: string): Paper | PaperDetail | undefined {
+    const snapshot = this.store.getSnapshot()
+    return snapshot.papersById[paperId] ?? snapshot.papers.find(paper => paper.id === paperId)
+  }
+
+  private paperTitle(paper: Paper | PaperDetail): string | undefined {
+    return 'paper_metadata' in paper ? paper.paper_metadata?.title : undefined
   }
 
   private canCompilePaper(argument: unknown): boolean {
-    const widget = this.paperWidgetOf(argument)
-    if (!widget) {
+    const paperId = this.paperIdOf(argument)
+    if (!paperId) {
       return false
     }
-    return !this.store.getSnapshot().statusByPaperId[widget.options.paperId]
+    return !this.store.getSnapshot().statusByPaperId[paperId]
   }
 
   private canBuildKnowledgeGraph(argument: unknown): boolean {
-    const widget = this.paperWidgetOf(argument)
-    if (!widget) {
+    const paperId = this.paperIdOf(argument)
+    if (!paperId) {
       return false
     }
-    const snapshot = this.store.getSnapshot()
-    const paper = snapshot.papersById[widget.options.paperId]
-    return Boolean(paper?.has_html) && !snapshot.statusByPaperId[widget.options.paperId]
+    const paper = this.paperOf(paperId)
+    return Boolean(paper?.has_html) && !this.store.getSnapshot().statusByPaperId[paperId]
   }
 
   private canOpenGraph(argument: unknown): boolean {
-    const widget = this.paperWidgetOf(argument)
-    if (!widget) {
+    const paperId = this.paperIdOf(argument)
+    if (!paperId) {
       return false
     }
-    const paper = this.store.getSnapshot().papersById[widget.options.paperId]
+    const paper = this.store.getSnapshot().papersById[paperId]
     return Boolean(paper?.has_knowledge_graph)
   }
 
   private async compilePaperFromWidget(argument: unknown): Promise<void> {
-    const widget = this.paperWidgetOf(argument)
-    if (!widget) {
+    const paperId = this.paperIdOf(argument)
+    if (!paperId) {
       return
     }
     try {
-      await this.store.compilePaper(widget.options.paperId)
+      await this.store.compilePaper(paperId)
     } catch (reason) {
       await this.messageService.error(`Could not compile paper: ${errorMessage(reason)}`)
     }
   }
 
   private async buildKnowledgeGraphFromWidget(argument: unknown): Promise<void> {
-    const widget = this.paperWidgetOf(argument)
-    if (!widget) {
+    const paperId = this.paperIdOf(argument)
+    if (!paperId) {
       return
     }
     try {
-      await this.store.buildKnowledgeGraph(widget.options.paperId)
+      await this.store.buildKnowledgeGraph(paperId)
     } catch (reason) {
       await this.messageService.error(`Could not build knowledge graph: ${errorMessage(reason)}`)
     }
   }
 
   private async deletePaperFromWidget(argument: unknown): Promise<void> {
-    const widget = this.paperWidgetOf(argument)
-    if (!widget) {
+    const paperId = this.paperIdOf(argument)
+    if (!paperId) {
       return
     }
     const confirmed = await new ConfirmDialog({
@@ -387,21 +480,117 @@ export class ScholarContribution implements
       return
     }
     try {
-      await this.store.deletePaper(widget.options.paperId)
-      widget.close()
+      await this.store.deletePaper(paperId)
+      this.closePaperWidgets(paperId)
       void this.messageService.info('Paper deleted')
     } catch (reason) {
       await this.messageService.error(`Could not delete paper: ${errorMessage(reason)}`)
     }
   }
 
+  private closePaperWidgets(paperId: string): void {
+    this.widgetManager.getWidgets(SCHOLAR_PAPER_FACTORY_ID)
+      .filter((widget): widget is ScholarPaperWidget => widget instanceof ScholarPaperWidget
+        && widget.options.paperId === paperId)
+      .forEach(widget => widget.close())
+  }
+
   private async openGraphFromWidget(argument: unknown): Promise<void> {
-    const widget = this.paperWidgetOf(argument)
-    if (!widget) {
+    const paperId = this.paperIdOf(argument)
+    if (!paperId) {
       return
     }
-    this.store.activatePaper(widget.options.paperId)
+    this.store.activatePaper(paperId)
     await this.revealGraph()
+  }
+
+  private async openPaper(argument: unknown, openToSide: boolean): Promise<void> {
+    const paperId = this.paperIdOf(argument)
+    if (!paperId) {
+      return
+    }
+    await this.openPaperById(paperId, openToSide)
+  }
+
+  private async openPaperById(paperId: string, openToSide: boolean): Promise<void> {
+    const paper = this.paperOf(paperId)
+    const label = paper ? paperLabel(paper.filename, this.paperTitle(paper)) : paperId
+    const options: ScholarPaperWidgetOptions = { paperId, label }
+    const widget = await this.widgetManager.getOrCreateWidget<ScholarPaperWidget>(
+      SCHOLAR_PAPER_FACTORY_ID,
+      options,
+    )
+
+    if (!widget.isAttached) {
+      const reference = openToSide ? this.shell.getCurrentWidget('main') : undefined
+      await this.shell.addWidget(widget, {
+        area: 'main',
+        mode: openToSide && reference ? 'open-to-right' : 'tab-after',
+        ref: reference,
+      })
+    }
+
+    this.store.activatePaper(paperId)
+    await this.shell.activateWidget(widget.id)
+  }
+
+  private async importArxiv(): Promise<void> {
+    const dialog = new SingleTextInputDialog({
+      title: 'Import from arXiv',
+      placeholder: 'arXiv id or URL',
+    })
+    const value = await dialog.open()
+    const trimmed = value?.trim()
+    if (!trimmed) {
+      return
+    }
+    try {
+      const paper = await this.store.uploadArxiv(trimmed)
+      await this.openPaperById(paper.id, false)
+    } catch (reason) {
+      await this.messageService.error(`Could not fetch arXiv source: ${errorMessage(reason)}`)
+    }
+  }
+
+  private uploadLatexFile(): void {
+    this.pendingUploadCleanup?.()
+
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = UPLOAD_ACCEPT
+    input.style.display = 'none'
+    this.pendingUploadInput = input
+
+    const cleanup = (): void => {
+      input.removeEventListener('change', onChange)
+      input.removeEventListener('cancel', onCancel)
+      input.remove()
+      if (this.pendingUploadInput === input) {
+        this.pendingUploadInput = undefined
+        this.pendingUploadCleanup = undefined
+      }
+    }
+    const onCancel = (): void => {
+      cleanup()
+    }
+    const onChange = (): void => {
+      const file = input.files?.[0]
+      cleanup()
+      if (!file) {
+        return
+      }
+      void this.store.uploadPaper(file)
+        .then(paper => this.openPaperById(paper.id, false))
+        .catch(reason => {
+          void this.messageService.error(`Could not upload paper: ${errorMessage(reason)}`)
+        })
+    }
+
+    this.pendingUploadCleanup = cleanup
+    input.addEventListener('change', onChange)
+    input.addEventListener('cancel', onCancel)
+    document.body.appendChild(input)
+    input.click()
   }
 
   private async revealGraph(): Promise<void> {

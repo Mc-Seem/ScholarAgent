@@ -33,3 +33,35 @@ describe('ScholarCommands (active paper actions)', () => {
     expect(ScholarCommands.OPEN_GRAPH.label).toBe('Open Knowledge Graph')
   })
 })
+
+describe('ScholarCommands (library actions)', () => {
+  it('exposes Refresh Library, Upload LaTeX, Import arXiv, Open and Open to the Side as distinct commands', () => {
+    const ids = [
+      ScholarCommands.REFRESH_LIBRARY.id,
+      ScholarCommands.UPLOAD_LATEX.id,
+      ScholarCommands.IMPORT_ARXIV.id,
+      ScholarCommands.OPEN_PAPER.id,
+      ScholarCommands.OPEN_PAPER_TO_SIDE.id,
+    ]
+
+    expect(new Set(ids).size).toBe(ids.length)
+    ids.forEach(id => expect(id.startsWith('scholar-agent.')).toBe(true))
+  })
+
+  it('provides a Codicon icon class for every library command', () => {
+    for (const command of [
+      ScholarCommands.REFRESH_LIBRARY,
+      ScholarCommands.UPLOAD_LATEX,
+      ScholarCommands.IMPORT_ARXIV,
+      ScholarCommands.OPEN_PAPER,
+      ScholarCommands.OPEN_PAPER_TO_SIDE,
+    ]) {
+      expect(command.iconClass).toMatch(/^codicon codicon-[a-z-]+$/)
+    }
+  })
+
+  it('labels the Open and Open to the Side commands for the library context menu', () => {
+    expect(ScholarCommands.OPEN_PAPER.label).toBe('Open')
+    expect(ScholarCommands.OPEN_PAPER_TO_SIDE.label).toBe('Open to the Side')
+  })
+})

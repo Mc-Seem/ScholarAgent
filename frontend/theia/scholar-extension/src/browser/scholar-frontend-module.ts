@@ -19,6 +19,7 @@ import { ContainerModule } from '@theia/core/shared/inversify'
 import { ScholarContribution } from './scholar-contribution'
 import {
   SCHOLAR_ANNOTATIONS_WIDGET_ID,
+  SCHOLAR_LIBRARY_CONTEXT_MENU,
   SCHOLAR_LIBRARY_WIDGET_ID,
   SCHOLAR_NAVIGATION_WIDGET_ID,
   ScholarLibraryWidget,
@@ -49,10 +50,16 @@ export default new ContainerModule(bind => {
   bind(ScholarWorkspaceService).toSelf().inSingletonScope()
   bind(ScholarAnnotationService).toSelf().inSingletonScope()
 
-  bind(ScholarLibraryWidget).toSelf().inSingletonScope()
   bind(WidgetFactory).toDynamicValue(context => ({
     id: SCHOLAR_LIBRARY_WIDGET_ID,
-    createWidget: () => context.container.get(ScholarLibraryWidget),
+    createWidget: () => createTreeContainer(context.container, {
+      props: {
+        ...defaultTreeProps,
+        contextMenuPath: SCHOLAR_LIBRARY_CONTEXT_MENU,
+        search: true,
+      },
+      widget: ScholarLibraryWidget,
+    }).get(ScholarLibraryWidget),
   })).inSingletonScope()
 
   bind(WidgetFactory).toDynamicValue(context => ({

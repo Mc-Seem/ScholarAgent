@@ -1,16 +1,20 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { Command, CommandHandler } from '@theia/core'
-import type { ViewContainer as ViewContainerClass } from '@theia/core/lib/browser'
-import type { PaperDetail } from '@/hooks/usePapers'
+import type { CommonMenus, ViewContainer as ViewContainerClass } from '@theia/core/lib/browser'
+import type { Paper, PaperDetail } from '@/hooks/usePapers'
 import type { ReaderWorkspaceSnapshot } from '@/lib/reader-workspace-store'
 import type { ScholarCommands as ScholarCommandsNamespace } from '@/theia/scholar-extension/src/browser/scholar-commands'
 import type { ScholarContribution as ScholarContributionClass } from '@/theia/scholar-extension/src/browser/scholar-contribution'
 import type { ScholarPaperWidget as ScholarPaperWidgetClass } from '@/theia/scholar-extension/src/browser/scholar-paper-widget'
-import type { ScholarLibraryWidget as ScholarLibraryWidgetClass } from '@/theia/scholar-extension/src/browser/scholar-side-widgets'
+import type {
+  ScholarLibraryTreeNode,
+  ScholarLibraryWidget as ScholarLibraryWidgetClass,
+} from '@/theia/scholar-extension/src/browser/scholar-side-widgets'
 import type { ScholarAnnotationService as ScholarAnnotationServiceClass } from '@/theia/scholar-extension/src/browser/scholar-annotation-service'
 
 const confirmDialogOpen = vi.fn<() => Promise<boolean>>()
+const singleTextInputDialogOpen = vi.fn<() => Promise<string | undefined>>()
 
 vi.mock('@theia/core/lib/browser', async () => {
   const actual = await vi.importActual<typeof import('@theia/core/lib/browser')>(
@@ -21,22 +25,28 @@ vi.mock('@theia/core/lib/browser', async () => {
     ConfirmDialog: vi.fn().mockImplementation(function ConfirmDialog() {
       return { open: confirmDialogOpen }
     }),
+    SingleTextInputDialog: vi.fn().mockImplementation(function SingleTextInputDialog() {
+      return { open: singleTextInputDialogOpen }
+    }),
   }
 })
 
 let ViewContainer: typeof ViewContainerClass
+let CommonMenusNs: typeof CommonMenus
 let ScholarCommands: typeof ScholarCommandsNamespace
 let ScholarContribution: typeof ScholarContributionClass
 let ScholarAnnotationService: typeof ScholarAnnotationServiceClass
 let ScholarPaperWidget: typeof ScholarPaperWidgetClass
 let ScholarLibraryWidget: typeof ScholarLibraryWidgetClass
+let SCHOLAR_LIBRARY_CONTEXT_MENU: string[]
+let SCHOLAR_PAPER_FACTORY_ID: string
 let SCHOLAR_NAVIGATION_WIDGET_ID: string
 let SCHOLAR_GRAPH_WIDGET_ID: string
 
 beforeAll(async () => {
   vi.stubGlobal('DragEvent', class DragEvent extends Event {})
   document.queryCommandSupported = vi.fn(() => false)
-  ;({ ViewContainer } = await import('@theia/core/lib/browser'))
+  ;({ ViewContainer, CommonMenus: CommonMenusNs } = await import('@theia/core/lib/browser'))
   ;({ ScholarCommands } = await import(
     '@/theia/scholar-extension/src/browser/scholar-commands'
   ))
@@ -46,10 +56,10 @@ beforeAll(async () => {
   ;({ ScholarAnnotationService } = await import(
     '@/theia/scholar-extension/src/browser/scholar-annotation-service'
   ))
-  ;({ ScholarPaperWidget } = await import(
+  ;({ ScholarPaperWidget, SCHOLAR_PAPER_FACTORY_ID } = await import(
     '@/theia/scholar-extension/src/browser/scholar-paper-widget'
   ))
-  ;({ ScholarLibraryWidget, SCHOLAR_NAVIGATION_WIDGET_ID } = await import(
+  ;({ ScholarLibraryWidget, SCHOLAR_LIBRARY_CONTEXT_MENU, SCHOLAR_NAVIGATION_WIDGET_ID } = await import(
     '@/theia/scholar-extension/src/browser/scholar-side-widgets'
   ))
   ;({ SCHOLAR_GRAPH_WIDGET_ID } = await import(
@@ -140,15 +150,25 @@ function createFakeStore(snapshot: ReaderWorkspaceSnapshot) {
     compilePaper: vi.fn().mockResolvedValue(undefined),
     buildKnowledgeGraph: vi.fn().mockResolvedValue(undefined),
     deletePaper: vi.fn().mockResolvedValue(undefined),
+    uploadPaper: vi.fn(),
+    uploadArxiv: vi.fn(),
     activatePaper: vi.fn(),
     loadLibrary: vi.fn().mockResolvedValue([]),
   }
 }
 
-function createFakePaperWidget(paperId: string): ScholarPaperWidgetClass {
+function createFakePaperWidget(paperId: string, isAttached = true): ScholarPaperWidgetClass {
   const widget = Object.create(ScholarPaperWidget.prototype) as ScholarPaperWidgetClass
   Object.defineProperty(widget, 'options', {
     value: { paperId, label: paperId },
+    configurable: true,
+  })
+  Object.defineProperty(widget, 'id', {
+    value: `scholar-agent:paper:${paperId}`,
+    configurable: true,
+  })
+  Object.defineProperty(widget, 'isAttached', {
+    value: isAttached,
     configurable: true,
   })
   Object.defineProperty(widget, 'close', {
@@ -162,20 +182,32 @@ function createForeignWidget(): ScholarLibraryWidgetClass {
   return Object.create(ScholarLibraryWidget.prototype) as ScholarLibraryWidgetClass
 }
 
+function createLibraryNode(paperId: string): ScholarLibraryTreeNode {
+  return {
+    id: `paper:${paperId}`,
+    paperId,
+    parent: undefined,
+    selected: false,
+  }
+}
+
 function createContribution(store: ReturnType<typeof createFakeStore>) {
   const widgetManager = {
     getOrCreateWidget: vi.fn(),
+    getWidgets: vi.fn(() => [] as unknown[]),
   }
   const shell: {
     activeWidget: unknown
     onDidChangeCurrentWidget: ReturnType<typeof vi.fn>
     addWidget: ReturnType<typeof vi.fn>
     activateWidget: ReturnType<typeof vi.fn>
+    getCurrentWidget: ReturnType<typeof vi.fn>
   } = {
     activeWidget: undefined,
     onDidChangeCurrentWidget: vi.fn(() => ({ dispose: () => undefined })),
     addWidget: vi.fn().mockResolvedValue(undefined),
     activateWidget: vi.fn().mockResolvedValue(undefined),
+    getCurrentWidget: vi.fn(() => undefined),
   }
   const statusBar = {
     setElement: vi.fn().mockResolvedValue(undefined),
@@ -223,9 +255,10 @@ describe('ScholarContribution active-paper commands', () => {
     return context
   }
 
-  it('shows Compile, Build Graph, Delete and Open Graph only for a paper widget', () => {
+  it('shows Compile, Build Graph, Delete and Open Graph for a paper widget or a library tree node', () => {
     register()
     const paperWidget = createFakePaperWidget('paper-a')
+    const libraryNode = createLibraryNode('paper-a')
     const foreignWidget = createForeignWidget()
 
     for (const command of [
@@ -236,6 +269,7 @@ describe('ScholarContribution active-paper commands', () => {
     ]) {
       const handler = commands.handlerFor(command)
       expect(handler.isVisible?.(paperWidget)).toBe(true)
+      expect(handler.isVisible?.(libraryNode)).toBe(true)
       expect(handler.isVisible?.(foreignWidget)).toBe(false)
       expect(handler.isVisible?.(undefined)).toBe(false)
     }
@@ -341,8 +375,9 @@ describe('ScholarContribution active-paper commands', () => {
   })
 
   it('deletes the paper, closes its widget and reports success only after confirmation', async () => {
-    const { messageService } = register()
+    const { messageService, widgetManager } = register()
     const widget = createFakePaperWidget('paper-a')
+    widgetManager.getWidgets.mockReturnValue([widget])
 
     confirmDialogOpen.mockResolvedValueOnce(false)
     await commands.handlerFor(ScholarCommands.DELETE_PAPER).execute(widget)
@@ -353,13 +388,31 @@ describe('ScholarContribution active-paper commands', () => {
     confirmDialogOpen.mockResolvedValueOnce(true)
     await commands.handlerFor(ScholarCommands.DELETE_PAPER).execute(widget)
     expect(store.deletePaper).toHaveBeenCalledWith('paper-a')
+    expect(widgetManager.getWidgets).toHaveBeenCalledWith(SCHOLAR_PAPER_FACTORY_ID)
     expect(widget.close).toHaveBeenCalledOnce()
     expect(messageService.info).toHaveBeenCalledWith('Paper deleted')
   })
 
+  it('closes every open widget of the deleted paper across tabs, but never a different paper', async () => {
+    const { widgetManager } = register()
+    const widgetA1 = createFakePaperWidget('paper-a')
+    const widgetA2 = createFakePaperWidget('paper-a')
+    const widgetB = createFakePaperWidget('paper-b')
+    widgetManager.getWidgets.mockReturnValue([widgetA1, widgetA2, widgetB])
+    confirmDialogOpen.mockResolvedValueOnce(true)
+
+    await commands.handlerFor(ScholarCommands.DELETE_PAPER).execute(createLibraryNode('paper-a'))
+
+    expect(store.deletePaper).toHaveBeenCalledWith('paper-a')
+    expect(widgetA1.close).toHaveBeenCalledOnce()
+    expect(widgetA2.close).toHaveBeenCalledOnce()
+    expect(widgetB.close).not.toHaveBeenCalled()
+  })
+
   it('reports the error and skips the success message when deletion fails', async () => {
-    const { messageService } = register()
+    const { messageService, widgetManager } = register()
     const widget = createFakePaperWidget('paper-a')
+    widgetManager.getWidgets.mockReturnValue([widget])
     confirmDialogOpen.mockResolvedValueOnce(true)
     store.deletePaper.mockRejectedValueOnce(new Error('network down'))
 
@@ -419,7 +472,7 @@ describe('ScholarContribution active-paper commands', () => {
     expect(container.activateWidget).toHaveBeenCalledWith(SCHOLAR_GRAPH_WIDGET_ID)
   })
 
-  it('registers a tab-bar toolbar item for each active-paper command in the navigation group', () => {
+  it('registers a tab-bar toolbar item for each active-paper and library command in the navigation group', () => {
     const { contribution } = createContribution(store)
     const registry = new FakeToolbarRegistry()
 
@@ -433,6 +486,9 @@ describe('ScholarContribution active-paper commands', () => {
       ScholarCommands.BUILD_KNOWLEDGE_GRAPH.id,
       ScholarCommands.DELETE_PAPER.id,
       ScholarCommands.OPEN_GRAPH.id,
+      ScholarCommands.REFRESH_LIBRARY.id,
+      ScholarCommands.UPLOAD_LATEX.id,
+      ScholarCommands.IMPORT_ARXIV.id,
     ])
     registry.items.forEach(item => {
       expect(item.group).toBe('navigation')
@@ -459,5 +515,365 @@ describe('ScholarContribution active-paper commands', () => {
     expect(listener).toHaveBeenCalledTimes(registry.items.length)
 
     contribution.onStop()
+  })
+
+  it('exposes library commands in the command palette while scoping their toolbar buttons', () => {
+    register()
+    const libraryWidget = createForeignWidget()
+    const paperWidget = createFakePaperWidget('paper-a')
+
+    for (const command of [
+      ScholarCommands.REFRESH_LIBRARY,
+      ScholarCommands.UPLOAD_LATEX,
+      ScholarCommands.IMPORT_ARXIV,
+    ]) {
+      const handler = commands.handlerFor(command)
+      expect(handler.isVisible?.(libraryWidget)).toBe(true)
+      expect(handler.isVisible?.(paperWidget)).toBe(false)
+      expect(handler.isVisible?.(undefined)).toBe(true)
+    }
+  })
+
+  it('refreshes the library when Refresh Library runs', async () => {
+    register()
+    await commands.handlerFor(ScholarCommands.REFRESH_LIBRARY).execute(createForeignWidget())
+    expect(store.loadLibrary).toHaveBeenCalledOnce()
+  })
+})
+
+describe('ScholarContribution Open / Open to the Side', () => {
+  let snapshot: ReaderWorkspaceSnapshot
+  let store: ReturnType<typeof createFakeStore>
+  let commands: FakeCommandRegistry
+
+  beforeEach(() => {
+    confirmDialogOpen.mockReset()
+    singleTextInputDialogOpen.mockReset()
+    snapshot = emptySnapshot()
+    store = createFakeStore(snapshot)
+    commands = new FakeCommandRegistry()
+  })
+
+  function register(): ReturnType<typeof createContribution> {
+    const context = createContribution(store)
+    context.contribution.registerCommands(commands as unknown as Parameters<
+      ScholarContributionClass['registerCommands']
+    >[0])
+    return context
+  }
+
+  function paper(id: string, overrides: Partial<Paper> = {}): Paper {
+    return {
+      id,
+      filename: `${id}.tar.gz`,
+      arxiv_id: null,
+      uploaded_at: '2026-07-15T00:00:00Z',
+      compiled_at: '2026-07-15T00:01:00Z',
+      has_html: true,
+      ...overrides,
+    }
+  }
+
+  it('opens a new paper widget, activates it, and marks the paper active', async () => {
+    const { widgetManager, shell } = register()
+    snapshot.papers = [paper('paper-a', { filename: 'alpha.tar.gz' })]
+    const widget = createFakePaperWidget('paper-a', false)
+    widgetManager.getOrCreateWidget.mockResolvedValue(widget)
+
+    await commands.handlerFor(ScholarCommands.OPEN_PAPER).execute(createLibraryNode('paper-a'))
+
+    expect(widgetManager.getOrCreateWidget).toHaveBeenCalledWith(
+      SCHOLAR_PAPER_FACTORY_ID,
+      { paperId: 'paper-a', label: 'alpha' },
+    )
+    expect(shell.addWidget).toHaveBeenCalledWith(widget, expect.objectContaining({
+      area: 'main',
+      mode: 'tab-after',
+    }))
+    expect(store.activatePaper).toHaveBeenCalledWith('paper-a')
+    expect(shell.activateWidget).toHaveBeenCalledWith(widget.id)
+  })
+
+  it('opens to the side using open-to-right with a reference widget', async () => {
+    const { widgetManager, shell } = register()
+    snapshot.papers = [paper('paper-a')]
+    const widget = createFakePaperWidget('paper-a', false)
+    widgetManager.getOrCreateWidget.mockResolvedValue(widget)
+    const reference = {}
+    shell.getCurrentWidget.mockReturnValue(reference)
+
+    await commands.handlerFor(ScholarCommands.OPEN_PAPER_TO_SIDE).execute(createLibraryNode('paper-a'))
+
+    expect(shell.addWidget).toHaveBeenCalledWith(widget, expect.objectContaining({
+      mode: 'open-to-right',
+      ref: reference,
+    }))
+  })
+
+  it('does not re-add an already attached widget but still activates it', async () => {
+    const { widgetManager, shell } = register()
+    snapshot.papers = [paper('paper-a')]
+    const widget = createFakePaperWidget('paper-a', true)
+    widgetManager.getOrCreateWidget.mockResolvedValue(widget)
+
+    await commands.handlerFor(ScholarCommands.OPEN_PAPER).execute(createLibraryNode('paper-a'))
+
+    expect(shell.addWidget).not.toHaveBeenCalled()
+    expect(shell.activateWidget).toHaveBeenCalledWith(widget.id)
+  })
+
+  it('does nothing when no paper can be resolved', async () => {
+    const { widgetManager } = register()
+
+    await commands.handlerFor(ScholarCommands.OPEN_PAPER).execute(undefined)
+
+    expect(widgetManager.getOrCreateWidget).not.toHaveBeenCalled()
+  })
+
+  it('is visible and enabled for a library tree node or a paper widget, but not for a foreign object', () => {
+    register()
+    const node = createLibraryNode('paper-a')
+    const paperWidget = createFakePaperWidget('paper-a')
+    const foreignWidget = createForeignWidget()
+
+    for (const command of [ScholarCommands.OPEN_PAPER, ScholarCommands.OPEN_PAPER_TO_SIDE]) {
+      const handler = commands.handlerFor(command)
+      expect(handler.isVisible?.(node)).toBe(true)
+      expect(handler.isVisible?.(paperWidget)).toBe(true)
+      expect(handler.isVisible?.(foreignWidget)).toBe(false)
+    }
+  })
+})
+
+describe('ScholarContribution Import from arXiv', () => {
+  let snapshot: ReaderWorkspaceSnapshot
+  let store: ReturnType<typeof createFakeStore>
+  let commands: FakeCommandRegistry
+
+  beforeEach(() => {
+    confirmDialogOpen.mockReset()
+    singleTextInputDialogOpen.mockReset()
+    snapshot = emptySnapshot()
+    store = createFakeStore(snapshot)
+    commands = new FakeCommandRegistry()
+  })
+
+  function register(): ReturnType<typeof createContribution> {
+    const context = createContribution(store)
+    context.contribution.registerCommands(commands as unknown as Parameters<
+      ScholarContributionClass['registerCommands']
+    >[0])
+    return context
+  }
+
+  it('is a no-op when the dialog is cancelled', async () => {
+    register()
+    singleTextInputDialogOpen.mockResolvedValueOnce(undefined)
+
+    await commands.handlerFor(ScholarCommands.IMPORT_ARXIV).execute(undefined)
+
+    expect(store.uploadArxiv).not.toHaveBeenCalled()
+  })
+
+  it('is a no-op when the trimmed input is empty', async () => {
+    register()
+    singleTextInputDialogOpen.mockResolvedValueOnce('   ')
+
+    await commands.handlerFor(ScholarCommands.IMPORT_ARXIV).execute(undefined)
+
+    expect(store.uploadArxiv).not.toHaveBeenCalled()
+  })
+
+  it('trims the input, uploads via the store, and opens/activates the returned paper', async () => {
+    const { widgetManager, shell } = register()
+    const paper = paperDetail('paper-a')
+    store.uploadArxiv.mockResolvedValue(paper)
+    const widget = createFakePaperWidget('paper-a', false)
+    widgetManager.getOrCreateWidget.mockResolvedValue(widget)
+    singleTextInputDialogOpen.mockResolvedValueOnce('  2401.12345  ')
+
+    await commands.handlerFor(ScholarCommands.IMPORT_ARXIV).execute(undefined)
+
+    expect(store.uploadArxiv).toHaveBeenCalledWith('2401.12345')
+    expect(store.activatePaper).toHaveBeenCalledWith('paper-a')
+    expect(shell.activateWidget).toHaveBeenCalledWith(widget.id)
+  })
+
+  it('reports the error via MessageService and does not open a widget when the import fails', async () => {
+    const { messageService, widgetManager } = register()
+    store.uploadArxiv.mockRejectedValue(new Error('bad arXiv id'))
+    singleTextInputDialogOpen.mockResolvedValueOnce('2401.12345')
+
+    await commands.handlerFor(ScholarCommands.IMPORT_ARXIV).execute(undefined)
+
+    expect(messageService.error).toHaveBeenCalledWith('Could not fetch arXiv source: bad arXiv id')
+    expect(widgetManager.getOrCreateWidget).not.toHaveBeenCalled()
+  })
+})
+
+describe('ScholarContribution Upload LaTeX', () => {
+  let snapshot: ReaderWorkspaceSnapshot
+  let store: ReturnType<typeof createFakeStore>
+  let commands: FakeCommandRegistry
+
+  beforeEach(() => {
+    document.body.querySelectorAll('input[type="file"]').forEach(input => input.remove())
+    confirmDialogOpen.mockReset()
+    snapshot = emptySnapshot()
+    store = createFakeStore(snapshot)
+    commands = new FakeCommandRegistry()
+  })
+
+  function register(): ReturnType<typeof createContribution> {
+    const context = createContribution(store)
+    context.contribution.registerCommands(commands as unknown as Parameters<
+      ScholarContributionClass['registerCommands']
+    >[0])
+    return context
+  }
+
+  function currentFileInput(): HTMLInputElement {
+    const input = document.querySelector('input[type="file"]')
+    if (!input) {
+      throw new Error('No file input was created')
+    }
+    return input as HTMLInputElement
+  }
+
+  async function flushMicrotasks(): Promise<void> {
+    await new Promise(resolve => setTimeout(resolve, 0))
+  }
+
+  it('creates a hidden file input that accepts LaTeX archives', () => {
+    register()
+
+    commands.handlerFor(ScholarCommands.UPLOAD_LATEX).execute(undefined)
+
+    const input = currentFileInput()
+    expect(input.type).toBe('file')
+    expect(input.accept).toBe('.tar.gz,.tgz,.zip,.tex')
+    expect(input.hidden || input.style.display === 'none').toBe(true)
+  })
+
+  it('uploads the selected File via the store and opens the resulting paper, then cleans up the input', async () => {
+    const { widgetManager, shell } = register()
+    const paper = paperDetail('paper-a')
+    store.uploadPaper.mockResolvedValue(paper)
+    const widget = createFakePaperWidget('paper-a', false)
+    widgetManager.getOrCreateWidget.mockResolvedValue(widget)
+
+    commands.handlerFor(ScholarCommands.UPLOAD_LATEX).execute(undefined)
+    const input = currentFileInput()
+    const file = new File(['abc'], 'paper.tar.gz')
+    Object.defineProperty(input, 'files', { value: [file], configurable: true })
+    input.dispatchEvent(new Event('change'))
+    await flushMicrotasks()
+
+    expect(store.uploadPaper).toHaveBeenCalledWith(file)
+    expect(store.activatePaper).toHaveBeenCalledWith('paper-a')
+    expect(shell.activateWidget).toHaveBeenCalledWith(widget.id)
+    expect(document.querySelector('input[type="file"]')).toBeNull()
+  })
+
+  it('is a no-op and cleans up the input when the file dialog is cancelled', () => {
+    register()
+
+    commands.handlerFor(ScholarCommands.UPLOAD_LATEX).execute(undefined)
+    const input = currentFileInput()
+    input.dispatchEvent(new Event('cancel'))
+
+    expect(store.uploadPaper).not.toHaveBeenCalled()
+    expect(document.querySelector('input[type="file"]')).toBeNull()
+  })
+
+  it('reports an error via MessageService and cleans up the input when the upload fails', async () => {
+    const { messageService } = register()
+    store.uploadPaper.mockRejectedValue(new Error('network down'))
+
+    commands.handlerFor(ScholarCommands.UPLOAD_LATEX).execute(undefined)
+    const input = currentFileInput()
+    const file = new File(['abc'], 'paper.tar.gz')
+    Object.defineProperty(input, 'files', { value: [file], configurable: true })
+    input.dispatchEvent(new Event('change'))
+    await flushMicrotasks()
+
+    expect(messageService.error).toHaveBeenCalledWith('Could not upload paper: network down')
+    expect(document.querySelector('input[type="file"]')).toBeNull()
+  })
+
+  it('is safe to invoke repeatedly without leaking hidden inputs', () => {
+    register()
+
+    commands.handlerFor(ScholarCommands.UPLOAD_LATEX).execute(undefined)
+    commands.handlerFor(ScholarCommands.UPLOAD_LATEX).execute(undefined)
+    commands.handlerFor(ScholarCommands.UPLOAD_LATEX).execute(undefined)
+
+    expect(document.querySelectorAll('input[type="file"]').length).toBe(1)
+  })
+
+  it('detaches the previous file input listeners when invoked repeatedly', () => {
+    register()
+    store.uploadPaper.mockResolvedValue(paperDetail('stale-paper'))
+
+    commands.handlerFor(ScholarCommands.UPLOAD_LATEX).execute(undefined)
+    const staleInput = currentFileInput()
+    const staleFile = new File(['stale'], 'stale-paper.tex')
+    Object.defineProperty(staleInput, 'files', { value: [staleFile], configurable: true })
+
+    commands.handlerFor(ScholarCommands.UPLOAD_LATEX).execute(undefined)
+    staleInput.dispatchEvent(new Event('change'))
+
+    expect(store.uploadPaper).not.toHaveBeenCalled()
+    expect(document.querySelectorAll('input[type="file"]').length).toBe(1)
+  })
+})
+
+describe('ScholarContribution menus', () => {
+  it('no longer registers Refresh Library in the View > Views menu (moved to the library toolbar)', () => {
+    const store = createFakeStore(emptySnapshot())
+    const { contribution } = createContribution(store)
+    const registered: { path: string[], commandId: string }[] = []
+    const menus = {
+      registerMenuAction: (path: string[], action: { commandId: string }) => {
+        registered.push({ path, commandId: action.commandId })
+        return { dispose: () => undefined }
+      },
+    }
+
+    contribution.registerMenus(menus as unknown as Parameters<
+      ScholarContributionClass['registerMenus']
+    >[0])
+
+    const viewViewsIds = registered
+      .filter(entry => JSON.stringify(entry.path) === JSON.stringify(CommonMenusNs.VIEW_VIEWS))
+      .map(entry => entry.commandId)
+    expect(viewViewsIds).not.toContain(ScholarCommands.REFRESH_LIBRARY.id)
+  })
+
+  it('registers Open, Open to the Side, Recompile, Build Knowledge Graph and Delete on the library context menu', () => {
+    const store = createFakeStore(emptySnapshot())
+    const { contribution } = createContribution(store)
+    const registered: { path: string[], commandId: string }[] = []
+    const menus = {
+      registerMenuAction: (path: string[], action: { commandId: string }) => {
+        registered.push({ path, commandId: action.commandId })
+        return { dispose: () => undefined }
+      },
+    }
+
+    contribution.registerMenus(menus as unknown as Parameters<
+      ScholarContributionClass['registerMenus']
+    >[0])
+
+    const libraryMenuIds = registered
+      .filter(entry => JSON.stringify(entry.path) === JSON.stringify(SCHOLAR_LIBRARY_CONTEXT_MENU))
+      .map(entry => entry.commandId)
+    expect(libraryMenuIds).toEqual([
+      ScholarCommands.OPEN_PAPER.id,
+      ScholarCommands.OPEN_PAPER_TO_SIDE.id,
+      ScholarCommands.COMPILE_PAPER.id,
+      ScholarCommands.BUILD_KNOWLEDGE_GRAPH.id,
+      ScholarCommands.DELETE_PAPER.id,
+    ])
   })
 })

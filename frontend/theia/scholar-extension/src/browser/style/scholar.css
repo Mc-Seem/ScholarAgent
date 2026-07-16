@@ -66,35 +66,6 @@
   cursor: context-menu;
 }
 
-.scholar-library-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  padding: 0.5rem;
-}
-
-.scholar-library-item {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 0.35rem;
-  padding: 0.45rem 0.5rem;
-  border: 1px solid var(--theia-widget-border);
-  border-radius: 4px;
-  background: var(--theia-list-inactiveSelectionBackground);
-}
-
-.scholar-library-item:hover {
-  background: var(--theia-list-hoverBackground);
-}
-
-.scholar-library-title {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
 .scholar-toolbar-button {
   display: inline-flex;
   align-items: center;
@@ -321,6 +292,15 @@
   padding: 0.75rem;
   color: var(--theia-descriptionForeground);
   text-align: center;
+}
+
+.scholar-tree-library-description {
+  flex: none;
+  margin-left: 6px;
+  overflow: hidden;
+  color: var(--theia-descriptionForeground);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .scholar-native-graph {

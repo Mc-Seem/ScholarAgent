@@ -16,6 +16,27 @@ export const ScholarCommands = {
   REFRESH_LIBRARY: {
     id: 'scholar-agent.refresh-library',
     label: 'Scholar Agent: Refresh Paper Library',
+    iconClass: 'codicon codicon-refresh',
+  } satisfies Command,
+  UPLOAD_LATEX: {
+    id: 'scholar-agent.upload-latex',
+    label: 'Scholar Agent: Upload LaTeX Source',
+    iconClass: 'codicon codicon-cloud-upload',
+  } satisfies Command,
+  IMPORT_ARXIV: {
+    id: 'scholar-agent.import-arxiv',
+    label: 'Scholar Agent: Import from arXiv',
+    iconClass: 'codicon codicon-link',
+  } satisfies Command,
+  OPEN_PAPER: {
+    id: 'scholar-agent.open-paper',
+    label: 'Open',
+    iconClass: 'codicon codicon-go-to-file',
+  } satisfies Command,
+  OPEN_PAPER_TO_SIDE: {
+    id: 'scholar-agent.open-paper-to-side',
+    label: 'Open to the Side',
+    iconClass: 'codicon codicon-split-horizontal',
   } satisfies Command,
   FIND_IN_PAPER: {
     id: 'scholar-agent.find-in-paper',
