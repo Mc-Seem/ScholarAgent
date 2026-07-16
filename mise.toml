@@ -6,6 +6,16 @@ description = "Install frontend dependencies from the lockfile"
 dir = "{{ config_root }}/frontend"
 run = "npm run bootstrap"
 
+[tasks.dev-theia-browser]
+description = "Run the backend and Theia browser application"
+dir = "{{ config_root }}/frontend"
+run = "npm run dev:theia"
+
+[tasks.dev-theia-desktop]
+description = "Run the backend and Theia desktop application"
+dir = "{{ config_root }}/frontend"
+run = "npm run dev:theia:desktop"
+
 [tasks.verify]
 description = "Run frontend tests and production builds"
 dir = "{{ config_root }}/frontend"

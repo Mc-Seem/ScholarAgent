@@ -1,5 +1,4 @@
 import {
-  Command,
   CommandContribution,
   CommandRegistry,
   Disposable,
@@ -25,6 +24,7 @@ import { inject, injectable } from '@theia/core/shared/inversify'
 
 import type { Tooltip } from '../../../../hooks/useTooltips'
 import { ensureMathJax } from './mathjax-loader'
+import { ScholarCommands } from './scholar-commands'
 import { navigateToPaperElement, paperLabel } from './scholar-react'
 import {
   SCHOLAR_ANNOTATIONS_WIDGET_ID,
@@ -43,60 +43,6 @@ import {
 } from './scholar-native-widgets'
 import { ScholarPaperWidget } from './scholar-paper-widget'
 import { ScholarWorkspaceService } from './scholar-workspace-service'
-
-export const ScholarCommands = {
-  SHOW_LIBRARY: {
-    id: 'scholar-agent.show-library',
-    label: 'Scholar Agent: Show Papers',
-  } satisfies Command,
-  SHOW_NAVIGATION: {
-    id: 'scholar-agent.show-navigation',
-    label: 'Scholar Agent: Show Navigation',
-  } satisfies Command,
-  SHOW_ANNOTATIONS: {
-    id: 'scholar-agent.show-annotations',
-    label: 'Scholar Agent: Show Annotations',
-  } satisfies Command,
-  REFRESH_LIBRARY: {
-    id: 'scholar-agent.refresh-library',
-    label: 'Scholar Agent: Refresh Paper Library',
-  } satisfies Command,
-  FIND_IN_PAPER: {
-    id: 'scholar-agent.find-in-paper',
-    label: 'Find in Paper',
-    iconClass: 'codicon codicon-search',
-  } satisfies Command,
-  ADD_ANNOTATION: {
-    id: 'scholar-agent.add-annotation',
-    label: 'Add Annotation',
-    iconClass: 'codicon codicon-comment-add',
-  } satisfies Command,
-  EDIT_ANNOTATION: {
-    id: 'scholar-agent.edit-annotation',
-    label: 'Edit Annotation',
-    iconClass: 'codicon codicon-edit',
-  } satisfies Command,
-  TOGGLE_ANNOTATION_PIN: {
-    id: 'scholar-agent.toggle-annotation-pin',
-    label: 'Pin or Unpin Annotation',
-    iconClass: 'codicon codicon-pin',
-  } satisfies Command,
-  OPEN_ANNOTATION: {
-    id: 'scholar-agent.open-annotation',
-    label: 'Open Annotation',
-    iconClass: 'codicon codicon-go-to-file',
-  } satisfies Command,
-  DELETE_ANNOTATION: {
-    id: 'scholar-agent.delete-annotation',
-    label: 'Delete Annotation',
-    iconClass: 'codicon codicon-trash',
-  } satisfies Command,
-  REMOVE_ANNOTATION_OCCURRENCE: {
-    id: 'scholar-agent.remove-annotation-occurrence',
-    label: 'Remove from This Occurrence',
-    iconClass: 'codicon codicon-remove',
-  } satisfies Command,
-}
 
 const STATUS_BAR_ID = 'scholar-agent.active-paper'
 
@@ -135,8 +81,9 @@ export class ScholarContribution implements
       void this.updateStatusBar()
     })))
     this.toDispose.push(this.annotations.onDidChange(() => {
-      if (this.annotations.currentDraft) {
-        void this.showAnnotationEditor()
+      const activate = Boolean(this.annotations.currentDraft)
+      if (activate || this.annotations.currentSelection) {
+        void this.showAnnotationEditor(activate)
       }
     }))
     void this.updateStatusBar()
@@ -207,18 +154,13 @@ export class ScholarContribution implements
     })
     commands.registerCommand(ScholarCommands.OPEN_ANNOTATION, {
       execute: (argument: unknown) => {
-        if (!isScholarTreeNode(argument)) {
-          return
-        }
-        const paperId = this.store.getSnapshot().activePaperId
-        if (paperId && argument.entry.sourceId) {
-          navigateToPaperElement(paperId, argument.entry.sourceId)
+        const location = this.resolveAnnotationLocation(argument)
+        if (location) {
+          navigateToPaperElement(location.paperId, location.sourceId)
         }
       },
-      isEnabled: (argument: unknown) => isScholarTreeNode(argument)
-        && Boolean(argument.entry.tooltipId && argument.entry.sourceId),
-      isVisible: (argument: unknown) => isScholarTreeNode(argument)
-        && Boolean(argument.entry.tooltipId && argument.entry.sourceId),
+      isEnabled: (argument: unknown) => Boolean(this.resolveAnnotationLocation(argument)),
+      isVisible: (argument: unknown) => Boolean(this.resolveAnnotationLocation(argument)),
     })
     commands.registerCommand(ScholarCommands.DELETE_ANNOTATION, {
       execute: (argument: unknown) => this.deleteAnnotation(argument),
@@ -328,6 +270,20 @@ export class ScholarContribution implements
     return tooltip ? { paperId, tooltip } : undefined
   }
 
+  private resolveAnnotationLocation(
+    argument: unknown,
+  ): { paperId: string; sourceId: string } | undefined {
+    const paperId = isScholarAnnotationTarget(argument)
+      ? argument.paperId
+      : this.store.getSnapshot().activePaperId
+    const sourceId = isScholarAnnotationTarget(argument)
+      ? argument.domNodeId
+      : isScholarTreeNode(argument)
+        ? argument.entry.sourceId
+        : undefined
+    return paperId && sourceId ? { paperId, sourceId } : undefined
+  }
+
   private editAnnotation(argument: unknown): void {
     const resolved = this.resolveTooltip(argument)
     if (resolved) {
@@ -371,7 +327,8 @@ export class ScholarContribution implements
     }
     try {
       await this.store.deleteTooltip(resolved.paperId, resolved.tooltip.id)
-      if (this.annotations.currentDraft?.tooltipId === resolved.tooltip.id) {
+      if (this.annotations.currentDraft?.tooltipId === resolved.tooltip.id
+        || this.annotations.currentSelection?.tooltipId === resolved.tooltip.id) {
         this.annotations.clear()
       }
     } catch (reason) {
@@ -394,15 +351,19 @@ export class ScholarContribution implements
     }
   }
 
-  private async showAnnotationEditor(): Promise<void> {
+  private async showAnnotationEditor(activate: boolean): Promise<void> {
     const container = await this.widgetManager.getOrCreateWidget(SCHOLAR_ANNOTATIONS_WIDGET_ID)
     if (!container.isAttached) {
       await this.shell.addWidget(container, { area: 'right' })
     }
-    await this.shell.activateWidget(container.id)
+    if (activate) {
+      await this.shell.activateWidget(container.id)
+    }
     if (container instanceof ViewContainer) {
       container.revealWidget(SCHOLAR_ANNOTATION_EDITOR_WIDGET_ID)
-      container.activateWidget(SCHOLAR_ANNOTATION_EDITOR_WIDGET_ID)
+      if (activate) {
+        container.activateWidget(SCHOLAR_ANNOTATION_EDITOR_WIDGET_ID)
+      }
     }
   }
 

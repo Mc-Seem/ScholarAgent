@@ -4,12 +4,14 @@ import { LatexText } from '@/components/reader/LatexText'
 
 // Mock MathJax
 const mockTypesetPromise = vi.fn()
+const mockTypesetClear = vi.fn()
 
 describe('LatexText', () => {
   beforeEach(() => {
     mockTypesetPromise.mockResolvedValue(undefined)
     ;(window as any).MathJax = {
       typesetPromise: mockTypesetPromise,
+      typesetClear: mockTypesetClear,
       startup: {
         promise: Promise.resolve()
       }
@@ -35,14 +37,10 @@ describe('LatexText', () => {
     expect(container.textContent).toBe('Let \\(x = 5\\) be a number')
   })
 
-  it('converts double dollar signs to DISPLAY markers', () => {
+  it('preserves double-dollar display math delimiters', () => {
     const { container} = render(<LatexText text="Formula: $$E = mc^2$$" />)
 
-    // Note: Currently has a bug where $$DISPLAY$$ gets converted to \(DISPLAY\(
-    // TODO: Fix this in the component
-    const text = container.textContent || ''
-    expect(text).toContain('E = mc^2')
-    expect(text).toContain('DISPLAY')
+    expect(container.textContent).toBe('Formula: $$E = mc^2$$')
   })
 
   it('handles mixed inline and display math', () => {
@@ -50,11 +48,7 @@ describe('LatexText', () => {
 
     const { container } = render(<LatexText text={text} />)
 
-    const result = container.textContent || ''
-    expect(result).toContain('\\(a + b\\)')
-    // Display math gets converted (has bug)
-    expect(result).toContain('DISPLAY')
-    expect(result).toContain('c = d')
+    expect(container.textContent).toBe('Inline \\(a + b\\) and display $$c = d$$')
   })
 
   it('calls MathJax.typesetPromise on mount', async () => {
@@ -63,6 +57,33 @@ describe('LatexText', () => {
     await waitFor(() => {
       expect(mockTypesetPromise).toHaveBeenCalledTimes(1)
     })
+  })
+
+  it('preserves typeset output when a parent rerenders with the same text', async () => {
+    mockTypesetPromise.mockImplementation(async ([element]: [HTMLElement]) => {
+      const output = document.createElement('mjx-container')
+      output.textContent = 'typeset math'
+      element.replaceChildren(output)
+    })
+
+    const { container, rerender } = render(
+      <div data-revision="first">
+        <LatexText text="Test $x$" />
+      </div>,
+    )
+
+    await waitFor(() => {
+      expect(container.querySelector('mjx-container')).not.toBeNull()
+    })
+
+    rerender(
+      <div data-revision="second">
+        <LatexText text="Test $x$" />
+      </div>,
+    )
+
+    expect(container.querySelector('mjx-container')).not.toBeNull()
+    expect(container.textContent).toBe('typeset math')
   })
 
   it('retypesetshtml when text changes', async () => {
@@ -79,6 +100,38 @@ describe('LatexText', () => {
     })
   })
 
+  it('clears typeset previews before React removes them', async () => {
+    const connectedDuringClear: boolean[] = []
+    mockTypesetPromise.mockImplementation(async ([element]: [HTMLElement]) => {
+      const output = document.createElement('mjx-container')
+      output.textContent = 'typeset math'
+      element.replaceChildren(output)
+    })
+    mockTypesetClear.mockImplementation(([element]: [HTMLElement]) => {
+      connectedDuringClear.push(element.isConnected)
+    })
+
+    const { rerender } = render(
+      <span>
+        <LatexText text="Target $x$" />
+        <span> — </span>
+        <LatexText text="Comment $y$" />
+      </span>,
+    )
+
+    await waitFor(() => {
+      expect(mockTypesetPromise).toHaveBeenCalledTimes(2)
+    })
+
+    expect(() => rerender(
+      <span>
+        Target $x$ — Comment $y$
+      </span>,
+    )).not.toThrow()
+    expect(mockTypesetClear).toHaveBeenCalledTimes(2)
+    expect(connectedDuringClear).toEqual([true, true])
+  })
+
   it('applies custom className', () => {
     const { container } = render(
       <LatexText text="Test" className="custom-class" />
@@ -86,6 +139,13 @@ describe('LatexText', () => {
 
     const span = container.querySelector('span')
     expect(span).toHaveClass('custom-class')
+  })
+
+  it('renders HTML-like input as text', () => {
+    const { container } = render(<LatexText text={'Use <tag> & "quotes" with $x$'} />)
+
+    expect(container.textContent).toBe('Use <tag> & "quotes" with \\(x\\)')
+    expect(container.querySelector('tag')).toBeNull()
   })
 
   it('handles complex LaTeX expressions', () => {
@@ -113,10 +173,15 @@ describe('LatexText', () => {
 
     const { container } = render(<LatexText text={text} />)
 
-    const result = container.textContent || ''
-    // Currently converts to DISPLAY markers (has bug)
-    expect(result).toContain('DISPLAY')
-    expect(result).toContain('x + y = z')
+    expect(container.textContent).toBe('$$x + y = z$$')
+  })
+
+  it('leaves escaped and unmatched dollar signs as literal text', () => {
+    const escaped = render(<LatexText text={'Price: \\$5; formula $x$'} />)
+    const unmatched = render(<LatexText text="Unmatched $" />)
+
+    expect(escaped.container.textContent).toBe('Price: \\$5; formula \\(x\\)')
+    expect(unmatched.container.textContent).toBe('Unmatched $')
   })
 
   it('handles MathJax not available gracefully', async () => {
@@ -127,6 +192,21 @@ describe('LatexText', () => {
     // Should render without crashing
     expect(container.textContent).toContain('\\(x\\)')
     expect(mockTypesetPromise).not.toHaveBeenCalled()
+  })
+
+  it('typesets after MathJax becomes ready', async () => {
+    delete (window as any).MathJax
+    render(<LatexText text="Late $x$" />)
+
+    ;(window as any).MathJax = {
+      typesetPromise: mockTypesetPromise,
+      startup: { promise: Promise.resolve() },
+    }
+    window.dispatchEvent(new CustomEvent('MathJaxReady'))
+
+    await waitFor(() => {
+      expect(mockTypesetPromise).toHaveBeenCalledTimes(1)
+    })
   })
 
   it('handles MathJax typesetting errors gracefully', async () => {

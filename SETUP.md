@@ -219,10 +219,10 @@ mise exec -- npm --prefix frontend start
    - File → Settings → Project → Python Interpreter
    - Add Interpreter → Existing
    - Select `.venv/bin/python`
-3. **Configure the project Node.js runtime**:
-   - Run `mise install`, then use the path printed by `mise which node`
-   - Select that interpreter as the project runtime and its bundled npm as the package manager
-   - Shared run configurations include `Scholar Theia Browser`, `Scholar Theia Desktop`, and `Scholar Verify`
+3. **Configure Node.js and shared runs**:
+   - Run `mise install`
+   - Shared run configurations `Scholar Theia Browser`, `Scholar Theia Desktop`, and `Scholar Verify` execute the corresponding `mise` tasks, so their child processes always use the pinned runtime
+   - Keep the bundled Shell Script plugin enabled; selecting the interpreter printed by `mise which node` as the project runtime remains useful for ad-hoc npm configurations
 4. **Database tool**:
    - View → Tool Windows → Database
    - Add PostgreSQL datasource
@@ -310,11 +310,14 @@ sudo usermod -aG docker $USER
 lsof -i :8000
 lsof -i :3000
 
-# Kill process
-kill -9 <PID>
+# Stop a stale process gracefully
+kill <PID>
 
 # Or change port in .env / next.config.mjs
 ```
+
+The shared Theia run configurations start the backend themselves. Stop any
+separately running backend before launching one of them.
 
 ### Issue: Alembic migration errors
 **Solution**:

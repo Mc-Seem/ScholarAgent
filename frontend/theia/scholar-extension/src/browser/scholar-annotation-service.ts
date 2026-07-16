@@ -30,10 +30,16 @@ export interface ScholarAnnotationDraft {
   content: string
 }
 
+export interface ScholarAnnotationSelection {
+  paperId: string
+  tooltipId: string
+}
+
 @injectable()
 export class ScholarAnnotationService {
   private readonly changeEmitter = new Emitter<void>()
   private draft: ScholarAnnotationDraft | undefined
+  private selection: ScholarAnnotationSelection | undefined
 
   readonly onDidChange: Event<void> = this.changeEmitter.event
 
@@ -41,7 +47,18 @@ export class ScholarAnnotationService {
     return this.draft
   }
 
+  get currentSelection(): ScholarAnnotationSelection | undefined {
+    return this.selection
+  }
+
+  select(paperId: string, tooltipId: string): void {
+    this.selection = { paperId, tooltipId }
+    this.draft = undefined
+    this.changeEmitter.fire()
+  }
+
   create(paperId: string, domNodeId: string, targetText?: string): void {
+    this.selection = undefined
     this.draft = {
       mode: 'create',
       paperId,
@@ -53,6 +70,7 @@ export class ScholarAnnotationService {
   }
 
   edit(paperId: string, tooltipId: string, content: string, targetText?: string): void {
+    this.selection = { paperId, tooltipId }
     this.draft = {
       mode: 'edit',
       paperId,
@@ -63,9 +81,17 @@ export class ScholarAnnotationService {
     this.changeEmitter.fire()
   }
 
-  clear(): void {
+  cancelDraft(): void {
     if (this.draft) {
       this.draft = undefined
+      this.changeEmitter.fire()
+    }
+  }
+
+  clear(): void {
+    if (this.draft || this.selection) {
+      this.draft = undefined
+      this.selection = undefined
       this.changeEmitter.fire()
     }
   }

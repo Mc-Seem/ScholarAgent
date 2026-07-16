@@ -244,6 +244,51 @@
   align-items: center;
 }
 
+.scholar-tree-comment-preview {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: baseline;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.scholar-tree-comment-target,
+.scholar-tree-comment-content {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scholar-tree-comment-target {
+  flex: 0 1 auto;
+  max-width: 55%;
+}
+
+.scholar-tree-comment-target:only-child {
+  flex: 1;
+  max-width: 100%;
+}
+
+.scholar-tree-comment-separator {
+  flex: none;
+  color: var(--theia-descriptionForeground);
+}
+
+.scholar-tree-comment-content {
+  flex: 1 1 auto;
+  color: var(--theia-descriptionForeground);
+}
+
+.scholar-tree-comment-preview mjx-container {
+  display: inline-block !important;
+  max-width: 100%;
+  margin: 0 !important;
+  overflow: hidden;
+  vertical-align: middle;
+}
+
 .scholar-tree-icon {
   flex: none;
   width: 16px;
@@ -297,6 +342,64 @@
   box-sizing: border-box;
   min-height: 100%;
   padding: 0.65rem;
+}
+
+.scholar-annotation-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  box-sizing: border-box;
+  min-height: 100%;
+  padding: 0.65rem;
+}
+
+.scholar-annotation-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.scholar-annotation-detail-header .codicon-pinned {
+  color: var(--theia-charts-yellow, var(--theia-foreground));
+}
+
+.scholar-annotation-target {
+  color: var(--theia-descriptionForeground);
+  font-size: var(--theia-ui-font-size1);
+}
+
+.scholar-annotation-target blockquote {
+  margin: 0.25rem 0 0;
+  padding-left: 0.55rem;
+  border-left: 2px solid var(--theia-widget-border);
+}
+
+.scholar-annotation-content {
+  flex: 1;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.scholar-annotation-target mjx-container,
+.scholar-annotation-content mjx-container {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.scholar-annotation-detail-actions {
+  flex-wrap: wrap;
+}
+
+.scholar-annotation-detail-actions .theia-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.scholar-annotation-delete {
+  color: var(--theia-errorForeground);
 }
 
 .scholar-native-editor-form label {

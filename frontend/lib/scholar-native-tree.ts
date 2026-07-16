@@ -8,6 +8,7 @@ export interface ScholarTreeEntry {
   kind: ScholarTreeEntryKind
   label: string
   description?: string
+  searchText?: string
   sourceId?: string
   tooltipId?: string
   entityId?: string
@@ -193,11 +194,14 @@ function toTooltipEntry(
 ): ScholarTreeEntry {
   const target = plainText(tooltip.target_text ?? '')
   const content = plainText(tooltip.content)
+  const label = target || content
+  const description = content && content !== label ? content : undefined
   return {
     id: `${kind}:${tooltip.id}`,
     kind,
-    label: target || content || 'Untitled annotation',
-    description: target && content && target !== content ? content : undefined,
+    label: label || 'Untitled annotation',
+    description,
+    searchText: kind === 'comment' && description ? `${label} — ${description}` : undefined,
     sourceId: tooltip.dom_node_id ?? undefined,
     tooltipId: tooltip.id,
     entityId: tooltip.entity_id ?? undefined,

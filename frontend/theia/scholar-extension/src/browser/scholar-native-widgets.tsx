@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { Disposable, MessageService, type MenuPath } from '@theia/core'
+import { CommandService, Disposable, MessageService, type MenuPath } from '@theia/core'
 import {
   CompositeTreeNode,
   ContextMenuRenderer,
@@ -16,6 +16,7 @@ import {
 import { inject, injectable, postConstruct } from '@theia/core/shared/inversify'
 
 import { KnowledgeGraphView } from '../../../../components/reader/KnowledgeGraphView'
+import { LatexText } from '../../../../components/reader/LatexText'
 import type { Tooltip } from '../../../../hooks/useTooltips'
 import {
   buildCommentTree,
@@ -29,7 +30,11 @@ import { navigateToPaperElement, useScholarSnapshot } from './scholar-react'
 import {
   ScholarAnnotationService,
   type ScholarAnnotationDraft,
+  type ScholarAnnotationSelection,
+  type ScholarAnnotationTarget,
 } from './scholar-annotation-service'
+import { ScholarAnnotationPreview } from './scholar-annotation-preview'
+import { ScholarCommands } from './scholar-commands'
 import { ScholarWorkspaceService } from './scholar-workspace-service'
 
 export const SCHOLAR_OUTLINE_WIDGET_ID = 'scholar-agent:outline'
@@ -95,9 +100,17 @@ abstract class ScholarTreeWidget extends TreeWidget {
     if (!isScholarTreeNode(node)) {
       return caption
     }
+    const content = node.entry.kind === 'comment' && !this.searchHighlights?.has(node.id)
+      ? (
+          <ScholarAnnotationPreview
+            targetText={node.entry.label}
+            annotation={node.entry.description}
+          />
+        )
+      : caption
     return (
       <>
-        {caption}
+        {content}
         {node.entry.pinned && <span className="scholar-tree-pin codicon codicon-pinned" />}
         {node.entry.count !== undefined && (
           <span className="scholar-tree-count">{node.entry.count}</span>
@@ -112,7 +125,12 @@ abstract class ScholarTreeWidget extends TreeWidget {
   ): React.Attributes & React.HTMLAttributes<HTMLElement> {
     const attributes = super.createNodeAttributes(node, props)
     return isScholarTreeNode(node)
-      ? { ...attributes, title: node.entry.description || node.entry.label }
+      ? {
+          ...attributes,
+          title: node.entry.description
+            ? `${node.entry.label} — ${node.entry.description}`
+            : node.entry.label,
+        }
       : attributes
   }
 
@@ -207,33 +225,25 @@ export class ScholarCommentsWidget extends ScholarTreeWidget {
   }
 
   protected override activateEntry(entry: ScholarTreeEntry): void {
-    super.activateEntry(entry)
-    if (entry.entityId) {
-      const paperId = this.store.getSnapshot().activePaperId
-      if (paperId) {
-        this.store.setActiveEntity(paperId, entry.entityId)
-      }
+    const paperId = this.store.getSnapshot().activePaperId
+    if (paperId && entry.tooltipId) {
+      this.annotations.select(paperId, entry.tooltipId)
+      return
     }
+    super.activateEntry(entry)
   }
 
   protected override handleDblClickEvent(node: TreeNode, event: React.MouseEvent<HTMLElement>): void {
-    if (isScholarTreeNode(node) && node.entry.tooltipId) {
-      this.editTooltip(node.entry.tooltipId)
+    if (isScholarTreeNode(node) && node.entry.tooltipId && node.entry.sourceId) {
+      const paperId = this.store.getSnapshot().activePaperId
+      if (paperId) {
+        this.annotations.select(paperId, node.entry.tooltipId)
+        navigateToPaperElement(paperId, node.entry.sourceId)
+      }
       event.stopPropagation()
       return
     }
     super.handleDblClickEvent(node, event)
-  }
-
-  private editTooltip(tooltipId: string): void {
-    const snapshot = this.store.getSnapshot()
-    const paperId = snapshot.activePaperId
-    const tooltip = paperId
-      ? snapshot.tooltipsByPaperId[paperId]?.find(item => item.id === tooltipId)
-      : undefined
-    if (paperId && tooltip) {
-      this.annotations.edit(paperId, tooltip.id, tooltip.content, tooltip.target_text ?? undefined)
-    }
   }
 }
 
@@ -332,12 +342,13 @@ export class ScholarAnnotationEditorWidget extends ReactWidget {
     @inject(ScholarWorkspaceService) private readonly store: ScholarWorkspaceService,
     @inject(ScholarAnnotationService) private readonly annotations: ScholarAnnotationService,
     @inject(MessageService) private readonly messageService: MessageService,
+    @inject(CommandService) private readonly commandService: CommandService,
   ) {
     super()
     this.id = SCHOLAR_ANNOTATION_EDITOR_WIDGET_ID
-    this.title.label = 'Editor'
-    this.title.caption = 'Annotation Editor'
-    this.title.iconClass = 'codicon codicon-edit'
+    this.title.label = 'Annotation'
+    this.title.caption = 'Annotation Details and Editor'
+    this.title.iconClass = 'codicon codicon-comment'
     this.node.classList.add('scholar-widget', 'scholar-native-editor')
     this.toDispose.push(this.annotations.onDidChange(() => this.update()))
     this.update()
@@ -349,6 +360,7 @@ export class ScholarAnnotationEditorWidget extends ReactWidget {
         store={this.store}
         annotations={this.annotations}
         messageService={this.messageService}
+        commandService={this.commandService}
       />
     )
   }
@@ -358,40 +370,158 @@ function ScholarEditorContent({
   store,
   annotations,
   messageService,
+  commandService,
 }: {
   store: ScholarWorkspaceService
   annotations: ScholarAnnotationService
   messageService: MessageService
+  commandService: CommandService
 }): React.ReactElement {
+  const subscribe = React.useCallback((listener: () => void) => {
+    const subscription = annotations.onDidChange(listener)
+    return () => subscription.dispose()
+  }, [annotations])
   const draft = React.useSyncExternalStore(
-    listener => {
-      const subscription = annotations.onDidChange(listener)
-      return () => subscription.dispose()
-    },
+    subscribe,
     () => annotations.currentDraft,
     () => undefined,
   )
-  if (!draft) {
-    return <div className="scholar-empty">Select “Add Annotation” or edit an existing item.</div>
-  }
-  return (
-    <ScholarEditorForm
-      key={`${draft.mode}:${draft.paperId}:${draft.tooltipId ?? draft.domNodeId}`}
-      draft={draft}
-      onCancel={() => annotations.clear()}
-      onSave={async (content, targetText) => {
-        try {
-          if (draft.mode === 'create' && draft.domNodeId) {
-            await store.createTooltip(draft.paperId, draft.domNodeId, content, targetText)
-          } else if (draft.mode === 'edit' && draft.tooltipId) {
-            await store.updateTooltip(draft.paperId, draft.tooltipId, { content, targetText })
+  const selection = React.useSyncExternalStore(
+    subscribe,
+    () => annotations.currentSelection,
+    () => undefined,
+  )
+  const snapshot = useScholarSnapshot(store)
+
+  if (draft) {
+    return (
+      <ScholarEditorForm
+        key={`${draft.mode}:${draft.paperId}:${draft.tooltipId ?? draft.domNodeId}`}
+        draft={draft}
+        onCancel={() => annotations.cancelDraft()}
+        onSave={async (content, targetText) => {
+          try {
+            if (draft.mode === 'create' && draft.domNodeId) {
+              const saved = await store.createTooltip(
+                draft.paperId,
+                draft.domNodeId,
+                content,
+                targetText,
+              )
+              annotations.select(draft.paperId, saved.id)
+            } else if (draft.mode === 'edit' && draft.tooltipId) {
+              const saved = await store.updateTooltip(
+                draft.paperId,
+                draft.tooltipId,
+                { content, targetText },
+              )
+              annotations.select(draft.paperId, saved.id)
+            }
+          } catch (reason) {
+            await messageService.error(`Could not save annotation: ${errorMessage(reason)}`)
           }
-          annotations.clear()
-        } catch (reason) {
-          await messageService.error(`Could not save annotation: ${errorMessage(reason)}`)
-        }
-      }}
+        }}
+      />
+    )
+  }
+
+  const tooltip = selection && snapshot.activePaperId === selection.paperId
+    ? snapshot.tooltipsByPaperId[selection.paperId]?.find(item => item.id === selection.tooltipId)
+    : undefined
+  if (!selection || !tooltip) {
+    return <div className="scholar-empty">Select a comment to read it, or add a new annotation.</div>
+  }
+
+  return (
+    <ScholarAnnotationDetail
+      selection={selection}
+      tooltip={tooltip}
+      commandService={commandService}
+      messageService={messageService}
     />
+  )
+}
+
+function ScholarAnnotationDetail({
+  selection,
+  tooltip,
+  commandService,
+  messageService,
+}: {
+  selection: ScholarAnnotationSelection
+  tooltip: Tooltip
+  commandService: CommandService
+  messageService: MessageService
+}): React.ReactElement {
+  const target: ScholarAnnotationTarget = {
+    paperId: selection.paperId,
+    domNodeId: tooltip.dom_node_id ?? '',
+    targetText: tooltip.target_text ?? undefined,
+    tooltipIds: [tooltip.id],
+    semanticTooltipId: tooltip.entity_id ? tooltip.id : undefined,
+  }
+  const execute = (commandId: string): void => {
+    void commandService.executeCommand(commandId, target).catch(reason => {
+      void messageService.error(`Could not run annotation action: ${errorMessage(reason)}`)
+    })
+  }
+
+  return (
+    <article className="scholar-annotation-detail">
+      <header className="scholar-annotation-detail-header">
+        <strong>Annotation</strong>
+        {tooltip.is_pinned && (
+          <span className="codicon codicon-pinned" title="Pinned" aria-label="Pinned" />
+        )}
+      </header>
+      {tooltip.target_text?.trim() && (
+        <div className="scholar-annotation-target">
+          <span>Attached to</span>
+          <blockquote><LatexText text={tooltip.target_text} /></blockquote>
+        </div>
+      )}
+      <div className="scholar-annotation-content">
+        <LatexText text={tooltip.content} />
+      </div>
+      <div className="scholar-native-editor-actions scholar-annotation-detail-actions">
+        <button
+          type="button"
+          className="theia-button secondary"
+          disabled={!tooltip.dom_node_id}
+          onClick={() => execute(ScholarCommands.OPEN_ANNOTATION.id)}
+        >
+          <span className="codicon codicon-go-to-file" aria-hidden="true" />
+          Reveal in Paper
+        </button>
+        <button
+          type="button"
+          className="theia-button secondary"
+          onClick={() => execute(ScholarCommands.EDIT_ANNOTATION.id)}
+        >
+          <span className="codicon codicon-edit" aria-hidden="true" />
+          Edit
+        </button>
+        <button
+          type="button"
+          className="theia-button secondary"
+          onClick={() => execute(ScholarCommands.TOGGLE_ANNOTATION_PIN.id)}
+        >
+          <span
+            className={`codicon codicon-${tooltip.is_pinned ? 'pinned' : 'pin'}`}
+            aria-hidden="true"
+          />
+          {tooltip.is_pinned ? 'Unpin' : 'Pin'}
+        </button>
+        <button
+          type="button"
+          className="theia-button secondary scholar-annotation-delete"
+          onClick={() => execute(ScholarCommands.DELETE_ANNOTATION.id)}
+        >
+          <span className="codicon codicon-trash" aria-hidden="true" />
+          Delete
+        </button>
+      </div>
+    </article>
   )
 }
 
@@ -482,7 +612,7 @@ function toTreeNode(
   const previous = state.get(entry.id)
   const node: ScholarTreeNode = {
     id: entry.id,
-    name: entry.label,
+    name: entry.searchText ?? entry.label,
     description: entry.description,
     parent,
     children: [],

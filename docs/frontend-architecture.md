@@ -106,8 +106,10 @@ frontend/theia/
     └── src/browser/
         ├── scholar-paper-widget.tsx    # Dynamic central tab per paper
         ├── scholar-side-widgets.tsx    # Papers library
-        ├── scholar-native-widgets.tsx  # Native trees, graph, annotation editor
-        ├── scholar-annotation-service.ts # Shared annotation draft state
+        ├── scholar-native-widgets.tsx  # Native trees, graph, annotation detail/editor
+        ├── scholar-annotation-preview.tsx # LaTeX-aware comment tree rows
+        ├── scholar-annotation-service.ts # Shared annotation selection and draft state
+        ├── scholar-commands.ts         # Shared Theia command definitions
         ├── scholar-contribution.ts     # Layout, commands, keybindings, status
         └── scholar-frontend-module.ts  # Dependency injection and factories
 ```
@@ -128,11 +130,17 @@ The `Navigate` `ViewContainer` has independently collapsible `Sections` and
 `Graph` parts. `Sections` uses Theia's `TreeWidget`, including keyboard
 navigation, selection, incremental search, and theme tokens.
 
-The `Annotations` `ViewContainer` contains `Comments`, `Glossary`, and `Editor`.
-Comments and glossary entries are compact `TreeWidget` rows grouped by section
-or entity type. Right-click actions are registered through Theia commands and
-menus; creation and editing reveal the shared embedded editor rather than a
-floating React popover. The tree data transformations live in
+The `Annotations` `ViewContainer` contains `Comments`, `Glossary`, and
+`Annotation`. Comments and glossary entries are compact `TreeWidget` rows
+grouped by section or entity type. A comment row previews the attached passage,
+followed by the annotation in the theme's muted text color. LaTeX in both parts
+is rendered with MathJax while the row remains compact. Selecting it reveals
+the full annotation and attached passage, also with LaTeX rendering, in the
+`Annotation` part; double-clicking or `Reveal in Paper` navigates to the source
+block. The same part switches in place to edit mode and returns to the detail
+view after save or cancel. Right-click and detail actions share Theia commands,
+while creation also uses the embedded editor instead of a floating React
+popover. The tree data transformations live in
 `lib/scholar-native-tree.ts` so they remain framework-independent and testable.
 
 ```bash

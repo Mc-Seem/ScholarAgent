@@ -135,9 +135,42 @@ describe('Scholar native tree models', () => {
         id: 'comment-group:other',
         label: 'Other',
         count: 1,
-        children: [{ kind: 'comment', tooltipId: 'orphan', label: 'Orphan target' }],
+        children: [{
+          kind: 'comment',
+          tooltipId: 'orphan',
+          label: 'Orphan target',
+          description: 'A useful comment',
+        }],
       },
     ])
+  })
+
+  it('preserves LaTeX delimiters in comment targets and previews', () => {
+    const result = buildCommentTree([
+      tooltip({
+        target_text: '<span>Objective $f(x)$</span>',
+        content: '<p>Check $x^2$ carefully</p>',
+      }),
+    ], toc, () => undefined)
+
+    expect(result[0].children[0]).toMatchObject({
+      kind: 'comment',
+      label: 'Objective $f(x)$',
+      description: 'Check $x^2$ carefully',
+      searchText: 'Objective $f(x)$ — Check $x^2$ carefully',
+    })
+  })
+
+  it('falls back to the attached text when a comment has no readable content', () => {
+    const result = buildCommentTree([
+      tooltip({ content: '  <span> </span> ', target_text: 'Attached passage' }),
+    ], toc, () => undefined)
+
+    expect(result[0].children[0]).toMatchObject({
+      kind: 'comment',
+      label: 'Attached passage',
+      description: undefined,
+    })
   })
 
   it('groups glossary entries by entity type and handles manual entries', () => {
