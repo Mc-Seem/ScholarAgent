@@ -51,6 +51,11 @@ export const ScholarCommands = {
     id: 'scholar-agent.refresh-library',
     label: 'Scholar Agent: Refresh Paper Library',
   } satisfies Command,
+  FIND_IN_PAPER: {
+    id: 'scholar-agent.find-in-paper',
+    label: 'Find in Paper',
+    iconClass: 'codicon codicon-search',
+  } satisfies Command,
 }
 
 const STATUS_BAR_ID = 'scholar-agent.active-paper'
@@ -125,6 +130,11 @@ export class ScholarContribution implements
     commands.registerCommand(ScholarCommands.REFRESH_LIBRARY, {
       execute: () => this.store.loadLibrary(),
     })
+    commands.registerCommand(ScholarCommands.FIND_IN_PAPER, {
+      execute: () => this.activePaperWidget?.openSearch(),
+      isEnabled: () => Boolean(this.activePaperWidget),
+      isVisible: () => Boolean(this.activePaperWidget),
+    })
   }
 
   registerMenus(menus: MenuModelRegistry): void {
@@ -144,6 +154,10 @@ export class ScholarContribution implements
       commandId: ScholarCommands.REFRESH_LIBRARY.id,
       order: 'b10',
     })
+    menus.registerMenuAction(CommonMenus.EDIT_FIND, {
+      commandId: ScholarCommands.FIND_IN_PAPER.id,
+      order: 'a10',
+    })
   }
 
   registerKeybindings(keybindings: KeybindingRegistry): void {
@@ -159,6 +173,16 @@ export class ScholarContribution implements
       command: ScholarCommands.SHOW_ANNOTATIONS.id,
       keybinding: 'alt+shift+a',
     })
+    keybindings.registerKeybinding({
+      command: ScholarCommands.FIND_IN_PAPER.id,
+      keybinding: 'ctrlcmd+f',
+    })
+  }
+
+  private get activePaperWidget(): ScholarPaperWidget | undefined {
+    return this.shell.activeWidget instanceof ScholarPaperWidget
+      ? this.shell.activeWidget
+      : undefined
   }
 
   private async showView(
@@ -177,6 +201,7 @@ export class ScholarContribution implements
     const paperId = snapshot.activePaperId
     const paper = paperId ? snapshot.papersById[paperId] : undefined
     const status = paperId ? snapshot.statusByPaperId[paperId] : undefined
+    const error = paperId ? snapshot.paperErrors[paperId] : undefined
     const label = paper
       ? paperLabel(paper.filename, paper.paper_metadata?.title)
       : paperId
@@ -184,12 +209,14 @@ export class ScholarContribution implements
     await this.statusBar.setElement(STATUS_BAR_ID, {
       text: status
         ? `$(sync~spin) ${status}`
+        : error
+          ? `$(error) ${error}`
         : label
           ? `$(book) ${label}`
           : '$(book) Scholar Agent',
       alignment: StatusBarAlignment.LEFT,
       priority: 100,
-      tooltip: status || label || 'Scholar Agent paper reader',
+      tooltip: status || error || label || 'Scholar Agent paper reader',
       command: ScholarCommands.SHOW_LIBRARY.id,
     })
   }

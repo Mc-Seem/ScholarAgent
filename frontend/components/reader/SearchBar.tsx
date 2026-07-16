@@ -1,11 +1,20 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import {
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type RefObject,
+} from "react";
 import { Search, X, ChevronUp, ChevronDown } from "lucide-react";
 
 interface SearchBarProps {
   isOpen: boolean;
   onClose: () => void;
+  searchRootRef?: RefObject<HTMLElement | null>;
+  placement?: "floating" | "inline";
 }
 
 /**
@@ -16,7 +25,12 @@ interface SearchBarProps {
  * 2. Wrapping matches with <mark> elements
  * 3. Storing the original text content to restore when searching again
  */
-export default function SearchBar({ isOpen, onClose }: SearchBarProps) {
+export default function SearchBar({
+  isOpen,
+  onClose,
+  searchRootRef,
+  placement = "floating",
+}: SearchBarProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
   const [totalMatches, setTotalMatches] = useState(0);
@@ -31,9 +45,19 @@ export default function SearchBar({ isOpen, onClose }: SearchBarProps) {
     }
   }, [isOpen]);
 
+  const getSearchContainer = useCallback((): HTMLElement | null => {
+    const root = searchRootRef?.current;
+    if (root) {
+      return root.matches(".html-renderer")
+        ? root
+        : root.querySelector<HTMLElement>(".html-renderer");
+    }
+    return document.querySelector<HTMLElement>(".html-renderer");
+  }, [searchRootRef]);
+
   // Clear all search highlights
   const clearHighlights = useCallback(() => {
-    const container = document.querySelector(".html-renderer");
+    const container = getSearchContainer();
     if (!container) return;
 
     // Remove all mark elements and restore original text
@@ -47,11 +71,11 @@ export default function SearchBar({ isOpen, onClose }: SearchBarProps) {
 
     // Normalize text nodes to merge adjacent text nodes
     container.normalize();
-  }, []);
+  }, [getSearchContainer]);
 
   // Perform search and highlight matches
   const performSearch = useCallback((query: string, matchIndex: number = 0) => {
-    const container = document.querySelector(".html-renderer");
+    const container = getSearchContainer();
     if (!container || !query.trim()) {
       clearHighlights();
       setTotalMatches(0);
@@ -172,11 +196,11 @@ export default function SearchBar({ isOpen, onClose }: SearchBarProps) {
     // Scroll to current match
     requestAnimationFrame(() => {
       const currentMark = container.querySelector("mark.search-highlight-current");
-      if (currentMark) {
+      if (currentMark instanceof HTMLElement && typeof currentMark.scrollIntoView === "function") {
         currentMark.scrollIntoView({ behavior: "smooth", block: "center" });
       }
     });
-  }, [clearHighlights]);
+  }, [clearHighlights, getSearchContainer]);
 
   // Handle search query changes with debouncing
   useEffect(() => {
@@ -229,29 +253,19 @@ export default function SearchBar({ isOpen, onClose }: SearchBarProps) {
     onClose();
   }, [clearHighlights, onClose]);
 
-  // Handle keyboard shortcuts
-  useEffect(() => {
-    if (!isOpen) return;
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        handleClose();
-      } else if (e.key === "Enter") {
-        e.preventDefault();
-        navigate(!e.shiftKey);
-      } else if (e.key === "F3") {
-        e.preventDefault();
-        navigate(!e.shiftKey);
-      } else if (e.key === "g" && (e.ctrlKey || e.metaKey)) {
-        e.preventDefault();
-        navigate(!e.shiftKey);
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, handleClose, navigate]);
+  const handleKeyDown = useCallback((e: ReactKeyboardEvent<HTMLDivElement>) => {
+    const fromInput = e.target === inputRef.current;
+    if (e.key === "Escape") {
+      e.preventDefault();
+      handleClose();
+    } else if (fromInput && (e.key === "Enter" || e.key === "F3")) {
+      e.preventDefault();
+      navigate(!e.shiftKey);
+    } else if (fromInput && e.key === "g" && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      navigate(!e.shiftKey);
+    }
+  }, [handleClose, navigate]);
 
   // Clean up on unmount or close
   useEffect(() => {
@@ -259,6 +273,8 @@ export default function SearchBar({ isOpen, onClose }: SearchBarProps) {
       clearHighlights();
     }
   }, [isOpen, clearHighlights]);
+
+  useEffect(() => () => clearHighlights(), [clearHighlights]);
 
   if (!isOpen) return null;
 
@@ -277,7 +293,10 @@ export default function SearchBar({ isOpen, onClose }: SearchBarProps) {
         }
       `}</style>
 
-      <div className="fixed top-4 right-4 z-50 bg-white shadow-lg rounded-lg border border-slate-200 p-2 flex items-center gap-2">
+      <div className={placement === "inline"
+        ? "scholar-search-bar flex min-w-0 items-center gap-1"
+        : "fixed top-4 right-4 z-50 bg-white shadow-lg rounded-lg border border-slate-200 p-2 flex items-center gap-2"
+      } onKeyDown={handleKeyDown}>
         <Search size={14} className="text-slate-400 ml-1" />
         <input
           ref={inputRef}
@@ -285,7 +304,11 @@ export default function SearchBar({ isOpen, onClose }: SearchBarProps) {
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           placeholder="Find in paper..."
-          className="w-48 px-2 py-1 text-sm text-slate-900 border-none focus:outline-none placeholder:text-slate-400"
+          aria-label="Find in paper"
+          className={placement === "inline"
+            ? "scholar-search-input min-w-0 px-2 py-1 text-sm border-none focus:outline-none"
+            : "w-48 px-2 py-1 text-sm text-slate-900 border-none focus:outline-none placeholder:text-slate-400"
+          }
         />
 
         {/* Match count */}

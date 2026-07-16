@@ -9,9 +9,17 @@ vi.mock('@/components/reader/MathJaxNode', () => ({
 
 // Mock the InteractiveNode component
 vi.mock('@/components/reader/InteractiveNode', () => ({
-  InteractiveNode: ({ children, dataId, tag }: any) => {
+  InteractiveNode: ({ children, dataId, tag, annotationActivation }: any) => {
     const Tag = tag || 'div'
-    return <Tag data-testid={`interactive-${tag}`} data-id={dataId}>{children}</Tag>
+    return (
+      <Tag
+        data-testid={`interactive-${tag}`}
+        data-id={dataId}
+        data-annotation-activation={annotationActivation}
+      >
+        {children}
+      </Tag>
+    )
   }
 }))
 
@@ -57,6 +65,19 @@ describe('HTMLRenderer', () => {
     const interactivePara = screen.getByTestId('interactive-p')
     expect(interactivePara).toBeInTheDocument()
     expect(interactivePara).toHaveAttribute('data-id', 'node-123')
+  })
+
+  it('forwards context-menu annotation activation to interactive nodes', () => {
+    render(
+      <HTMLRenderer
+        {...mockProps}
+        html='<p data-id="node-123">Interactive paragraph</p>'
+        annotationActivation="context-menu"
+      />,
+    )
+
+    expect(screen.getByTestId('interactive-p'))
+      .toHaveAttribute('data-annotation-activation', 'context-menu')
   })
 
   it('renders nested elements correctly', () => {

@@ -15,6 +15,15 @@ export interface CompilationProgress {
   error?: string
 }
 
+export interface KnowledgeGraphProgress {
+  type?: string
+  stage: string
+  progress: Record<string, { current: number; total: number }>
+  error?: string
+  node_count?: number
+  edge_count?: number
+}
+
 export interface ReaderWorkspaceApi {
   listPapers(): Promise<Paper[]>
   getPaper(paperId: string): Promise<PaperDetail>
@@ -38,6 +47,11 @@ export interface ReaderWorkspaceApi {
     onProgress: (progress: CompilationProgress) => void,
     onConnectionError: () => void,
   ): () => void
+  watchKnowledgeGraph?(
+    paperId: string,
+    onProgress: (progress: KnowledgeGraphProgress) => void,
+    onConnectionError: () => void,
+  ): () => void
 }
 
 export interface ReaderWorkspaceSnapshot {
@@ -52,6 +66,7 @@ export interface ReaderWorkspaceSnapshot {
   activeEntityByPaperId: Record<string, string | null>
   paperErrors: Record<string, string>
   statusByPaperId: Record<string, string>
+  knowledgeGraphProgressByPaperId: Record<string, KnowledgeGraphProgress>
 }
 
 type Listener = () => void
@@ -68,6 +83,7 @@ const initialSnapshot = (): ReaderWorkspaceSnapshot => ({
   activeEntityByPaperId: {},
   paperErrors: {},
   statusByPaperId: {},
+  knowledgeGraphProgressByPaperId: {},
 })
 
 const errorMessage = (error: unknown): string => {
@@ -85,6 +101,8 @@ export class ReaderWorkspaceStore {
   private readonly listeners = new Set<Listener>()
   private readonly paperLoads = new Map<string, Promise<PaperDetail>>()
   private readonly compilationStops = new Map<string, () => void>()
+  private readonly knowledgeGraphStops = new Map<string, () => void>()
+  private readonly statusClearTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
   constructor(private readonly api: ReaderWorkspaceApi) {}
 
@@ -228,7 +246,7 @@ export class ReaderWorkspaceStore {
     this.setPaperStatus(paperId, 'Starting knowledge graph build…')
     try {
       await build.call(this.api, paperId)
-      this.setPaperStatus(paperId, 'Knowledge graph build started')
+      this.watchKnowledgeGraph(paperId)
     } catch (error) {
       this.setPaperError(paperId, error)
       this.clearPaperStatus(paperId)
@@ -241,6 +259,9 @@ export class ReaderWorkspaceStore {
     await remove.call(this.api, paperId)
     this.compilationStops.get(paperId)?.()
     this.compilationStops.delete(paperId)
+    this.knowledgeGraphStops.get(paperId)?.()
+    this.knowledgeGraphStops.delete(paperId)
+    this.cancelStatusClear(paperId)
 
     const nextOpenPaperIds = this.snapshot.openPaperIds.filter(id => id !== paperId)
     this.update({
@@ -254,6 +275,10 @@ export class ReaderWorkspaceStore {
       activeEntityByPaperId: this.withoutKey(this.snapshot.activeEntityByPaperId, paperId),
       paperErrors: this.withoutKey(this.snapshot.paperErrors, paperId),
       statusByPaperId: this.withoutKey(this.snapshot.statusByPaperId, paperId),
+      knowledgeGraphProgressByPaperId: this.withoutKey(
+        this.snapshot.knowledgeGraphProgressByPaperId,
+        paperId,
+      ),
     })
   }
 
@@ -334,6 +359,7 @@ export class ReaderWorkspaceStore {
   }
 
   clearPaperStatus(paperId: string): void {
+    this.cancelStatusClear(paperId)
     this.update({ statusByPaperId: this.withoutKey(this.snapshot.statusByPaperId, paperId) })
   }
 
@@ -375,6 +401,85 @@ export class ReaderWorkspaceStore {
     this.compilationStops.set(paperId, stop)
   }
 
+  private watchKnowledgeGraph(paperId: string): void {
+    const watch = this.api.watchKnowledgeGraph
+    if (!watch) {
+      const status = 'Knowledge graph build started'
+      this.setPaperStatus(paperId, status)
+      this.scheduleStatusClear(paperId, status)
+      return
+    }
+
+    this.knowledgeGraphStops.get(paperId)?.()
+    let stop = (): void => undefined
+    let finished = false
+    const finish = (): void => {
+      if (finished) {
+        return
+      }
+      finished = true
+      stop()
+      if (this.knowledgeGraphStops.get(paperId) === finish) {
+        this.knowledgeGraphStops.delete(paperId)
+      }
+    }
+
+    stop = watch.call(
+      this.api,
+      paperId,
+      progress => {
+        if (finished) {
+          return
+        }
+        if (progress.type === 'connected') {
+          return
+        }
+
+        this.update({
+          knowledgeGraphProgressByPaperId: {
+            ...this.snapshot.knowledgeGraphProgressByPaperId,
+            [paperId]: progress,
+          },
+        })
+
+        if (progress.stage === 'complete') {
+          finish()
+          const nodes = progress.node_count ?? 0
+          const edges = progress.edge_count ?? 0
+          const status = `Knowledge graph ready: ${nodes} nodes, ${edges} edges`
+          this.setPaperStatus(paperId, status)
+          this.scheduleStatusClear(paperId, status)
+          void Promise.all([this.refreshPaper(paperId), this.loadLibrary()]).catch(error => {
+            this.setPaperError(paperId, error)
+          })
+        } else if (progress.stage === 'error') {
+          finish()
+          this.setPaperError(paperId, new Error(progress.error || 'Knowledge graph build failed'))
+          this.clearPaperStatus(paperId)
+        } else {
+          this.setPaperStatus(paperId, knowledgeGraphStatus(progress))
+        }
+      },
+      () => {
+        if (finished) {
+          return
+        }
+        finish()
+        this.setPaperError(
+          paperId,
+          new Error('Lost connection to knowledge graph progress stream'),
+        )
+        this.clearPaperStatus(paperId)
+      },
+    )
+
+    if (finished) {
+      stop()
+    } else {
+      this.knowledgeGraphStops.set(paperId, finish)
+    }
+  }
+
   private updateTooltipState(paperId: string, tooltip: Tooltip): void {
     const current = this.snapshot.tooltipsByPaperId[paperId] ?? []
     const exists = current.some(item => item.id === tooltip.id)
@@ -389,6 +494,7 @@ export class ReaderWorkspaceStore {
   }
 
   private setPaperStatus(paperId: string, status: string): void {
+    this.cancelStatusClear(paperId)
     this.update({
       statusByPaperId: { ...this.snapshot.statusByPaperId, [paperId]: status },
       paperErrors: this.withoutKey(this.snapshot.paperErrors, paperId),
@@ -399,6 +505,25 @@ export class ReaderWorkspaceStore {
     this.update({
       paperErrors: { ...this.snapshot.paperErrors, [paperId]: errorMessage(error) },
     })
+  }
+
+  private scheduleStatusClear(paperId: string, status: string): void {
+    this.cancelStatusClear(paperId)
+    const timer = setTimeout(() => {
+      this.statusClearTimers.delete(paperId)
+      if (this.snapshot.statusByPaperId[paperId] === status) {
+        this.clearPaperStatus(paperId)
+      }
+    }, 4000)
+    this.statusClearTimers.set(paperId, timer)
+  }
+
+  private cancelStatusClear(paperId: string): void {
+    const timer = this.statusClearTimers.get(paperId)
+    if (timer) {
+      clearTimeout(timer)
+      this.statusClearTimers.delete(paperId)
+    }
   }
 
   private requireOperation<K extends keyof ReaderWorkspaceApi>(
@@ -423,4 +548,17 @@ export class ReaderWorkspaceStore {
     delete next[key]
     return next
   }
+}
+
+function knowledgeGraphStatus(progress: KnowledgeGraphProgress): string {
+  const stages = Object.values(progress.progress ?? {})
+    .filter(stage => Number.isFinite(stage.current) && Number.isFinite(stage.total) && stage.total > 0)
+  if (stages.length === 0) {
+    return 'Building knowledge graph…'
+  }
+
+  const current = stages.reduce((sum, stage) => sum + Math.min(stage.current, stage.total), 0)
+  const total = stages.reduce((sum, stage) => sum + stage.total, 0)
+  const percent = Math.round((current / total) * 100)
+  return `Knowledge graph: ${current}/${total} (${percent}%)`
 }

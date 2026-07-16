@@ -1,9 +1,10 @@
 import * as React from 'react'
-import { FileText, Network, RefreshCw, Trash2 } from 'lucide-react'
+import { FileText, Network, RefreshCw, Search, Trash2 } from 'lucide-react'
 import { MessageService } from '@theia/core'
 import { Message, ReactWidget } from '@theia/core/lib/browser'
 
 import { HTMLRenderer } from '../../../../components/reader/HTMLRenderer'
+import SearchBar from '../../../../components/reader/SearchBar'
 import type { TooltipUpdate } from '../../../../lib/reader-workspace-store'
 import { paperLabel, useScholarSnapshot, useTooltipMaps } from './scholar-react'
 import type { ScholarWorkspaceService } from './scholar-workspace-service'
@@ -27,6 +28,7 @@ export function isScholarPaperWidgetOptions(value: unknown): value is ScholarPap
 
 export class ScholarPaperWidget extends ReactWidget {
   private loadStarted = false
+  private searchOpen = false
 
   constructor(
     private readonly store: ScholarWorkspaceService,
@@ -60,12 +62,29 @@ export class ScholarPaperWidget extends ReactWidget {
     super.onCloseRequest(message)
   }
 
+  openSearch(): void {
+    if (!this.searchOpen) {
+      this.searchOpen = true
+      this.update()
+    }
+  }
+
+  closeSearch(): void {
+    if (this.searchOpen) {
+      this.searchOpen = false
+      this.update()
+    }
+  }
+
   protected override render(): React.ReactNode {
     return (
       <ScholarPaperContent
         store={this.store}
         messageService={this.messageService}
         paperId={this.options.paperId}
+        searchOpen={this.searchOpen}
+        onOpenSearch={() => this.openSearch()}
+        onCloseSearch={() => this.closeSearch()}
         onDeleted={() => this.close()}
       />
     )
@@ -90,6 +109,9 @@ interface ScholarPaperContentProps {
   store: ScholarWorkspaceService
   messageService: MessageService
   paperId: string
+  searchOpen: boolean
+  onOpenSearch: () => void
+  onCloseSearch: () => void
   onDeleted: () => void
 }
 
@@ -97,6 +119,9 @@ function ScholarPaperContent({
   store,
   messageService,
   paperId,
+  searchOpen,
+  onOpenSearch,
+  onCloseSearch,
   onDeleted,
 }: ScholarPaperContentProps): React.ReactElement {
   const snapshot = useScholarSnapshot(store)
@@ -106,6 +131,7 @@ function ScholarPaperContent({
   const loading = snapshot.loadingPaperIds.includes(paperId)
   const error = snapshot.paperErrors[paperId]
   const status = snapshot.statusByPaperId[paperId]
+  const readerRootRef = React.useRef<HTMLDivElement>(null)
 
   const reportFailure = React.useCallback((action: string, reason: unknown) => {
     void messageService.error(`${action}: ${errorMessage(reason)}`)
@@ -137,6 +163,23 @@ function ScholarPaperContent({
           {paper ? paperLabel(paper.filename, paper.paper_metadata?.title) : paperId}
         </strong>
         {status && <span className="truncate text-xs text-gray-500">{status}</span>}
+        {searchOpen ? (
+          <SearchBar
+            isOpen
+            onClose={onCloseSearch}
+            searchRootRef={readerRootRef}
+            placement="inline"
+          />
+        ) : (
+          <button
+            type="button"
+            className="scholar-toolbar-button secondary"
+            onClick={onOpenSearch}
+            title="Find in paper (Ctrl/Cmd+F)"
+          >
+            <Search size={14} />
+          </button>
+        )}
         <button
           type="button"
           className="scholar-toolbar-button secondary"
@@ -155,9 +198,8 @@ function ScholarPaperContent({
           className="scholar-toolbar-button secondary"
           disabled={!paper?.has_html || Boolean(status)}
           onClick={() => {
-            void store.buildKnowledgeGraph(paperId).then(() => {
-              window.setTimeout(() => store.clearPaperStatus(paperId), 2500)
-            }).catch(reason => reportFailure('Could not build knowledge graph', reason))
+            void store.buildKnowledgeGraph(paperId)
+              .catch(reason => reportFailure('Could not build knowledge graph', reason))
           }}
           title="Build knowledge graph"
         >
@@ -174,7 +216,7 @@ function ScholarPaperContent({
         </button>
       </div>
 
-      <div className="scholar-reader-scroll">
+      <div ref={readerRootRef} className="scholar-reader-scroll">
         {loading && !paper && <div className="scholar-loading">Loading paper…</div>}
         {error && !paper && (
           <div className="scholar-error">
@@ -219,6 +261,7 @@ function ScholarPaperContent({
                 .catch(reason => reportFailure('Could not remove annotation occurrence', reason))
             }}
             onEntityClick={entityId => store.setActiveEntity(paperId, entityId)}
+            annotationActivation="context-menu"
           />
         )}
       </div>

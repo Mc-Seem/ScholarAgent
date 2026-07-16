@@ -1,11 +1,13 @@
 "use client";
 
-import React, { useState, useRef, useCallback, ReactNode } from 'react';
+import React, { useState, useRef, useCallback, useLayoutEffect, ReactNode } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { MessageSquarePlus, X, Pencil, Trash2 } from 'lucide-react';
 import type { Tooltip } from '../../hooks/useTooltips';
 import { LatexText } from './LatexText';
 import { ContextMenu } from './ContextMenu';
+
+export type AnnotationActivation = 'click' | 'context-menu';
 
 interface InteractiveNodeProps {
   tag: string;
@@ -16,6 +18,7 @@ interface InteractiveNodeProps {
   onTooltipUpdate: (tooltipId: string, content: string, targetText?: string) => void;
   onTooltipDelete: (tooltipId: string) => void;
   onTooltipRemoveOccurrence?: (tooltipId: string, domNodeId: string) => void;
+  annotationActivation?: AnnotationActivation;
   children: ReactNode;
 }
 
@@ -36,6 +39,7 @@ export function InteractiveNode({
   onTooltipUpdate,
   onTooltipDelete,
   onTooltipRemoveOccurrence,
+  annotationActivation = 'click',
   children
 }: InteractiveNodeProps) {
   const [isPopoverOpen, setIsPopoverOpen] = useState(false);
@@ -43,6 +47,7 @@ export function InteractiveNode({
   const [newTargetText, setNewTargetText] = useState('');
   const [newContent, setNewContent] = useState('');
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; tooltipId: string } | null>(null);
+  const [popoverAnchor, setPopoverAnchor] = useState<{ x: number; y: number } | null>(null);
   const nodeRef = useRef<HTMLElement | null>(null);
 
   const handleClick = useCallback((e: React.MouseEvent) => {
@@ -50,25 +55,40 @@ export function InteractiveNode({
     if ((e.target as HTMLElement).closest('.tooltip-popover')) {
       return;
     }
+    if (annotationActivation === 'context-menu') {
+      return;
+    }
     e.stopPropagation();
+    setPopoverAnchor(null);
     setIsPopoverOpen(true);
-  }, []);
+  }, [annotationActivation]);
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     // Only show context menu if there are semantic tooltips (with entity_id)
     const semanticTooltip = tooltips.find(t => t.entity_id);
-    if (!semanticTooltip || !onTooltipRemoveOccurrence) {
+    if (semanticTooltip && onTooltipRemoveOccurrence) {
+      e.preventDefault();
+      e.stopPropagation();
+      setIsPopoverOpen(false);
+      setContextMenu({
+        x: e.clientX,
+        y: e.clientY,
+        tooltipId: semanticTooltip.id
+      });
+      return;
+    }
+
+    if (annotationActivation !== 'context-menu') {
       return;
     }
 
     e.preventDefault();
     e.stopPropagation();
-    setContextMenu({
-      x: e.clientX,
-      y: e.clientY,
-      tooltipId: semanticTooltip.id
-    });
-  }, [tooltips, onTooltipRemoveOccurrence]);
+    setContextMenu(null);
+    setPopoverAnchor({ x: e.clientX, y: e.clientY });
+    setIsAdding(tooltips.length === 0);
+    setIsPopoverOpen(true);
+  }, [annotationActivation, tooltips, onTooltipRemoveOccurrence]);
 
   const handleRemoveOccurrence = useCallback(() => {
     if (contextMenu && onTooltipRemoveOccurrence) {
@@ -81,6 +101,7 @@ export function InteractiveNode({
     setIsAdding(false);
     setNewTargetText('');
     setNewContent('');
+    setPopoverAnchor(null);
   }, []);
 
   const handleAdd = useCallback(() => {
@@ -122,6 +143,7 @@ export function InteractiveNode({
     ref: nodeRef,
     ...restAttribs,
     'data-id': dataId,
+    'data-annotation-activation': annotationActivation,
     className,
     onClick: handleClick,
     onContextMenu: handleContextMenu,
@@ -136,6 +158,7 @@ export function InteractiveNode({
         {isPopoverOpen && (
           <TooltipPopover
             nodeRef={nodeRef}
+            anchor={popoverAnchor}
             tooltips={tooltips}
             isAdding={isAdding}
             newTargetText={newTargetText}
@@ -165,6 +188,7 @@ export function InteractiveNode({
 
 interface TooltipPopoverProps {
   nodeRef: React.RefObject<HTMLElement | null>;
+  anchor: { x: number; y: number } | null;
   tooltips: Tooltip[];
   isAdding: boolean;
   newTargetText: string;
@@ -180,6 +204,7 @@ interface TooltipPopoverProps {
 
 function TooltipPopover({
   nodeRef,
+  anchor,
   tooltips,
   isAdding,
   newTargetText,
@@ -196,18 +221,70 @@ function TooltipPopover({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTargetText, setEditTargetText] = useState('');
   const [editContent, setEditContent] = useState('');
-
-  // Calculate position relative to the node
-  const rect = nodeRef.current?.getBoundingClientRect();
-  const style: React.CSSProperties = {
+  const [position, setPosition] = useState<React.CSSProperties>({
     position: 'fixed',
-    zIndex: 9999,
-    top: rect ? rect.bottom + 8 : 0,
-    left: rect ? rect.left + rect.width / 2 : 0,
-    transform: 'translateX(-50%)',
-    maxWidth: '500px',
-    width: '100%'
-  };
+    visibility: 'hidden',
+  });
+
+  const updatePosition = useCallback(() => {
+    const node = nodeRef.current;
+    const popover = popoverRef.current;
+    if (!node || !popover) {
+      return;
+    }
+
+    const nodeRect = node.getBoundingClientRect();
+    const ownerBounds = node.closest<HTMLElement>('.scholar-reader-widget')?.getBoundingClientRect();
+    const boundary = ownerBounds && ownerBounds.width > 0 && ownerBounds.height > 0
+      ? ownerBounds
+      : {
+          left: 0,
+          top: 0,
+          right: window.innerWidth,
+          bottom: window.innerHeight,
+          width: window.innerWidth,
+          height: window.innerHeight,
+        };
+    const margin = 8;
+    const width = Math.min(420, Math.max(1, boundary.width - margin * 2));
+    const maxHeight = Math.max(1, boundary.height - margin * 2);
+    const measuredHeight = popover.getBoundingClientRect().height || Math.min(480, maxHeight);
+    const height = Math.min(measuredHeight, maxHeight);
+    const desiredLeft = anchor ? anchor.x : nodeRect.left + nodeRect.width / 2 - width / 2;
+    const maximumLeft = Math.max(boundary.left + margin, boundary.right - width - margin);
+    const left = Math.min(Math.max(desiredLeft, boundary.left + margin), maximumLeft);
+    const anchorTop = anchor?.y ?? nodeRect.bottom;
+    let top = anchorTop + margin;
+
+    if (top + height > boundary.bottom - margin) {
+      top = (anchor?.y ?? nodeRect.top) - height - margin;
+    }
+    top = Math.min(
+      Math.max(top, boundary.top + margin),
+      Math.max(boundary.top + margin, boundary.bottom - height - margin),
+    );
+
+    setPosition({
+      position: 'fixed',
+      zIndex: 9999,
+      top,
+      left,
+      width,
+      maxHeight,
+      overflowY: 'auto',
+      visibility: 'visible',
+    });
+  }, [anchor, nodeRef]);
+
+  useLayoutEffect(() => {
+    updatePosition();
+    window.addEventListener('resize', updatePosition);
+    document.addEventListener('scroll', updatePosition, true);
+    return () => {
+      window.removeEventListener('resize', updatePosition);
+      document.removeEventListener('scroll', updatePosition, true);
+    };
+  }, [updatePosition]);
 
   // Close on click outside
   React.useEffect(() => {
@@ -248,12 +325,13 @@ function TooltipPopover({
     <motion.div
       ref={popoverRef}
       className="tooltip-popover bg-white border border-slate-200 shadow-xl rounded-xl p-4"
-      style={style}
+      style={position}
       initial={{ opacity: 0, y: -10, scale: 0.95 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, y: -5, scale: 0.98 }}
       transition={{ duration: 0.15 }}
       onClick={(e) => e.stopPropagation()}
+      onContextMenu={(e) => e.stopPropagation()}
     >
       {/* Header */}
       <div className="flex items-center justify-between mb-3">
@@ -263,6 +341,9 @@ function TooltipPopover({
         <button
           onClick={onClose}
           className="text-slate-400 hover:text-slate-600 p-1 hover:bg-slate-100 rounded-full transition-colors"
+          type="button"
+          title="Close annotations"
+          aria-label="Close annotations"
         >
           <X size={16} />
         </button>

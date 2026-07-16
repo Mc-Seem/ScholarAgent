@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { ExternalLink, FileText, RefreshCw, SplitSquareHorizontal, Upload } from 'lucide-react'
+import { ExternalLink, FileText, RefreshCw, Save, SplitSquareHorizontal, Upload, X } from 'lucide-react'
 import { MessageService } from '@theia/core'
 import {
   ApplicationShell,
@@ -10,7 +10,6 @@ import {
 import { inject, injectable } from '@theia/core/shared/inversify'
 
 import NavigationPanel from '../../../../components/reader/NavigationPanel'
-import TooltipEditModal from '../../../../components/reader/TooltipEditModal'
 import TooltipPanel from '../../../../components/reader/TooltipPanel'
 import type { Paper } from '../../../../hooks/usePapers'
 import type { Tooltip } from '../../../../hooks/useTooltips'
@@ -334,6 +333,8 @@ function ScholarAnnotationsContent({
   const { entityTooltipMap } = useTooltipMaps(tooltips)
   const [editingTooltip, setEditingTooltip] = React.useState<Tooltip | null>(null)
 
+  React.useEffect(() => setEditingTooltip(null), [paperId])
+
   if (!paperId) {
     return <div className="scholar-empty">Open a paper to see comments and glossary entries.</div>
   }
@@ -364,28 +365,122 @@ function ScholarAnnotationsContent({
   }
 
   return (
-    <>
-      <TooltipPanel
-        tooltips={tooltips}
-        toc={getPaperTOC(paper.sections, paper.html_content)}
-        activeEntityId={snapshot.activeEntityByPaperId[paperId]}
-        entityTooltipMap={entityTooltipMap}
-        onEdit={setEditingTooltip}
-        onDelete={removeTooltip}
-        onPin={pinTooltip}
-        onNavigate={dataId => navigateToPaperElement(paperId, dataId)}
-        onCloseDetail={() => store.setActiveEntity(paperId, null)}
-      />
-      <TooltipEditModal
-        isOpen={Boolean(editingTooltip)}
-        tooltip={editingTooltip}
-        onClose={() => setEditingTooltip(null)}
-        onSave={(tooltipId, content, targetText) => {
-          void store.updateTooltip(paperId, tooltipId, { content, targetText })
-            .catch(reason => reportFailure('Could not update annotation', reason))
+    <div className="scholar-annotations-content">
+      {editingTooltip && (
+        <ScholarAnnotationEditor
+          tooltip={editingTooltip}
+          onCancel={() => setEditingTooltip(null)}
+          onSave={async content => {
+            try {
+              await store.updateTooltip(paperId, editingTooltip.id, {
+                content,
+                targetText: editingTooltip.target_text ?? undefined,
+              })
+              setEditingTooltip(null)
+            } catch (reason) {
+              reportFailure('Could not update annotation', reason)
+            }
+          }}
+        />
+      )}
+      <div className="min-h-0 flex-1">
+        <TooltipPanel
+          tooltips={tooltips}
+          toc={getPaperTOC(paper.sections, paper.html_content)}
+          activeEntityId={snapshot.activeEntityByPaperId[paperId]}
+          entityTooltipMap={entityTooltipMap}
+          onEdit={setEditingTooltip}
+          onDelete={removeTooltip}
+          onPin={pinTooltip}
+          onNavigate={dataId => navigateToPaperElement(paperId, dataId)}
+          onCloseDetail={() => store.setActiveEntity(paperId, null)}
+        />
+      </div>
+    </div>
+  )
+}
+
+function ScholarAnnotationEditor({
+  tooltip,
+  onCancel,
+  onSave,
+}: {
+  tooltip: Tooltip
+  onCancel: () => void
+  onSave: (content: string) => Promise<void>
+}): React.ReactElement {
+  const [content, setContent] = React.useState(tooltip.content)
+  const [saving, setSaving] = React.useState(false)
+
+  React.useEffect(() => setContent(tooltip.content), [tooltip])
+
+  const submit = async (): Promise<void> => {
+    const trimmed = content.trim()
+    if (!trimmed || saving) {
+      return
+    }
+    setSaving(true)
+    try {
+      await onSave(trimmed)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <form
+      className="scholar-annotation-editor"
+      onSubmit={event => {
+        event.preventDefault()
+        void submit()
+      }}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <strong className="truncate text-sm">Edit annotation</strong>
+        <button
+          type="button"
+          className="scholar-toolbar-button secondary"
+          onClick={onCancel}
+          title="Cancel editing"
+        >
+          <X size={13} />
+        </button>
+      </div>
+      <textarea
+        className="scholar-field scholar-annotation-textarea"
+        value={content}
+        rows={5}
+        autoFocus
+        onChange={event => setContent(event.target.value)}
+        onKeyDown={event => {
+          if (event.key === 'Escape') {
+            event.preventDefault()
+            onCancel()
+          } else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+            event.preventDefault()
+            void submit()
+          }
         }}
       />
-    </>
+      <div className="flex justify-end gap-1">
+        <button
+          type="button"
+          className="scholar-toolbar-button secondary"
+          disabled={saving}
+          onClick={onCancel}
+        >
+          Cancel
+        </button>
+        <button
+          type="submit"
+          className="scholar-toolbar-button"
+          disabled={saving || !content.trim()}
+        >
+          <Save size={13} />
+          Save
+        </button>
+      </div>
+    </form>
   )
 }
 

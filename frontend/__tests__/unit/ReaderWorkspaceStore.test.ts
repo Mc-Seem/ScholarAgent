@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   ReaderWorkspaceStore,
+  type KnowledgeGraphProgress,
   type ReaderWorkspaceApi,
 } from '@/lib/reader-workspace-store'
 import type { Paper, PaperDetail } from '@/hooks/usePapers'
@@ -130,6 +131,102 @@ describe('ReaderWorkspaceStore', () => {
         is_pinned: true,
       }),
     )
+  })
+
+  it('streams knowledge-graph progress and refreshes the finished paper', async () => {
+    let publishProgress: ((progress: KnowledgeGraphProgress) => void) | undefined
+    const stopWatching = vi.fn()
+    api.buildKnowledgeGraph = vi.fn().mockResolvedValue({ status: 'started' })
+    api.watchKnowledgeGraph = vi.fn((_paperId, onProgress) => {
+      publishProgress = onProgress
+      return stopWatching
+    })
+    const store = new ReaderWorkspaceStore(api)
+    await store.openPaper('paper-a')
+
+    await store.buildKnowledgeGraph('paper-a')
+    publishProgress?.({
+      stage: 'extracting',
+      progress: { symbols: { current: 2, total: 4 } },
+    })
+
+    expect(store.getSnapshot().statusByPaperId['paper-a'])
+      .toBe('Knowledge graph: 2/4 (50%)')
+    expect(store.getSnapshot().knowledgeGraphProgressByPaperId['paper-a'])
+      .toEqual(expect.objectContaining({ stage: 'extracting' }))
+
+    publishProgress?.({
+      stage: 'complete',
+      progress: {},
+      node_count: 7,
+      edge_count: 5,
+    })
+
+    expect(stopWatching).toHaveBeenCalledOnce()
+    expect(store.getSnapshot().statusByPaperId['paper-a'])
+      .toBe('Knowledge graph ready: 7 nodes, 5 edges')
+    await vi.waitFor(() => expect(api.getPaper).toHaveBeenCalledTimes(2))
+
+    publishProgress?.({ stage: 'error', progress: {}, error: 'Late stream error' })
+    expect(store.getSnapshot().paperErrors['paper-a']).toBeUndefined()
+  })
+
+  it('clears a terminal knowledge-graph status so paper actions become available again', async () => {
+    vi.useFakeTimers()
+    try {
+      let publishProgress: ((progress: KnowledgeGraphProgress) => void) | undefined
+      api.buildKnowledgeGraph = vi.fn().mockResolvedValue({ status: 'started' })
+      api.watchKnowledgeGraph = vi.fn((_paperId, onProgress) => {
+        publishProgress = onProgress
+        return vi.fn()
+      })
+      const store = new ReaderWorkspaceStore(api)
+
+      await store.buildKnowledgeGraph('paper-a')
+      publishProgress?.({ stage: 'complete', progress: {}, node_count: 1, edge_count: 0 })
+      expect(store.getSnapshot().statusByPaperId['paper-a']).toContain('ready')
+
+      await vi.advanceTimersByTimeAsync(4000)
+      expect(store.getSnapshot().statusByPaperId['paper-a']).toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('records a background knowledge-graph failure and closes its stream', async () => {
+    let publishProgress: ((progress: KnowledgeGraphProgress) => void) | undefined
+    const stopWatching = vi.fn()
+    api.buildKnowledgeGraph = vi.fn().mockResolvedValue({ status: 'started' })
+    api.watchKnowledgeGraph = vi.fn((_paperId, onProgress) => {
+      publishProgress = onProgress
+      return stopWatching
+    })
+    const store = new ReaderWorkspaceStore(api)
+
+    await store.buildKnowledgeGraph('paper-a')
+    publishProgress?.({ stage: 'error', progress: {}, error: 'Extraction failed' })
+
+    expect(stopWatching).toHaveBeenCalledOnce()
+    expect(store.getSnapshot().paperErrors['paper-a']).toBe('Extraction failed')
+    expect(store.getSnapshot().statusByPaperId['paper-a']).toBeUndefined()
+  })
+
+  it('reports a lost knowledge-graph progress connection', async () => {
+    let reportConnectionError: (() => void) | undefined
+    const stopWatching = vi.fn()
+    api.buildKnowledgeGraph = vi.fn().mockResolvedValue({ status: 'started' })
+    api.watchKnowledgeGraph = vi.fn((_paperId, _onProgress, onConnectionError) => {
+      reportConnectionError = onConnectionError
+      return stopWatching
+    })
+    const store = new ReaderWorkspaceStore(api)
+
+    await store.buildKnowledgeGraph('paper-a')
+    reportConnectionError?.()
+
+    expect(stopWatching).toHaveBeenCalledOnce()
+    expect(store.getSnapshot().paperErrors['paper-a'])
+      .toBe('Lost connection to knowledge graph progress stream')
   })
 
   it('rejects an empty id without calling the API and records load failures', async () => {

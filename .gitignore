@@ -47,12 +47,10 @@ htmlcov/
 storage/
 input/
 data/
-uv.lock
 
 # Frontend
 frontend/.next/
 frontend/node_modules/
-frontend/package-lock.json
 frontend/.toolchains/
 frontend/coverage/
 frontend/.turbo/
@@ -60,6 +58,7 @@ frontend/tsconfig.tsbuildinfo
 frontend/theia/*/src-gen/
 frontend/theia/*/gen-esbuild.*.mjs
 frontend/theia/*/esbuild.mjs
+frontend/.browser_modules/
 
 # OS
 .DS_Store

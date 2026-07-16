@@ -3,6 +3,7 @@ import type { Tooltip } from '../hooks/useTooltips'
 import { API_BASE, apiUrl } from '../hooks/useApi'
 import type {
   CompilationProgress,
+  KnowledgeGraphProgress,
   ReaderWorkspaceApi,
   TooltipUpdate,
 } from './reader-workspace-store'
@@ -124,6 +125,27 @@ export class HttpReaderWorkspaceApi implements ReaderWorkspaceApi {
     source.onmessage = event => {
       try {
         onProgress(JSON.parse(event.data) as CompilationProgress)
+      } catch {
+        // SSE heartbeat comments and malformed progress events are non-fatal.
+      }
+    }
+    source.onerror = () => onConnectionError()
+
+    return () => source.close()
+  }
+
+  watchKnowledgeGraph(
+    paperId: string,
+    onProgress: (progress: KnowledgeGraphProgress) => void,
+    onConnectionError: () => void,
+  ): () => void {
+    const source = new EventSource(
+      this.url(`/api/papers/${paperId}/knowledge-graph/build/progress`),
+    )
+
+    source.onmessage = event => {
+      try {
+        onProgress(JSON.parse(event.data) as KnowledgeGraphProgress)
       } catch {
         // SSE heartbeat comments and malformed progress events are non-fatal.
       }

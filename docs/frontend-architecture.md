@@ -114,11 +114,17 @@ frontend/theia/
 It caches paper details and tooltips by paper ID, deduplicates concurrent loads,
 and keeps active-entity state isolated per tab. Activating an already loaded
 tab therefore does not refetch it. `HttpReaderWorkspaceApi` supplies the common
-FastAPI client and compilation SSE subscription.
+FastAPI client and compilation and knowledge-graph SSE subscriptions.
 
 Theia persists widget factory options (`paperId` and label), so paper tabs,
 split groups, and side-view layout restore across restarts. The Next.js
 `PaperLoader` remains available as the comparison baseline and fallback.
+
+The paper widget exposes scoped find through its toolbar, the Edit menu, and
+`Ctrl/Cmd+F`; matches are limited to the active paper even in split layouts.
+In Theia, paragraph annotations open from the context menu, and existing
+annotations are edited inline in the Annotations view so controls stay inside
+their owning view.
 
 ```bash
 cd frontend
@@ -176,10 +182,10 @@ POST /api/papers/{paperId}/tooltips/apply
 Knowledge graph build uses Server-Sent Events:
 ```typescript
 // Connect to progress stream
-const eventSource = new EventSource(`/api/papers/${paperId}/build-knowledge-graph/progress`);
+const eventSource = new EventSource(`/api/papers/${paperId}/knowledge-graph/build/progress`);
 eventSource.onmessage = (e) => {
   const data = JSON.parse(e.data);
-  // data: { stage, message, progress? }
+  // data: { stage, progress, node_count?, edge_count?, error? }
 };
 ```
 

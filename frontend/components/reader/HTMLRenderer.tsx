@@ -3,7 +3,7 @@
 import React from 'react';
 import parse, { Element, domToReact, DOMNode, HTMLReactParserOptions } from 'html-react-parser';
 import { MathJaxNode } from './MathJaxNode';
-import { InteractiveNode } from './InteractiveNode';
+import { InteractiveNode, type AnnotationActivation } from './InteractiveNode';
 import { ContextMenu } from './ContextMenu';
 import type { Tooltip } from '../../hooks/useTooltips';
 
@@ -17,6 +17,7 @@ interface HTMLRendererProps {
   onTooltipDelete: (tooltipId: string) => void;
   onTooltipRemoveOccurrence?: (tooltipId: string, domNodeId: string) => void;
   onEntityClick?: (entityId: string) => void;
+  annotationActivation?: AnnotationActivation;
 }
 
 /**
@@ -35,7 +36,8 @@ export function HTMLRenderer({
   onTooltipUpdate,
   onTooltipDelete,
   onTooltipRemoveOccurrence,
-  onEntityClick
+  onEntityClick,
+  annotationActivation = 'click'
 }: HTMLRendererProps) {
   // Counter for generating stable keys for kg-entity spans
   let entitySpanCounter = 0;
@@ -128,6 +130,7 @@ export function HTMLRenderer({
             onTooltipUpdate={onTooltipUpdate}
             onTooltipDelete={onTooltipDelete}
             onTooltipRemoveOccurrence={onTooltipRemoveOccurrence}
+            annotationActivation={annotationActivation}
           >
             {domToReact(domNode.children as DOMNode[], options)}
           </InteractiveNode>

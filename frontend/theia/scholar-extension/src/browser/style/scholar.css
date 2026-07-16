@@ -44,6 +44,28 @@
   overflow: auto;
 }
 
+.scholar-search-bar {
+  max-width: min(280px, 45%);
+  color: var(--theia-input-foreground);
+  background: var(--theia-input-background);
+  border: 1px solid var(--theia-input-border, var(--theia-widget-border));
+  border-radius: 3px;
+}
+
+.scholar-search-input {
+  width: 150px;
+  color: var(--theia-input-foreground);
+  background: transparent;
+}
+
+.scholar-search-input::placeholder {
+  color: var(--theia-input-placeholderForeground);
+}
+
+.scholar-reader-widget [data-annotation-activation="context-menu"] {
+  cursor: context-menu;
+}
+
 .scholar-library-list {
   display: flex;
   flex-direction: column;
@@ -109,6 +131,45 @@
   border-radius: 3px;
   color: var(--theia-input-foreground);
   background: var(--theia-input-background);
+}
+
+.scholar-annotations-content {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.scholar-annotation-editor {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-height: min(50%, 340px);
+  padding: 0.6rem;
+  overflow: auto;
+  border-bottom: 1px solid var(--theia-widget-border);
+  background: var(--theia-sideBar-background);
+}
+
+.scholar-annotation-textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+
+.scholar-widget .tooltip-popover {
+  color: var(--theia-foreground);
+  background: var(--theia-editorWidget-background, var(--theia-editor-background));
+  border-color: var(--theia-editorWidget-border, var(--theia-widget-border));
+  border-radius: 4px;
+}
+
+.scholar-widget .tooltip-popover input,
+.scholar-widget .tooltip-popover textarea {
+  color: var(--theia-input-foreground);
+  background: var(--theia-input-background);
+  border-color: var(--theia-input-border, var(--theia-widget-border));
 }
 
 .scholar-empty,
