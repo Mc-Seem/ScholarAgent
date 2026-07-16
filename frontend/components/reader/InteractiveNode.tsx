@@ -9,6 +9,15 @@ import { ContextMenu } from './ContextMenu';
 
 export type AnnotationActivation = 'click' | 'context-menu';
 
+export interface AnnotationContextMenuRequest {
+  dataId: string;
+  targetText?: string;
+  tooltips: Tooltip[];
+  clientX: number;
+  clientY: number;
+  target: HTMLElement;
+}
+
 interface InteractiveNodeProps {
   tag: string;
   dataId: string;
@@ -19,6 +28,7 @@ interface InteractiveNodeProps {
   onTooltipDelete: (tooltipId: string) => void;
   onTooltipRemoveOccurrence?: (tooltipId: string, domNodeId: string) => void;
   annotationActivation?: AnnotationActivation;
+  onAnnotationContextMenu?: (request: AnnotationContextMenuRequest) => void;
   children: ReactNode;
 }
 
@@ -40,6 +50,7 @@ export function InteractiveNode({
   onTooltipDelete,
   onTooltipRemoveOccurrence,
   annotationActivation = 'click',
+  onAnnotationContextMenu,
   children
 }: InteractiveNodeProps) {
   const [isPopoverOpen, setIsPopoverOpen] = useState(false);
@@ -64,6 +75,28 @@ export function InteractiveNode({
   }, [annotationActivation]);
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    if (annotationActivation === 'context-menu' && onAnnotationContextMenu) {
+      e.preventDefault();
+      e.stopPropagation();
+      setIsPopoverOpen(false);
+      setContextMenu(null);
+      const selection = window.getSelection();
+      const selectedText = selection
+        && selection.anchorNode
+        && nodeRef.current?.contains(selection.anchorNode)
+        ? selection.toString().trim()
+        : '';
+      onAnnotationContextMenu({
+        dataId,
+        targetText: selectedText || undefined,
+        tooltips,
+        clientX: e.clientX,
+        clientY: e.clientY,
+        target: e.currentTarget as HTMLElement,
+      });
+      return;
+    }
+
     // Only show context menu if there are semantic tooltips (with entity_id)
     const semanticTooltip = tooltips.find(t => t.entity_id);
     if (semanticTooltip && onTooltipRemoveOccurrence) {
@@ -88,7 +121,7 @@ export function InteractiveNode({
     setPopoverAnchor({ x: e.clientX, y: e.clientY });
     setIsAdding(tooltips.length === 0);
     setIsPopoverOpen(true);
-  }, [annotationActivation, tooltips, onTooltipRemoveOccurrence]);
+  }, [annotationActivation, dataId, tooltips, onAnnotationContextMenu, onTooltipRemoveOccurrence]);
 
   const handleRemoveOccurrence = useCallback(() => {
     if (contextMenu && onTooltipRemoveOccurrence) {

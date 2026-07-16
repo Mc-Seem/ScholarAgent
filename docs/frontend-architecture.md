@@ -105,7 +105,9 @@ frontend/theia/
 └── scholar-extension/
     └── src/browser/
         ├── scholar-paper-widget.tsx    # Dynamic central tab per paper
-        ├── scholar-side-widgets.tsx    # Papers, Navigation, Annotations
+        ├── scholar-side-widgets.tsx    # Papers library
+        ├── scholar-native-widgets.tsx  # Native trees, graph, annotation editor
+        ├── scholar-annotation-service.ts # Shared annotation draft state
         ├── scholar-contribution.ts     # Layout, commands, keybindings, status
         └── scholar-frontend-module.ts  # Dependency injection and factories
 ```
@@ -122,9 +124,16 @@ split groups, and side-view layout restore across restarts. The Next.js
 
 The paper widget exposes scoped find through its toolbar, the Edit menu, and
 `Ctrl/Cmd+F`; matches are limited to the active paper even in split layouts.
-In Theia, paragraph annotations open from the context menu, and existing
-annotations are edited inline in the Annotations view so controls stay inside
-their owning view.
+The `Navigate` `ViewContainer` has independently collapsible `Sections` and
+`Graph` parts. `Sections` uses Theia's `TreeWidget`, including keyboard
+navigation, selection, incremental search, and theme tokens.
+
+The `Annotations` `ViewContainer` contains `Comments`, `Glossary`, and `Editor`.
+Comments and glossary entries are compact `TreeWidget` rows grouped by section
+or entity type. Right-click actions are registered through Theia commands and
+menus; creation and editing reveal the shared embedded editor rather than a
+floating React popover. The tree data transformations live in
+`lib/scholar-native-tree.ts` so they remain framework-independent and testable.
 
 ```bash
 cd frontend

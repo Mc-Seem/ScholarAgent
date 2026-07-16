@@ -7,6 +7,7 @@
     "theia/*"
   ],
   "scripts": {
+    "bootstrap": "npm ci",
     "dev": "next dev --webpack",
     "dev:web": "next dev --webpack",
     "dev:backend": "uv run --project .. python -m uvicorn backend.app.api.main:app --reload --port 8000 --app-dir .. --reload-dir ..",
@@ -20,6 +21,7 @@
     "dev:theia": "concurrently -k -n backend,theia -c green,blue \"npm run dev:backend\" \"npm run dev:theia:browser\"",
     "dev:theia:desktop": "concurrently -k -n backend,theia -c green,magenta \"npm run dev:backend\" \"npm run dev:theia:electron\"",
     "build": "next build",
+    "verify": "npm test -- --run && npm run build && npm run theia:build:browser && npm run theia:build:electron",
     "start": "next start",
     "lint": "next lint",
     "test": "vitest",

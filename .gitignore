@@ -70,3 +70,4 @@ Thumbs.db
 # Agentic Stuff
 .junie/
 .agentbridge
+.background_output_*.txt

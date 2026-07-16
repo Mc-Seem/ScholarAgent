@@ -51,6 +51,31 @@ describe('InteractiveNode', () => {
     expect(onTooltipCreate).toHaveBeenCalledWith('A compact note', undefined)
   })
 
+  it('delegates right click without opening a popover when a native menu is available', () => {
+    const onAnnotationContextMenu = vi.fn()
+    render(
+      <InteractiveNode
+        {...props}
+        annotationActivation="context-menu"
+        onAnnotationContextMenu={onAnnotationContextMenu}
+      >
+        Paragraph content
+      </InteractiveNode>,
+    )
+
+    const paragraph = screen.getByText('Paragraph content')
+    fireEvent.contextMenu(paragraph, { clientX: 20, clientY: 30 })
+
+    expect(screen.queryByText('Annotations (0)')).not.toBeInTheDocument()
+    expect(onAnnotationContextMenu).toHaveBeenCalledWith(expect.objectContaining({
+      dataId: 'paragraph-1',
+      clientX: 20,
+      clientY: 30,
+      target: paragraph,
+      tooltips: [],
+    }))
+  })
+
   it('keeps the existing click interaction as the default', () => {
     render(<InteractiveNode {...props}>Paragraph content</InteractiveNode>)
 

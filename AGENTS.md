@@ -3,12 +3,15 @@
 Interactive academic paper reader that compiles arXiv LaTeX sources into HTML5 with semantic annotations, knowledge graphs, and AI-powered tooltips.
 
 ## Quick Start
+- **Runtime**: `mise install` (from project root; pins Node.js 24.18.0)
+- **Bootstrap**: `mise run bootstrap`
 - **Backend**: `uv run uvicorn backend.app.api.main:app --reload --port 8000` (from project root)
-- **Frontend**: `npm run dev` (from `frontend/`)
-- **Electron**: `npm run dev:desktop`
+- **Frontend**: `mise exec -- npm --prefix frontend run dev`
+- **Electron**: `mise exec -- npm --prefix frontend run dev:desktop`
 
 ## Key Commands
-- **Run Tests**: `.venv/bin/pytest tests/` (backend) | `cd frontend && npm test` (frontend)
+- **Run Tests**: `.venv/bin/pytest tests/` (backend) | `mise exec -- npm --prefix frontend test -- --run` (frontend)
+- **Verify Frontend**: `mise run verify` (tests + Next.js + Theia browser/Electron builds)
 - **Database**: `cd backend && alembic upgrade head` | `alembic revision -m "description"`
 
 ## Architecture

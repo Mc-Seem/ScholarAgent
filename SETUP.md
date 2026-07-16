@@ -8,7 +8,7 @@ Complete guide to setting up Scholar Agent development environment.
 
 ### Required
 - **Python 3.12+** with `uv` package manager
-- **Node.js 18+** with npm
+- **mise** (installs the project-pinned Node.js 24.18.0 and npm)
 - **PostgreSQL 14+**
 - **Docker** (for LaTeXML compilation)
 - **Git**
@@ -17,7 +17,7 @@ Complete guide to setting up Scholar Agent development environment.
 
 #### Arch Linux (CachyOS)
 ```bash
-sudo pacman -S python python-pip nodejs npm postgresql docker git
+sudo pacman -S python python-pip mise postgresql docker git
 sudo systemctl enable --now docker
 sudo usermod -aG docker $USER  # Re-login after this
 ```
@@ -25,14 +25,15 @@ sudo usermod -aG docker $USER  # Re-login after this
 #### Ubuntu/Debian
 ```bash
 sudo apt update
-sudo apt install python3 python3-pip nodejs npm postgresql postgresql-contrib docker.io git
+sudo apt install python3 python3-pip postgresql postgresql-contrib docker.io git curl
+curl https://mise.run | sh
 sudo systemctl enable --now postgresql docker
 sudo usermod -aG docker $USER  # Re-login after this
 ```
 
 #### macOS
 ```bash
-brew install python node postgresql docker git
+brew install python mise postgresql docker git
 brew services start postgresql
 ```
 
@@ -65,10 +66,16 @@ This will:
 ### 3. Frontend Setup
 
 ```bash
-cd frontend
-npm install
-cd ..
+mise trust
+mise install
+mise run bootstrap
 ```
+
+The root `mise.toml` pins Node.js 24.18.0. `mise run bootstrap` and
+`mise run verify` work without shell activation. To make ordinary `node` and
+`npm` commands automatically use that version in Fish, add
+`mise activate fish | source` to `~/.config/fish/config.fish` and restart the
+shell.
 
 ### 4. PostgreSQL Setup
 
@@ -170,8 +177,7 @@ docker run --rm \
 
 #### Option 1: Full stack (Next.js + FastAPI + Electron)
 ```bash
-cd frontend
-npm run dev:desktop
+mise exec -- npm --prefix frontend run dev:desktop
 ```
 
 This will start:
@@ -192,16 +198,14 @@ uv run uvicorn backend.app.api.main:app --reload --port 8000
 
 #### Option 3: Frontend only (requires backend running separately)
 ```bash
-cd frontend
-npm run dev
+mise exec -- npm --prefix frontend run dev
 ```
 
 ### Production Mode
 
 ```bash
-cd frontend
-npm run build
-npm start
+mise exec -- npm --prefix frontend run build
+mise exec -- npm --prefix frontend start
 ```
 
 ---
@@ -215,10 +219,10 @@ npm start
    - File → Settings → Project → Python Interpreter
    - Add Interpreter → Existing
    - Select `.venv/bin/python`
-3. **Enable Node.js support**:
-   - File → Settings → Languages & Frameworks → Node.js
-   - Node interpreter: `/usr/bin/node`
-   - Package manager: npm
+3. **Configure the project Node.js runtime**:
+   - Run `mise install`, then use the path printed by `mise which node`
+   - Select that interpreter as the project runtime and its bundled npm as the package manager
+   - Shared run configurations include `Scholar Theia Browser`, `Scholar Theia Desktop`, and `Scholar Verify`
 4. **Database tool**:
    - View → Tool Windows → Database
    - Add PostgreSQL datasource
@@ -250,6 +254,11 @@ curl http://localhost:8000/
 
 ### Frontend
 Open browser to `http://localhost:3000`
+
+Run the complete frontend verification from the project root:
+```bash
+mise run verify
+```
 
 ### Database
 ```bash
@@ -362,8 +371,7 @@ pytest tests/
 
 ### Frontend Tests
 ```bash
-cd frontend
-npm test
+mise exec -- npm --prefix frontend test -- --run
 ```
 
 ---
@@ -380,7 +388,7 @@ npm test
 3. **Run tests**:
    ```bash
    pytest tests/
-   cd frontend && npm test
+   mise run verify
    ```
 
 4. **Format code**:
@@ -459,13 +467,13 @@ uv remove <package>
 ### Node
 ```bash
 # Update dependencies
-cd frontend && npm update
+mise exec -- npm --prefix frontend update
 
 # Add new dependency
-npm install <package>
+mise exec -- npm --prefix frontend install <package>
 
 # Remove dependency
-npm uninstall <package>
+mise exec -- npm --prefix frontend uninstall <package>
 ```
 
 ---
@@ -495,7 +503,7 @@ After setup is complete:
 uv sync --upgrade
 
 # Node
-cd frontend && npm update
+mise exec -- npm --prefix frontend update
 ```
 
 ### Database Backups

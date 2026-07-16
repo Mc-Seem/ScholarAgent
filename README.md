@@ -79,7 +79,7 @@ That's it! The application will be running with:
 
 **Required:**
 - Python 3.12+ with `uv` package manager
-- Node.js 24 with npm (required by the Theia pilot)
+- `mise` (installs the project-pinned Node.js 24.18.0 and npm)
 - PostgreSQL 14+
 - Docker (for LaTeXML compilation)
 - Git
@@ -91,7 +91,8 @@ That's it! The application will be running with:
 
 ```bash
 sudo apt update
-sudo apt install python3 python3-pip nodejs npm postgresql docker.io git
+sudo apt install python3 python3-pip postgresql docker.io git curl
+curl https://mise.run | sh
 pip install uv
 sudo systemctl enable --now postgresql docker
 sudo usermod -aG docker $USER  # Re-login after this
@@ -102,7 +103,7 @@ sudo usermod -aG docker $USER  # Re-login after this
 <summary>Linux (Arch/CachyOS)</summary>
 
 ```bash
-sudo pacman -S python python-pip nodejs npm postgresql docker git
+sudo pacman -S python python-pip mise postgresql docker git
 pip install uv
 sudo systemctl enable --now postgresql docker
 sudo usermod -aG docker $USER  # Re-login after this
@@ -117,7 +118,7 @@ sudo usermod -aG docker $USER  # Re-login after this
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
 # Install dependencies
-brew install python node postgresql git
+brew install python mise postgresql git
 pip3 install uv
 brew services start postgresql
 
@@ -146,13 +147,17 @@ For best experience, use WSL2 (Windows Subsystem for Linux) and follow Linux ins
 git clone <repository-url>
 cd ScholarAgent
 
-# 2. Install Python dependencies
+# 2. Trust the project config and install Node.js 24.18.0
+mise trust
+mise install
+
+# 3. Install Python dependencies
 uv sync
 
-# 3. Install frontend dependencies
-cd frontend && npm install && cd ..
+# 4. Install frontend dependencies exactly from package-lock.json
+mise run bootstrap
 
-# 4. Start PostgreSQL (choose one):
+# 5. Start PostgreSQL (choose one):
 # Option A: Docker
 docker run -d --name scholaragent-db \
   -e POSTGRES_DB=scholaragent \
@@ -168,14 +173,14 @@ sudo -u postgres psql -c "CREATE DATABASE scholaragent;"
 sudo -u postgres psql -c "CREATE USER scholaragent WITH PASSWORD 'scholaragent';"
 sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE scholaragent TO scholaragent;"
 
-# 5. Configure environment
+# 6. Configure environment
 cp .env.example .env
 # Edit .env with your settings
 
-# 6. Run database migrations
+# 7. Run database migrations
 cd backend && alembic upgrade head && cd ..
 
-# 7. Pull LaTeXML Docker image
+# 8. Pull LaTeXML Docker image
 docker pull latexml/ar5ivist
 ```
 
@@ -185,8 +190,8 @@ docker pull latexml/ar5ivist
 # Backend (from project root)
 uv run uvicorn backend.app.api.main:app --reload --port 8000
 
-# Frontend (from frontend/)
-cd frontend && npm run dev
+# Frontend (from project root, always with the pinned Node.js)
+mise exec -- npm --prefix frontend run dev
 ```
 
 Access the app at `http://localhost:3000`
@@ -197,15 +202,18 @@ The existing Next.js client remains the default and fallback. The isolated
 Theia Platform pilot reuses the same reader components and FastAPI backend.
 
 ```bash
-# Browser workbench + backend (from frontend/, requires Node.js 24)
-npm run dev:theia
+# Browser workbench + backend (from project root)
+mise exec -- npm --prefix frontend run dev:theia
 
 # Electron workbench + backend
-npm run dev:theia:desktop
+mise exec -- npm --prefix frontend run dev:theia:desktop
 
 # Build either target without starting it
-npm run theia:build:browser
-npm run theia:build:electron
+mise exec -- npm --prefix frontend run theia:build:browser
+mise exec -- npm --prefix frontend run theia:build:electron
+
+# Tests plus all frontend production builds
+mise run verify
 ```
 
 The pilot provides one central tab per paper, native split view and layout

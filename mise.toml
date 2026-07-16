@@ -1,0 +1,12 @@
+[tools]
+node = "24.18.0"
+
+[tasks.bootstrap]
+description = "Install frontend dependencies from the lockfile"
+dir = "{{ config_root }}/frontend"
+run = "npm run bootstrap"
+
+[tasks.verify]
+description = "Run frontend tests and production builds"
+dir = "{{ config_root }}/frontend"
+run = "npm run verify"

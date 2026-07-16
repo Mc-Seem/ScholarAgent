@@ -1,12 +1,17 @@
 import * as React from 'react'
 import { FileText, Network, RefreshCw, Search, Trash2 } from 'lucide-react'
 import { MessageService } from '@theia/core'
-import { Message, ReactWidget } from '@theia/core/lib/browser'
+import { ConfirmDialog, ContextMenuRenderer, Message, ReactWidget } from '@theia/core/lib/browser'
 
 import { HTMLRenderer } from '../../../../components/reader/HTMLRenderer'
+import type { AnnotationContextMenuRequest } from '../../../../components/reader/InteractiveNode'
 import SearchBar from '../../../../components/reader/SearchBar'
 import type { TooltipUpdate } from '../../../../lib/reader-workspace-store'
 import { paperLabel, useScholarSnapshot, useTooltipMaps } from './scholar-react'
+import {
+  SCHOLAR_PAPER_CONTEXT_MENU,
+  type ScholarAnnotationTarget,
+} from './scholar-annotation-service'
 import type { ScholarWorkspaceService } from './scholar-workspace-service'
 
 export const SCHOLAR_PAPER_FACTORY_ID = 'scholar-agent:paper'
@@ -33,6 +38,7 @@ export class ScholarPaperWidget extends ReactWidget {
   constructor(
     private readonly store: ScholarWorkspaceService,
     private readonly messageService: MessageService,
+    private readonly contextMenuRenderer: ContextMenuRenderer,
     readonly options: ScholarPaperWidgetOptions,
   ) {
     super()
@@ -76,6 +82,26 @@ export class ScholarPaperWidget extends ReactWidget {
     }
   }
 
+  openAnnotationMenu(request: AnnotationContextMenuRequest): void {
+    const semanticTooltip = request.tooltips.find(tooltip => Boolean(tooltip.entity_id))
+    const target: ScholarAnnotationTarget = {
+      paperId: this.options.paperId,
+      domNodeId: request.dataId,
+      targetText: request.targetText,
+      tooltipIds: request.tooltips.map(tooltip => tooltip.id),
+      semanticTooltipId: semanticTooltip?.id,
+    }
+    const targetBounds = request.target.getBoundingClientRect()
+    this.contextMenuRenderer.render({
+      menuPath: SCHOLAR_PAPER_CONTEXT_MENU,
+      anchor: request.clientX || request.clientY
+        ? { x: request.clientX, y: request.clientY }
+        : { x: targetBounds.left, y: targetBounds.bottom },
+      context: request.target,
+      args: [target],
+    })
+  }
+
   protected override render(): React.ReactNode {
     return (
       <ScholarPaperContent
@@ -85,6 +111,7 @@ export class ScholarPaperWidget extends ReactWidget {
         searchOpen={this.searchOpen}
         onOpenSearch={() => this.openSearch()}
         onCloseSearch={() => this.closeSearch()}
+        onAnnotationContextMenu={request => this.openAnnotationMenu(request)}
         onDeleted={() => this.close()}
       />
     )
@@ -112,6 +139,7 @@ interface ScholarPaperContentProps {
   searchOpen: boolean
   onOpenSearch: () => void
   onCloseSearch: () => void
+  onAnnotationContextMenu: (request: AnnotationContextMenuRequest) => void
   onDeleted: () => void
 }
 
@@ -122,6 +150,7 @@ function ScholarPaperContent({
   searchOpen,
   onOpenSearch,
   onCloseSearch,
+  onAnnotationContextMenu,
   onDeleted,
 }: ScholarPaperContentProps): React.ReactElement {
   const snapshot = useScholarSnapshot(store)
@@ -143,7 +172,12 @@ function ScholarPaperContent({
   }, [paperId, reportFailure, store])
 
   const handleDeletePaper = React.useCallback(async () => {
-    if (!window.confirm('Delete this paper and all its annotations?')) {
+    const confirmed = await new ConfirmDialog({
+      title: 'Delete Paper',
+      msg: 'Delete this paper and all its annotations?',
+      ok: 'Delete',
+    }).open()
+    if (!confirmed) {
       return
     }
     try {
@@ -262,6 +296,7 @@ function ScholarPaperContent({
             }}
             onEntityClick={entityId => store.setActiveEntity(paperId, entityId)}
             annotationActivation="context-menu"
+            onAnnotationContextMenu={onAnnotationContextMenu}
           />
         )}
       </div>

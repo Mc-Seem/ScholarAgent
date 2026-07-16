@@ -3,7 +3,11 @@
 import React from 'react';
 import parse, { Element, domToReact, DOMNode, HTMLReactParserOptions } from 'html-react-parser';
 import { MathJaxNode } from './MathJaxNode';
-import { InteractiveNode, type AnnotationActivation } from './InteractiveNode';
+import {
+  InteractiveNode,
+  type AnnotationActivation,
+  type AnnotationContextMenuRequest,
+} from './InteractiveNode';
 import { ContextMenu } from './ContextMenu';
 import type { Tooltip } from '../../hooks/useTooltips';
 
@@ -18,6 +22,7 @@ interface HTMLRendererProps {
   onTooltipRemoveOccurrence?: (tooltipId: string, domNodeId: string) => void;
   onEntityClick?: (entityId: string) => void;
   annotationActivation?: AnnotationActivation;
+  onAnnotationContextMenu?: (request: AnnotationContextMenuRequest) => void;
 }
 
 /**
@@ -37,7 +42,8 @@ export function HTMLRenderer({
   onTooltipDelete,
   onTooltipRemoveOccurrence,
   onEntityClick,
-  annotationActivation = 'click'
+  annotationActivation = 'click',
+  onAnnotationContextMenu
 }: HTMLRendererProps) {
   // Counter for generating stable keys for kg-entity spans
   let entitySpanCounter = 0;
@@ -85,7 +91,7 @@ export function HTMLRenderer({
               }
             }}
             onContextMenu={(e) => {
-              if (!onTooltipRemoveOccurrence) return;
+              if (!onTooltipRemoveOccurrence && !onAnnotationContextMenu) return;
 
               e.preventDefault();
               e.stopPropagation();
@@ -100,6 +106,18 @@ export function HTMLRenderer({
               }
 
               if (domNodeId && entityId) {
+                if (annotationActivation === 'context-menu' && onAnnotationContextMenu) {
+                  const entityTooltip = entityTooltipMap[entityId];
+                  onAnnotationContextMenu({
+                    dataId: domNodeId,
+                    targetText: e.currentTarget.textContent?.trim() || undefined,
+                    tooltips: entityTooltip ? [entityTooltip] : [],
+                    clientX: e.clientX,
+                    clientY: e.clientY,
+                    target: e.currentTarget,
+                  });
+                  return;
+                }
                 setContextMenu({
                   x: e.clientX,
                   y: e.clientY,
@@ -131,6 +149,7 @@ export function HTMLRenderer({
             onTooltipDelete={onTooltipDelete}
             onTooltipRemoveOccurrence={onTooltipRemoveOccurrence}
             annotationActivation={annotationActivation}
+            onAnnotationContextMenu={onAnnotationContextMenu}
           >
             {domToReact(domNode.children as DOMNode[], options)}
           </InteractiveNode>

@@ -63,6 +63,10 @@ npm test -- __tests__/unit/HTMLRenderer.test.tsx
 npm test -- --grep "renders"
 ```
 
+Use `mise exec -- npm ...` when shell activation is unavailable. From the
+project root, `mise run verify` runs the frontend tests plus the Next.js and
+Theia browser/Electron production builds with Node.js 24.18.0.
+
 ### Quick Command (all tests)
 
 ```bash
@@ -359,10 +363,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - uses: actions/setup-node@v3
-        with: { node-version: '18' }
+      - uses: actions/setup-node@v4
+        with: { node-version: '24.18.0' }
       - run: cd frontend && npm ci
-      - run: cd frontend && npm test
+      - run: cd frontend && npm test -- --run
 ```
 
 ---

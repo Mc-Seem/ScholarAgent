@@ -230,3 +230,99 @@
   max-width: 100%;
   overflow: hidden;
 }
+
+.scholar-native-tree {
+  height: 100%;
+  min-height: 0;
+  color: var(--theia-foreground);
+  background: var(--theia-sideBar-background);
+}
+
+.scholar-native-tree .theia-TreeNodeCaption {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.scholar-tree-icon {
+  flex: none;
+  width: 16px;
+  margin-right: 3px;
+  color: var(--theia-icon-foreground);
+  text-align: center;
+}
+
+.scholar-tree-count {
+  flex: none;
+  min-width: 16px;
+  margin-left: 6px;
+  padding: 0 4px;
+  color: var(--theia-badge-foreground);
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+  background: var(--theia-badge-background);
+  border-radius: 8px;
+}
+
+.scholar-tree-pin {
+  flex: none;
+  margin-left: 5px;
+  color: var(--theia-charts-yellow, var(--theia-foreground));
+  font-size: 11px;
+}
+
+.scholar-tree-empty {
+  padding: 0.75rem;
+  color: var(--theia-descriptionForeground);
+  text-align: center;
+}
+
+.scholar-native-graph {
+  min-height: 180px;
+  overflow: hidden;
+  background: var(--theia-editor-background);
+}
+
+.scholar-native-editor {
+  min-height: 150px;
+  overflow: auto;
+  background: var(--theia-sideBar-background);
+}
+
+.scholar-native-editor-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  box-sizing: border-box;
+  min-height: 100%;
+  padding: 0.65rem;
+}
+
+.scholar-native-editor-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  color: var(--theia-descriptionForeground);
+  font-size: var(--theia-ui-font-size1);
+}
+
+.scholar-native-editor-form .theia-input {
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.scholar-native-editor-form textarea {
+  min-height: 80px;
+  resize: vertical;
+}
+
+.scholar-editor-content-field {
+  flex: 1;
+}
+
+.scholar-native-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
