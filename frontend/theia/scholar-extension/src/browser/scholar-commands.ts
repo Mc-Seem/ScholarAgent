@@ -52,4 +52,24 @@ export const ScholarCommands = {
     label: 'Remove from This Occurrence',
     iconClass: 'codicon codicon-remove',
   } satisfies Command,
+  COMPILE_PAPER: {
+    id: 'scholar-agent.compile-paper',
+    label: 'Recompile Paper',
+    iconClass: 'codicon codicon-refresh',
+  } satisfies Command,
+  BUILD_KNOWLEDGE_GRAPH: {
+    id: 'scholar-agent.build-knowledge-graph',
+    label: 'Build Knowledge Graph',
+    iconClass: 'codicon codicon-combine',
+  } satisfies Command,
+  DELETE_PAPER: {
+    id: 'scholar-agent.delete-paper',
+    label: 'Delete Paper',
+    iconClass: 'codicon codicon-trash',
+  } satisfies Command,
+  OPEN_GRAPH: {
+    id: 'scholar-agent.open-graph',
+    label: 'Open Knowledge Graph',
+    iconClass: 'codicon codicon-type-hierarchy',
+  } satisfies Command,
 }

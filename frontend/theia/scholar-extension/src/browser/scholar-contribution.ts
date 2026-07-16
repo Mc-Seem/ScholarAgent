@@ -3,6 +3,7 @@ import {
   CommandRegistry,
   Disposable,
   DisposableCollection,
+  Emitter,
   MenuContribution,
   MenuModelRegistry,
   MessageService,
@@ -20,6 +21,10 @@ import {
   ViewContainer,
   WidgetManager,
 } from '@theia/core/lib/browser'
+import {
+  TabBarToolbarContribution,
+  TabBarToolbarRegistry,
+} from '@theia/core/lib/browser/shell/tab-bar-toolbar'
 import { inject, injectable } from '@theia/core/shared/inversify'
 
 import type { Tooltip } from '../../../../hooks/useTooltips'
@@ -38,6 +43,7 @@ import {
 } from './scholar-annotation-service'
 import {
   SCHOLAR_ANNOTATION_EDITOR_WIDGET_ID,
+  SCHOLAR_GRAPH_WIDGET_ID,
   SCHOLAR_TREE_CONTEXT_MENU,
   isScholarTreeNode,
 } from './scholar-native-widgets'
@@ -51,8 +57,10 @@ export class ScholarContribution implements
   FrontendApplicationContribution,
   CommandContribution,
   MenuContribution,
-  KeybindingContribution {
+  KeybindingContribution,
+  TabBarToolbarContribution {
   private readonly toDispose = new DisposableCollection()
+  private readonly onToolbarItemsChangedEmitter = new Emitter<void>()
 
   constructor(
     @inject(ScholarWorkspaceService) private readonly store: ScholarWorkspaceService,
@@ -61,7 +69,9 @@ export class ScholarContribution implements
     @inject(ApplicationShell) private readonly shell: ApplicationShell,
     @inject(StatusBar) private readonly statusBar: StatusBar,
     @inject(MessageService) private readonly messageService: MessageService,
-  ) {}
+  ) {
+    this.toDispose.push(this.onToolbarItemsChangedEmitter)
+  }
 
   initialize(): void {
     ensureMathJax()
@@ -79,6 +89,7 @@ export class ScholarContribution implements
     }))
     this.toDispose.push(Disposable.create(this.store.subscribe(() => {
       void this.updateStatusBar()
+      this.onToolbarItemsChangedEmitter.fire()
     })))
     this.toDispose.push(this.annotations.onDidChange(() => {
       const activate = Boolean(this.annotations.currentDraft)
@@ -175,6 +186,57 @@ export class ScholarContribution implements
       isVisible: (argument: unknown) => isScholarAnnotationTarget(argument)
         && Boolean(argument.semanticTooltipId),
     })
+    commands.registerCommand(ScholarCommands.COMPILE_PAPER, {
+      execute: (argument: unknown) => this.compilePaperFromWidget(argument),
+      isEnabled: (argument: unknown) => this.canCompilePaper(argument),
+      isVisible: (argument: unknown) => Boolean(this.paperWidgetOf(argument)),
+    })
+    commands.registerCommand(ScholarCommands.BUILD_KNOWLEDGE_GRAPH, {
+      execute: (argument: unknown) => this.buildKnowledgeGraphFromWidget(argument),
+      isEnabled: (argument: unknown) => this.canBuildKnowledgeGraph(argument),
+      isVisible: (argument: unknown) => Boolean(this.paperWidgetOf(argument)),
+    })
+    commands.registerCommand(ScholarCommands.DELETE_PAPER, {
+      execute: (argument: unknown) => this.deletePaperFromWidget(argument),
+      isEnabled: (argument: unknown) => Boolean(this.paperWidgetOf(argument)),
+      isVisible: (argument: unknown) => Boolean(this.paperWidgetOf(argument)),
+    })
+    commands.registerCommand(ScholarCommands.OPEN_GRAPH, {
+      execute: (argument: unknown) => this.openGraphFromWidget(argument),
+      isEnabled: (argument: unknown) => this.canOpenGraph(argument),
+      isVisible: (argument: unknown) => Boolean(this.paperWidgetOf(argument)),
+    })
+  }
+
+  registerToolbarItems(registry: TabBarToolbarRegistry): void {
+    this.toDispose.push(registry.registerItem({
+      id: ScholarCommands.COMPILE_PAPER.id,
+      command: ScholarCommands.COMPILE_PAPER.id,
+      group: 'navigation',
+      priority: 10,
+      onDidChange: this.onToolbarItemsChangedEmitter.event,
+    }))
+    this.toDispose.push(registry.registerItem({
+      id: ScholarCommands.BUILD_KNOWLEDGE_GRAPH.id,
+      command: ScholarCommands.BUILD_KNOWLEDGE_GRAPH.id,
+      group: 'navigation',
+      priority: 20,
+      onDidChange: this.onToolbarItemsChangedEmitter.event,
+    }))
+    this.toDispose.push(registry.registerItem({
+      id: ScholarCommands.DELETE_PAPER.id,
+      command: ScholarCommands.DELETE_PAPER.id,
+      group: 'navigation',
+      priority: 30,
+      onDidChange: this.onToolbarItemsChangedEmitter.event,
+    }))
+    this.toDispose.push(registry.registerItem({
+      id: ScholarCommands.OPEN_GRAPH.id,
+      command: ScholarCommands.OPEN_GRAPH.id,
+      group: 'navigation',
+      priority: 40,
+      onDidChange: this.onToolbarItemsChangedEmitter.event,
+    }))
   }
 
   registerMenus(menus: MenuModelRegistry): void {
@@ -251,6 +313,107 @@ export class ScholarContribution implements
     return this.shell.activeWidget instanceof ScholarPaperWidget
       ? this.shell.activeWidget
       : undefined
+  }
+
+  private paperWidgetOf(argument: unknown): ScholarPaperWidget | undefined {
+    if (argument === undefined) {
+      return this.activePaperWidget
+    }
+    return argument instanceof ScholarPaperWidget ? argument : undefined
+  }
+
+  private canCompilePaper(argument: unknown): boolean {
+    const widget = this.paperWidgetOf(argument)
+    if (!widget) {
+      return false
+    }
+    return !this.store.getSnapshot().statusByPaperId[widget.options.paperId]
+  }
+
+  private canBuildKnowledgeGraph(argument: unknown): boolean {
+    const widget = this.paperWidgetOf(argument)
+    if (!widget) {
+      return false
+    }
+    const snapshot = this.store.getSnapshot()
+    const paper = snapshot.papersById[widget.options.paperId]
+    return Boolean(paper?.has_html) && !snapshot.statusByPaperId[widget.options.paperId]
+  }
+
+  private canOpenGraph(argument: unknown): boolean {
+    const widget = this.paperWidgetOf(argument)
+    if (!widget) {
+      return false
+    }
+    const paper = this.store.getSnapshot().papersById[widget.options.paperId]
+    return Boolean(paper?.has_knowledge_graph)
+  }
+
+  private async compilePaperFromWidget(argument: unknown): Promise<void> {
+    const widget = this.paperWidgetOf(argument)
+    if (!widget) {
+      return
+    }
+    try {
+      await this.store.compilePaper(widget.options.paperId)
+    } catch (reason) {
+      await this.messageService.error(`Could not compile paper: ${errorMessage(reason)}`)
+    }
+  }
+
+  private async buildKnowledgeGraphFromWidget(argument: unknown): Promise<void> {
+    const widget = this.paperWidgetOf(argument)
+    if (!widget) {
+      return
+    }
+    try {
+      await this.store.buildKnowledgeGraph(widget.options.paperId)
+    } catch (reason) {
+      await this.messageService.error(`Could not build knowledge graph: ${errorMessage(reason)}`)
+    }
+  }
+
+  private async deletePaperFromWidget(argument: unknown): Promise<void> {
+    const widget = this.paperWidgetOf(argument)
+    if (!widget) {
+      return
+    }
+    const confirmed = await new ConfirmDialog({
+      title: 'Delete Paper',
+      msg: 'Delete this paper and all its annotations?',
+      ok: 'Delete',
+    }).open()
+    if (!confirmed) {
+      return
+    }
+    try {
+      await this.store.deletePaper(widget.options.paperId)
+      widget.close()
+      void this.messageService.info('Paper deleted')
+    } catch (reason) {
+      await this.messageService.error(`Could not delete paper: ${errorMessage(reason)}`)
+    }
+  }
+
+  private async openGraphFromWidget(argument: unknown): Promise<void> {
+    const widget = this.paperWidgetOf(argument)
+    if (!widget) {
+      return
+    }
+    this.store.activatePaper(widget.options.paperId)
+    await this.revealGraph()
+  }
+
+  private async revealGraph(): Promise<void> {
+    const container = await this.widgetManager.getOrCreateWidget(SCHOLAR_NAVIGATION_WIDGET_ID)
+    if (!container.isAttached) {
+      await this.shell.addWidget(container, { area: 'left' })
+    }
+    await this.shell.activateWidget(container.id)
+    if (container instanceof ViewContainer) {
+      container.revealWidget(SCHOLAR_GRAPH_WIDGET_ID)
+      container.activateWidget(SCHOLAR_GRAPH_WIDGET_ID)
+    }
   }
 
   private resolveTooltip(argument: unknown): { paperId: string; tooltip: Tooltip } | undefined {

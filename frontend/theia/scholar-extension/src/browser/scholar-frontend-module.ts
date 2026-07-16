@@ -13,6 +13,7 @@ import {
   WidgetFactory,
   WidgetManager,
 } from '@theia/core/lib/browser'
+import { TabBarToolbarContribution } from '@theia/core/lib/browser/shell/tab-bar-toolbar'
 import { ContainerModule } from '@theia/core/shared/inversify'
 
 import { ScholarContribution } from './scholar-contribution'
@@ -172,4 +173,5 @@ export default new ContainerModule(bind => {
   bind(CommandContribution).toService(ScholarContribution)
   bind(MenuContribution).toService(ScholarContribution)
   bind(KeybindingContribution).toService(ScholarContribution)
+  bind(TabBarToolbarContribution).toService(ScholarContribution)
 })

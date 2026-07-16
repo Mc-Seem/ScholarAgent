@@ -1,7 +1,7 @@
 import * as React from 'react'
-import { FileText, Network, RefreshCw, Search, Trash2 } from 'lucide-react'
+import { FileText, Search } from 'lucide-react'
 import { MessageService } from '@theia/core'
-import { ConfirmDialog, ContextMenuRenderer, Message, ReactWidget } from '@theia/core/lib/browser'
+import { ContextMenuRenderer, Message, ReactWidget } from '@theia/core/lib/browser'
 
 import { HTMLRenderer } from '../../../../components/reader/HTMLRenderer'
 import type { AnnotationContextMenuRequest } from '../../../../components/reader/InteractiveNode'
@@ -112,7 +112,6 @@ export class ScholarPaperWidget extends ReactWidget {
         onOpenSearch={() => this.openSearch()}
         onCloseSearch={() => this.closeSearch()}
         onAnnotationContextMenu={request => this.openAnnotationMenu(request)}
-        onDeleted={() => this.close()}
       />
     )
   }
@@ -140,7 +139,6 @@ interface ScholarPaperContentProps {
   onOpenSearch: () => void
   onCloseSearch: () => void
   onAnnotationContextMenu: (request: AnnotationContextMenuRequest) => void
-  onDeleted: () => void
 }
 
 function ScholarPaperContent({
@@ -151,7 +149,6 @@ function ScholarPaperContent({
   onOpenSearch,
   onCloseSearch,
   onAnnotationContextMenu,
-  onDeleted,
 }: ScholarPaperContentProps): React.ReactElement {
   const snapshot = useScholarSnapshot(store)
   const paper = snapshot.papersById[paperId]
@@ -159,7 +156,6 @@ function ScholarPaperContent({
   const { tooltipMap, entityTooltipMap } = useTooltipMaps(tooltips)
   const loading = snapshot.loadingPaperIds.includes(paperId)
   const error = snapshot.paperErrors[paperId]
-  const status = snapshot.statusByPaperId[paperId]
   const readerRootRef = React.useRef<HTMLDivElement>(null)
 
   const reportFailure = React.useCallback((action: string, reason: unknown) => {
@@ -171,32 +167,9 @@ function ScholarPaperContent({
       .catch(reason => reportFailure('Could not update annotation', reason))
   }, [paperId, reportFailure, store])
 
-  const handleDeletePaper = React.useCallback(async () => {
-    const confirmed = await new ConfirmDialog({
-      title: 'Delete Paper',
-      msg: 'Delete this paper and all its annotations?',
-      ok: 'Delete',
-    }).open()
-    if (!confirmed) {
-      return
-    }
-    try {
-      await store.deletePaper(paperId)
-      onDeleted()
-      void messageService.info('Paper deleted')
-    } catch (reason) {
-      reportFailure('Could not delete paper', reason)
-    }
-  }, [messageService, onDeleted, paperId, reportFailure, store])
-
   return (
     <div className="scholar-widget scholar-reader-widget" data-scholar-paper-id={paperId}>
       <div className="scholar-reader-toolbar">
-        <span className="codicon codicon-book" aria-hidden="true" />
-        <strong className="min-w-0 flex-1 truncate">
-          {paper ? paperLabel(paper.filename, paper.paper_metadata?.title) : paperId}
-        </strong>
-        {status && <span className="truncate text-xs text-gray-500">{status}</span>}
         {searchOpen ? (
           <SearchBar
             isOpen
@@ -214,40 +187,6 @@ function ScholarPaperContent({
             <Search size={14} />
           </button>
         )}
-        <button
-          type="button"
-          className="scholar-toolbar-button secondary"
-          disabled={Boolean(status)}
-          onClick={() => {
-            void store.compilePaper(paperId)
-              .catch(reason => reportFailure('Could not compile paper', reason))
-          }}
-          title="Recompile paper"
-        >
-          <RefreshCw size={14} />
-          Compile
-        </button>
-        <button
-          type="button"
-          className="scholar-toolbar-button secondary"
-          disabled={!paper?.has_html || Boolean(status)}
-          onClick={() => {
-            void store.buildKnowledgeGraph(paperId)
-              .catch(reason => reportFailure('Could not build knowledge graph', reason))
-          }}
-          title="Build knowledge graph"
-        >
-          <Network size={14} />
-          Graph
-        </button>
-        <button
-          type="button"
-          className="scholar-toolbar-button secondary"
-          onClick={() => void handleDeletePaper()}
-          title="Delete paper"
-        >
-          <Trash2 size={14} />
-        </button>
       </div>
 
       <div ref={readerRootRef} className="scholar-reader-scroll">
