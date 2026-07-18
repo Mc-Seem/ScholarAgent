@@ -10,23 +10,20 @@ Usage:
 """
 
 import os
-from typing import Literal, Optional
+from typing import Mapping, Optional
 
 from langchain_core.language_models.chat_models import BaseChatModel
 
 from backend.app.database.connection import get_db_context
 from backend.app.database.models import LLMConfig
 from backend.app.utils.crypto import decrypt
-
-# Workflow identifiers — each maps to a model name in LLMConfig.models
-Workflow = Literal["kg_extraction", "html_injection", "tooltip_suggestion"]
-
-# Default model names when falling back to env vars (backward compat)
-_DEFAULT_MODELS: dict[str, str] = {
-    "kg_extraction": "claude-sonnet-4-5-20250929",
-    "html_injection": "claude-haiku-4-5-20251001",
-    "tooltip_suggestion": "claude-sonnet-4-5-20250929",
-}
+from backend.app.utils.llm_settings import (
+    Workflow,
+    credential_from_environment,
+    get_provider_spec,
+    normalize_base_url,
+    resolve_workflow_model,
+)
 
 
 def _get_active_config() -> Optional[dict]:
@@ -86,39 +83,17 @@ def _build_from_config(
     temperature: Optional[float],
 ) -> BaseChatModel:
     """Build a chat model from a config dict (extracted from LLMConfig row)."""
-    models = config.get("models") or {}
-    model_name = models.get(workflow) or _DEFAULT_MODELS[workflow]
-
-    # Decrypt API key if present
     api_key_enc = config.get("api_key_enc")
     api_key = decrypt(api_key_enc) if api_key_enc else None
-
-    kwargs: dict = {}
-    if max_tokens is not None:
-        kwargs["max_tokens"] = max_tokens
-    if temperature is not None:
-        kwargs["temperature"] = temperature
-
-    provider = config.get("provider", "anthropic")
-    base_url = config.get("base_url")
-
-    if provider in ("openai", "ollama", "custom"):
-        from langchain_openai import ChatOpenAI
-        return ChatOpenAI(
-            model=model_name,
-            api_key=api_key or "ollama",  # Ollama local doesn't need a key; use placeholder
-            base_url=base_url,
-            **kwargs,
-        )
-    elif provider == "anthropic":
-        from langchain_anthropic import ChatAnthropic
-        return ChatAnthropic(
-            model=model_name,
-            api_key=api_key or os.getenv("ANTHROPIC_API_KEY"),
-            **kwargs,
-        )
-    else:
-        raise ValueError(f"Unknown provider: {provider}")
+    return build_llm_from_settings(
+        provider=config.get("provider", "anthropic"),
+        base_url=config.get("base_url"),
+        api_key=api_key,
+        models=config.get("models") or {},
+        workflow=workflow,
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
 
 
 def _build_from_env(
@@ -127,13 +102,37 @@ def _build_from_env(
     temperature: Optional[float],
 ) -> BaseChatModel:
     """Backward-compatible fallback: build from environment variables."""
-    from langchain_anthropic import ChatAnthropic
+    models: dict[str, str] = {}
+    if workflow == "html_injection" and os.getenv("HTML_INJECTION_MODEL"):
+        models[workflow] = os.environ["HTML_INJECTION_MODEL"]
+    return build_llm_from_settings(
+        provider="anthropic",
+        base_url=None,
+        api_key=None,
+        models=models,
+        workflow=workflow,
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
 
-    # html_injection already had an env override
-    if workflow == "html_injection":
-        model = os.getenv("HTML_INJECTION_MODEL", _DEFAULT_MODELS[workflow])
-    else:
-        model = _DEFAULT_MODELS[workflow]
+
+def build_llm_from_settings(
+    *,
+    provider: str,
+    base_url: str | None,
+    api_key: str | None,
+    models: Mapping[str, object],
+    workflow: Workflow,
+    max_tokens: Optional[int] = None,
+    temperature: Optional[float] = None,
+) -> BaseChatModel:
+    """Build a model from resolved plaintext settings without reading or writing the DB."""
+    spec = get_provider_spec(provider)
+    endpoint = normalize_base_url(provider, base_url)
+    model_name = resolve_workflow_model(provider, models, workflow)
+    credential = api_key if api_key and api_key.strip() else credential_from_environment(provider)
+    if spec.credential_required and not credential:
+        raise ValueError(f"An API credential is required for provider '{provider}'.")
 
     kwargs: dict = {}
     if max_tokens is not None:
@@ -141,7 +140,22 @@ def _build_from_env(
     if temperature is not None:
         kwargs["temperature"] = temperature
 
-    return ChatAnthropic(model=model, **kwargs)
+    if provider == "anthropic":
+        from langchain_anthropic import ChatAnthropic
+        return ChatAnthropic(
+            model=model_name,
+            api_key=credential,
+            base_url=endpoint,
+            **kwargs,
+        )
+
+    from langchain_openai import ChatOpenAI
+    return ChatOpenAI(
+        model=model_name,
+        api_key=credential or "not-required",
+        base_url=endpoint,
+        **kwargs,
+    )
 
 
 # ---- Structured output helpers ----

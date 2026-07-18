@@ -148,6 +148,28 @@ function createContext() {
     subscribe: vi.fn(() => () => undefined),
     initialize: vi.fn().mockResolvedValue(undefined),
   }
+  const llmSettings = {
+    getSnapshot: vi.fn(() => ({
+      dirty: false,
+      saving: false,
+      models: { status: 'idle' },
+      testByWorkflow: {
+        kg_extraction: { status: 'idle' },
+        html_injection: { status: 'idle' },
+        tooltip_suggestion: { status: 'idle' },
+      },
+      validation: {
+        canSave: true,
+        canListModels: true,
+        canTest: {
+          kg_extraction: true,
+          html_injection: true,
+          tooltip_suggestion: true,
+        },
+      },
+    })),
+    onDidChange: vi.fn(() => ({ dispose: () => undefined })),
+  }
   const widgetManager = {
     getOrCreateWidget: vi.fn().mockResolvedValue({ id: 'annotations', isAttached: true }),
     getWidgets: vi.fn(() => []),
@@ -172,6 +194,7 @@ function createContext() {
     store,
     new ScholarAnnotationService(),
     suggestions,
+    llmSettings,
     widgetManager,
     shell,
     statusBar,

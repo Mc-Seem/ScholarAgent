@@ -65,3 +65,36 @@ describe('ScholarCommands (library actions)', () => {
     expect(ScholarCommands.OPEN_PAPER_TO_SIDE.label).toBe('Open to the Side')
   })
 })
+
+describe('ScholarCommands (LLM settings)', () => {
+  it('exposes Open, Save, Revert, Refresh and three targeted tests as distinct no-secret commands', () => {
+    const commands = [
+      ScholarCommands.OPEN_LLM_SETTINGS,
+      ScholarCommands.SAVE_LLM_SETTINGS,
+      ScholarCommands.REVERT_LLM_SETTINGS,
+      ScholarCommands.REFRESH_LLM_MODELS,
+      ScholarCommands.TEST_LLM_KG_EXTRACTION,
+      ScholarCommands.TEST_LLM_HTML_INJECTION,
+      ScholarCommands.TEST_LLM_TOOLTIP_SUGGESTION,
+    ]
+
+    expect(new Set(commands.map(command => command.id)).size).toBe(commands.length)
+    commands.forEach(command => {
+      expect(command.id).toMatch(/^scholar-agent\.[a-z-]+$/)
+      expect(command.label).toContain('Scholar Agent:')
+    })
+  })
+
+  it('provides Codicons for every settings action shown in the tab toolbar', () => {
+    for (const command of [
+      ScholarCommands.SAVE_LLM_SETTINGS,
+      ScholarCommands.REVERT_LLM_SETTINGS,
+      ScholarCommands.REFRESH_LLM_MODELS,
+      ScholarCommands.TEST_LLM_KG_EXTRACTION,
+      ScholarCommands.TEST_LLM_HTML_INJECTION,
+      ScholarCommands.TEST_LLM_TOOLTIP_SUGGESTION,
+    ]) {
+      expect(command.iconClass).toMatch(/^codicon codicon-[a-z-]+$/)
+    }
+  })
+})

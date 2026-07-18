@@ -6,6 +6,7 @@
 backend/
 ├── app/
 │   ├── api/main.py           # FastAPI endpoints
+│   ├── api/settings_routes.py # Draft-aware LLM settings endpoints
 │   ├── agents/               # LangGraph pipelines
 │   │   ├── knowledge_graph.py    # KG extraction (symbols, defs, theorems)
 │   │   ├── tooltip_suggestion.py # Expertise-based filtering
@@ -14,6 +15,10 @@ backend/
 │   │   ├── latexml_compiler.py   # LaTeX → HTML via Docker
 │   │   ├── html_injection.py     # Inject <span> tags for tooltips
 │   │   └── ai_html_injection.py  # AI-assisted injection fallback
+│   ├── utils/
+│   │   ├── crypto.py             # Fernet encryption for stored API keys
+│   │   ├── llm_factory.py        # Runtime and transient LangChain builders
+│   │   └── llm_settings.py       # Provider catalog, URL/model normalization
 │   └── database/
 │       ├── models.py             # SQLAlchemy models
 │       └── connection.py         # DB session management
@@ -48,6 +53,19 @@ class Tooltip(Base):
     content: Text              # The tooltip text
     target_text: str | None    # The term being defined
 ```
+
+### LLMConfig
+
+`LLMConfig` stores one active provider connection, an optional Fernet-encrypted
+database key, and independent model IDs for `kg_extraction`, `html_injection`,
+and `tooltip_suggestion`. No schema migration is needed for the native settings
+UI because all three model keys already live in the JSON `models` column.
+
+Runtime resolution is centralized in `utils/llm_settings.py` and
+`utils/llm_factory.py`: explicit workflow model, then a provider-compatible
+legacy value, then that provider's recommendation. OpenAI, Ollama, and custom
+connections never inherit an Anthropic model fallback; custom connections with
+no explicit or compatible legacy model fail clearly.
 
 ## Knowledge Graph Pipeline
 
@@ -109,6 +127,22 @@ Each entity includes occurrence positions:
 | POST | `/api/papers/{id}/tooltips/suggest` | AI suggestions |
 | POST | `/api/papers/{id}/tooltips/apply` | Apply (inject spans) |
 
+### LLM Settings
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/settings/llm` | Normalized active snapshot, mask, and credential source |
+| PUT | `/api/settings/llm` | Transactionally save provider, endpoint, key intent, and three models |
+| POST | `/api/settings/llm/models` | Discover models with an unsaved connection draft |
+| POST | `/api/settings/llm/test` | Test exactly one unsaved workflow/model without DB mutation |
+
+API keys for discovery and tests are accepted only in JSON bodies. An empty key
+preserves a database credential only when normalized provider and effective
+endpoint are unchanged. Changing the connection never transfers a stored key;
+explicit clear removes only the database value and cannot remove an environment
+variable. Discovery can fall back to the built-in editable catalog with a
+recoverable warning, while Test performs at most one model invocation.
+
 ## HTML Injection
 
 When tooltips are applied, `<span>` tags are injected:
@@ -140,6 +174,8 @@ The `separator=' '` is essential - it ensures offsets match.
 ```bash
 DATABASE_URL=postgresql://user:pass@localhost/db
 ANTHROPIC_API_KEY=sk-ant-...
+OPENAI_API_KEY=sk-...
+OLLAMA_API_KEY=ollama-...
 
 # Optional - Knowledge Graph
 KG_MAX_SECTIONS=5      # Limit sections (0 = all)

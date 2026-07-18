@@ -591,3 +591,219 @@
   color: var(--theia-descriptionForeground);
   font-size: var(--theia-ui-font-size1);
 }
+
+.scholar-llm-settings {
+  overflow: auto;
+  color: var(--theia-foreground);
+  background: var(--theia-editor-background);
+}
+
+.scholar-llm-settings-form {
+  width: min(100%, 960px);
+  min-height: auto;
+  margin: 0 auto;
+  padding: 1rem;
+  gap: 1rem;
+}
+
+.scholar-llm-settings-empty,
+.scholar-llm-settings-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.65rem;
+  min-height: 180px;
+  padding: 1rem;
+  color: var(--theia-descriptionForeground);
+  text-align: center;
+}
+
+.scholar-llm-settings-loading {
+  flex-direction: row;
+}
+
+.scholar-llm-settings-header,
+.scholar-llm-settings-section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.scholar-llm-settings-header h2,
+.scholar-llm-settings-section h3 {
+  margin: 0;
+  color: var(--theia-foreground);
+}
+
+.scholar-llm-settings-header h2 {
+  font-size: var(--theia-ui-font-size3);
+}
+
+.scholar-llm-settings-header p,
+.scholar-llm-settings-section-heading p {
+  margin: 0.25rem 0 0;
+  color: var(--theia-descriptionForeground);
+  font-size: var(--theia-ui-font-size1);
+}
+
+.scholar-llm-settings-modified {
+  padding: 0.2rem 0.45rem;
+  color: var(--theia-charts-yellow, var(--theia-foreground));
+  background: var(--theia-badge-background);
+  border-radius: 999px;
+  font-size: var(--theia-ui-font-size1);
+}
+
+.scholar-llm-settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.85rem;
+  background: var(--theia-editorWidget-background, var(--theia-editor-background));
+  border: 1px solid var(--theia-widget-border);
+  border-radius: 4px;
+}
+
+.scholar-llm-settings-form .scholar-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-width: 0;
+  color: var(--theia-descriptionForeground);
+  font-size: var(--theia-ui-font-size1);
+}
+
+.scholar-llm-settings-form .scholar-field > span:first-child {
+  color: var(--theia-foreground);
+  font-weight: 600;
+}
+
+.scholar-llm-settings-form .scholar-field small {
+  color: var(--theia-descriptionForeground);
+  line-height: 1.35;
+}
+
+.scholar-llm-settings-form .theia-select {
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.scholar-llm-settings-form .theia-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+}
+
+.scholar-llm-settings-secret-input,
+.scholar-llm-settings-model-control {
+  display: flex;
+  align-items: stretch;
+  gap: 0.4rem;
+}
+
+.scholar-llm-settings-secret-input .theia-input,
+.scholar-llm-settings-model-control .theia-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.scholar-llm-settings-credential > .theia-button {
+  align-self: flex-start;
+}
+
+.scholar-llm-settings-hint,
+.scholar-llm-settings-warning {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--theia-descriptionForeground);
+  font-size: var(--theia-ui-font-size1);
+  line-height: 1.4;
+}
+
+.scholar-llm-settings-warning {
+  padding: 0.45rem 0.55rem;
+  color: var(--theia-inputValidation-warningForeground, var(--theia-foreground));
+  background: var(--theia-inputValidation-warningBackground, var(--theia-editor-background));
+  border: 1px solid var(--theia-inputValidation-warningBorder, var(--theia-widget-border));
+  border-radius: 3px;
+}
+
+.scholar-llm-settings-models {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.scholar-llm-settings-model-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 0;
+  padding: 0.65rem;
+  background: var(--theia-sideBar-background);
+  border: 1px solid var(--theia-widget-border);
+  border-radius: 3px;
+}
+
+.scholar-llm-settings-test {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0.4rem 0.5rem;
+  overflow-wrap: anywhere;
+  border-radius: 3px;
+  font-size: var(--theia-ui-font-size1);
+  line-height: 1.35;
+}
+
+.scholar-llm-settings-test small {
+  display: block;
+  margin-top: 0.2rem;
+  opacity: 0.85;
+}
+
+.scholar-llm-settings-test.pending {
+  color: var(--theia-descriptionForeground);
+  background: var(--theia-editor-background);
+}
+
+.scholar-llm-settings-test.success {
+  color: var(--theia-testing-iconPassed, var(--theia-foreground));
+  background: var(--theia-inputValidation-infoBackground, var(--theia-editor-background));
+}
+
+.scholar-llm-settings-test.failure,
+.scholar-llm-settings-validation {
+  color: var(--theia-errorForeground);
+  background: var(--theia-inputValidation-errorBackground, var(--theia-editor-background));
+}
+
+.scholar-llm-settings-validation {
+  margin: 0;
+  padding: 0.5rem 0.75rem 0.5rem 1.75rem;
+  border: 1px solid var(--theia-inputValidation-errorBorder, var(--theia-widget-border));
+  border-radius: 3px;
+}
+
+.scholar-llm-settings-actions {
+  padding-top: 0.2rem;
+}
+
+@media (max-width: 760px) {
+  .scholar-llm-settings-models {
+    grid-template-columns: 1fr;
+  }
+
+  .scholar-llm-settings-header,
+  .scholar-llm-settings-section-heading {
+    flex-direction: column;
+  }
+
+  .scholar-llm-settings-section-heading .theia-button {
+    align-self: stretch;
+  }
+}

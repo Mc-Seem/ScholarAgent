@@ -30,9 +30,15 @@ import { inject, injectable } from '@theia/core/shared/inversify'
 
 import type { Paper, PaperDetail } from '../../../../hooks/usePapers'
 import type { Tooltip } from '../../../../hooks/useTooltips'
+import type { LlmWorkflow } from '../../../../lib/llm-settings-api'
 import { readUserExpertise, writeUserExpertise } from '../../../../lib/user-expertise'
 import { ensureMathJax } from './mathjax-loader'
 import { ScholarCommands } from './scholar-commands'
+import { ScholarLlmSettingsService } from './scholar-llm-settings-service'
+import {
+  SCHOLAR_LLM_SETTINGS_WIDGET_ID,
+  ScholarLlmSettingsWidget,
+} from './scholar-llm-settings-widget'
 import { navigateToPaperElement, paperLabel } from './scholar-react'
 import {
   SCHOLAR_ANNOTATIONS_WIDGET_ID,
@@ -94,6 +100,7 @@ export class ScholarContribution implements
     @inject(ScholarWorkspaceService) private readonly store: ScholarWorkspaceService,
     @inject(ScholarAnnotationService) private readonly annotations: ScholarAnnotationService,
     @inject(ScholarSuggestionService) private readonly suggestions: ScholarSuggestionService,
+    @inject(ScholarLlmSettingsService) private readonly llmSettings: ScholarLlmSettingsService,
     @inject(WidgetManager) private readonly widgetManager: WidgetManager,
     @inject(ApplicationShell) private readonly shell: ApplicationShell,
     @inject(StatusBar) private readonly statusBar: StatusBar,
@@ -133,6 +140,9 @@ export class ScholarContribution implements
       if (state?.createMode || state?.focusedId) {
         void this.showSuggestionEditor(state.createMode)
       }
+    }))
+    this.toDispose.push(this.llmSettings.onDidChange(() => {
+      this.onToolbarItemsChangedEmitter.fire()
     }))
     void this.updateStatusBar()
   }
@@ -178,6 +188,8 @@ export class ScholarContribution implements
   registerCommands(commands: CommandRegistry): void {
     const isLibraryCommandVisible = (argument: unknown): boolean => argument === undefined
       || argument instanceof ScholarLibraryWidget
+    const isLlmSettingsCommandVisible = (argument: unknown): boolean => argument === undefined
+      || argument instanceof ScholarLlmSettingsWidget
 
     commands.registerCommand(ScholarCommands.SHOW_LIBRARY, {
       execute: () => this.showView(SCHOLAR_LIBRARY_WIDGET_ID, 'left'),
@@ -190,6 +202,45 @@ export class ScholarContribution implements
     })
     commands.registerCommand(ScholarCommands.SHOW_TOOLTIP_DRAFTS, {
       execute: () => this.showView(SCHOLAR_TOOLTIP_DRAFTS_WIDGET_ID, 'right'),
+    })
+    commands.registerCommand(ScholarCommands.OPEN_LLM_SETTINGS, {
+      execute: () => this.showLlmSettings(),
+    })
+    commands.registerCommand(ScholarCommands.SAVE_LLM_SETTINGS, {
+      execute: () => this.saveLlmSettings(),
+      isEnabled: (argument: unknown) => isLlmSettingsCommandVisible(argument)
+        && this.canSaveLlmSettings(),
+      isVisible: isLlmSettingsCommandVisible,
+    })
+    commands.registerCommand(ScholarCommands.REVERT_LLM_SETTINGS, {
+      execute: () => this.revertLlmSettings(),
+      isEnabled: (argument: unknown) => isLlmSettingsCommandVisible(argument)
+        && this.canRevertLlmSettings(),
+      isVisible: isLlmSettingsCommandVisible,
+    })
+    commands.registerCommand(ScholarCommands.REFRESH_LLM_MODELS, {
+      execute: () => this.refreshLlmModels(),
+      isEnabled: (argument: unknown) => isLlmSettingsCommandVisible(argument)
+        && this.canRefreshLlmModels(),
+      isVisible: isLlmSettingsCommandVisible,
+    })
+    commands.registerCommand(ScholarCommands.TEST_LLM_KG_EXTRACTION, {
+      execute: () => this.testLlmWorkflow('kg_extraction'),
+      isEnabled: (argument: unknown) => isLlmSettingsCommandVisible(argument)
+        && this.canTestLlmWorkflow('kg_extraction'),
+      isVisible: isLlmSettingsCommandVisible,
+    })
+    commands.registerCommand(ScholarCommands.TEST_LLM_HTML_INJECTION, {
+      execute: () => this.testLlmWorkflow('html_injection'),
+      isEnabled: (argument: unknown) => isLlmSettingsCommandVisible(argument)
+        && this.canTestLlmWorkflow('html_injection'),
+      isVisible: isLlmSettingsCommandVisible,
+    })
+    commands.registerCommand(ScholarCommands.TEST_LLM_TOOLTIP_SUGGESTION, {
+      execute: () => this.testLlmWorkflow('tooltip_suggestion'),
+      isEnabled: (argument: unknown) => isLlmSettingsCommandVisible(argument)
+        && this.canTestLlmWorkflow('tooltip_suggestion'),
+      isVisible: isLlmSettingsCommandVisible,
     })
     commands.registerCommand(ScholarCommands.REFRESH_LIBRARY, {
       execute: () => this.store.loadLibrary(),
@@ -378,9 +429,59 @@ export class ScholarContribution implements
       priority: 30,
       onDidChange: this.onToolbarItemsChangedEmitter.event,
     }))
+    this.toDispose.push(registry.registerItem({
+      id: ScholarCommands.SAVE_LLM_SETTINGS.id,
+      command: ScholarCommands.SAVE_LLM_SETTINGS.id,
+      group: 'navigation',
+      priority: 10,
+      onDidChange: this.onToolbarItemsChangedEmitter.event,
+    }))
+    this.toDispose.push(registry.registerItem({
+      id: ScholarCommands.REVERT_LLM_SETTINGS.id,
+      command: ScholarCommands.REVERT_LLM_SETTINGS.id,
+      group: 'navigation',
+      priority: 20,
+      onDidChange: this.onToolbarItemsChangedEmitter.event,
+    }))
+    this.toDispose.push(registry.registerItem({
+      id: ScholarCommands.REFRESH_LLM_MODELS.id,
+      command: ScholarCommands.REFRESH_LLM_MODELS.id,
+      group: 'navigation',
+      priority: 30,
+      onDidChange: this.onToolbarItemsChangedEmitter.event,
+    }))
+    this.toDispose.push(registry.registerItem({
+      id: ScholarCommands.TEST_LLM_KG_EXTRACTION.id,
+      command: ScholarCommands.TEST_LLM_KG_EXTRACTION.id,
+      group: 'navigation',
+      priority: 40,
+      onDidChange: this.onToolbarItemsChangedEmitter.event,
+    }))
+    this.toDispose.push(registry.registerItem({
+      id: ScholarCommands.TEST_LLM_HTML_INJECTION.id,
+      command: ScholarCommands.TEST_LLM_HTML_INJECTION.id,
+      group: 'navigation',
+      priority: 50,
+      onDidChange: this.onToolbarItemsChangedEmitter.event,
+    }))
+    this.toDispose.push(registry.registerItem({
+      id: ScholarCommands.TEST_LLM_TOOLTIP_SUGGESTION.id,
+      command: ScholarCommands.TEST_LLM_TOOLTIP_SUGGESTION.id,
+      group: 'navigation',
+      priority: 60,
+      onDidChange: this.onToolbarItemsChangedEmitter.event,
+    }))
   }
 
   registerMenus(menus: MenuModelRegistry): void {
+    menus.registerMenuAction(CommonMenus.FILE_SETTINGS_SUBMENU_OPEN, {
+      commandId: ScholarCommands.OPEN_LLM_SETTINGS.id,
+      order: 'a10',
+    })
+    menus.registerMenuAction(CommonMenus.MANAGE_SETTINGS, {
+      commandId: ScholarCommands.OPEN_LLM_SETTINGS.id,
+      order: 'a10',
+    })
     menus.registerMenuAction(CommonMenus.VIEW_VIEWS, {
       commandId: ScholarCommands.SHOW_LIBRARY.id,
       order: 'a10',
@@ -1095,6 +1196,71 @@ export class ScholarContribution implements
       await this.shell.addWidget(widget, { area })
     }
     await this.shell.activateWidget(widget.id)
+  }
+
+  private async showLlmSettings(): Promise<void> {
+    const widget = await this.widgetManager.getOrCreateWidget(SCHOLAR_LLM_SETTINGS_WIDGET_ID)
+    if (!widget.isAttached) {
+      await this.shell.addWidget(widget, { area: 'main' })
+    }
+    await this.shell.activateWidget(widget.id)
+  }
+
+  private canSaveLlmSettings(): boolean {
+    const snapshot = this.llmSettings.getSnapshot()
+    return snapshot.dirty && snapshot.validation.canSave && !snapshot.saving
+  }
+
+  private canRevertLlmSettings(): boolean {
+    const snapshot = this.llmSettings.getSnapshot()
+    return snapshot.dirty && !snapshot.saving
+  }
+
+  private canRefreshLlmModels(): boolean {
+    const snapshot = this.llmSettings.getSnapshot()
+    return snapshot.validation.canListModels
+      && snapshot.models.status !== 'loading'
+      && !snapshot.saving
+  }
+
+  private canTestLlmWorkflow(workflow: LlmWorkflow): boolean {
+    const snapshot = this.llmSettings.getSnapshot()
+    return snapshot.validation.canTest[workflow]
+      && snapshot.testByWorkflow[workflow].status !== 'pending'
+      && !snapshot.saving
+  }
+
+  private async saveLlmSettings(): Promise<void> {
+    try {
+      await this.llmSettings.save()
+      await this.messageService.info('LLM settings saved.')
+    } catch (reason) {
+      await this.messageService.error(`Could not save LLM settings: ${errorMessage(reason)}`)
+    }
+  }
+
+  private async revertLlmSettings(): Promise<void> {
+    try {
+      await this.llmSettings.revert()
+    } catch (reason) {
+      await this.messageService.error(`Could not revert LLM settings: ${errorMessage(reason)}`)
+    }
+  }
+
+  private async refreshLlmModels(): Promise<void> {
+    try {
+      await this.llmSettings.listModels()
+    } catch (reason) {
+      await this.messageService.error(`Could not refresh LLM models: ${errorMessage(reason)}`)
+    }
+  }
+
+  private async testLlmWorkflow(workflow: LlmWorkflow): Promise<void> {
+    try {
+      await this.llmSettings.testWorkflow(workflow)
+    } catch (reason) {
+      await this.messageService.error(`Could not test LLM connection: ${errorMessage(reason)}`)
+    }
   }
 
   private async updateStatusBar(): Promise<void> {

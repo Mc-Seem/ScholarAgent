@@ -17,6 +17,40 @@ export const ScholarCommands = {
     id: 'scholar-agent.show-tooltip-drafts',
     label: 'Scholar Agent: Show Tooltip Drafts',
   } satisfies Command,
+  OPEN_LLM_SETTINGS: {
+    id: 'scholar-agent.open-llm-settings',
+    label: 'Scholar Agent: Open LLM Settings',
+  } satisfies Command,
+  SAVE_LLM_SETTINGS: {
+    id: 'scholar-agent.save-llm-settings',
+    label: 'Scholar Agent: Save LLM Settings',
+    iconClass: 'codicon codicon-save',
+  } satisfies Command,
+  REVERT_LLM_SETTINGS: {
+    id: 'scholar-agent.revert-llm-settings',
+    label: 'Scholar Agent: Revert LLM Settings',
+    iconClass: 'codicon codicon-discard',
+  } satisfies Command,
+  REFRESH_LLM_MODELS: {
+    id: 'scholar-agent.refresh-llm-models',
+    label: 'Scholar Agent: Refresh LLM Models',
+    iconClass: 'codicon codicon-refresh',
+  } satisfies Command,
+  TEST_LLM_KG_EXTRACTION: {
+    id: 'scholar-agent.test-llm-kg-extraction',
+    label: 'Scholar Agent: Test Knowledge Graph LLM Connection',
+    iconClass: 'codicon codicon-debug-start',
+  } satisfies Command,
+  TEST_LLM_HTML_INJECTION: {
+    id: 'scholar-agent.test-llm-html-injection',
+    label: 'Scholar Agent: Test HTML Injection LLM Connection',
+    iconClass: 'codicon codicon-debug-start',
+  } satisfies Command,
+  TEST_LLM_TOOLTIP_SUGGESTION: {
+    id: 'scholar-agent.test-llm-tooltip-suggestion',
+    label: 'Scholar Agent: Test Tooltip Suggestions LLM Connection',
+    iconClass: 'codicon codicon-debug-start',
+  } satisfies Command,
   REFRESH_LIBRARY: {
     id: 'scholar-agent.refresh-library',
     label: 'Scholar Agent: Refresh Paper Library',

@@ -13,6 +13,7 @@ import type {
   ScholarLibraryWidget as ScholarLibraryWidgetClass,
 } from '@/theia/scholar-extension/src/browser/scholar-side-widgets'
 import type { ScholarAnnotationService as ScholarAnnotationServiceClass } from '@/theia/scholar-extension/src/browser/scholar-annotation-service'
+import type { ScholarLlmSettingsWidget as ScholarLlmSettingsWidgetClass } from '@/theia/scholar-extension/src/browser/scholar-llm-settings-widget'
 
 const confirmDialogOpen = vi.fn<() => Promise<boolean>>()
 const singleTextInputDialogOpen = vi.fn<() => Promise<string | undefined>>()
@@ -39,12 +40,14 @@ let ScholarAnnotationService: typeof ScholarAnnotationServiceClass
 let ScholarPaperWidget: typeof ScholarPaperWidgetClass
 let ScholarPaperGraphWidget: typeof ScholarPaperGraphWidgetClass
 let ScholarLibraryWidget: typeof ScholarLibraryWidgetClass
+let ScholarLlmSettingsWidget: typeof ScholarLlmSettingsWidgetClass
 let ViewContainerCtor: typeof import('@theia/core/lib/browser').ViewContainer
 let SCHOLAR_LIBRARY_CONTEXT_MENU: string[]
 let SCHOLAR_ANNOTATIONS_WIDGET_ID: string
 let SCHOLAR_TOOLTIP_DRAFTS_WIDGET_ID: string
 let SCHOLAR_PAPER_FACTORY_ID: string
 let SCHOLAR_PAPER_GRAPH_FACTORY_ID: string
+let SCHOLAR_LLM_SETTINGS_WIDGET_ID: string
 let SCHOLAR_SUGGESTIONS_WIDGET_ID: string
 let SCHOLAR_SUGGESTION_EDITOR_WIDGET_ID: string
 
@@ -65,6 +68,9 @@ beforeAll(async () => {
   ))
   ;({ ScholarPaperWidget, SCHOLAR_PAPER_FACTORY_ID } = await import(
     '@/theia/scholar-extension/src/browser/scholar-paper-widget'
+  ))
+  ;({ ScholarLlmSettingsWidget, SCHOLAR_LLM_SETTINGS_WIDGET_ID } = await import(
+    '@/theia/scholar-extension/src/browser/scholar-llm-settings-widget'
   ))
   ;({
     ScholarLibraryWidget,
@@ -225,6 +231,15 @@ function createForeignWidget(): ScholarLibraryWidgetClass {
   return Object.create(ScholarLibraryWidget.prototype) as ScholarLibraryWidgetClass
 }
 
+function createFakeLlmSettingsWidget(isAttached = true): ScholarLlmSettingsWidgetClass {
+  const widget = Object.create(ScholarLlmSettingsWidget.prototype) as ScholarLlmSettingsWidgetClass
+  Object.defineProperties(widget, {
+    id: { value: SCHOLAR_LLM_SETTINGS_WIDGET_ID, configurable: true },
+    isAttached: { value: isAttached, configurable: true },
+  })
+  return widget
+}
+
 function createFakeViewContainer(
   id: string,
   widgets: Array<{ id: string }>,
@@ -325,6 +340,33 @@ function createContribution(store: ReturnType<typeof createFakeStore>) {
     })),
     onDidChange: vi.fn(() => ({ dispose: () => undefined })),
   }
+  const llmSnapshot = {
+    dirty: false,
+    saving: false,
+    models: { status: 'idle' },
+    testByWorkflow: {
+      kg_extraction: { status: 'idle' },
+      html_injection: { status: 'idle' },
+      tooltip_suggestion: { status: 'idle' },
+    },
+    validation: {
+      canSave: true,
+      canListModels: true,
+      canTest: {
+        kg_extraction: true,
+        html_injection: true,
+        tooltip_suggestion: true,
+      },
+    },
+  }
+  const llmSettings = {
+    getSnapshot: vi.fn(() => llmSnapshot),
+    onDidChange: vi.fn(() => ({ dispose: () => undefined })),
+    save: vi.fn().mockResolvedValue(undefined),
+    revert: vi.fn().mockResolvedValue(undefined),
+    listModels: vi.fn().mockResolvedValue(undefined),
+    testWorkflow: vi.fn().mockResolvedValue(undefined),
+  }
 
   const ContributionCtor = ScholarContribution as unknown as new (
     ...args: unknown[]
@@ -333,13 +375,22 @@ function createContribution(store: ReturnType<typeof createFakeStore>) {
     store,
     annotations,
     suggestions,
+    llmSettings,
     widgetManager,
     shell,
     statusBar,
     messageService,
   )
 
-  return { contribution, widgetManager, shell, statusBar, messageService }
+  return {
+    contribution,
+    widgetManager,
+    shell,
+    statusBar,
+    messageService,
+    llmSettings,
+    llmSnapshot,
+  }
 }
 
 describe('ScholarContribution Tooltip Drafts layout migration', () => {
@@ -451,6 +502,103 @@ describe('ScholarContribution Tooltip Drafts layout migration', () => {
     expect(context.shell.addWidget).not.toHaveBeenCalled()
     expect(context.messageService.warn).toHaveBeenCalledWith(
       'Could not migrate the Tooltip Drafts layout: factory failed',
+    )
+  })
+})
+
+describe('ScholarContribution LLM settings commands', () => {
+  function register() {
+    const context = createContribution(createFakeStore(emptySnapshot()))
+    const commands = new FakeCommandRegistry()
+    context.contribution.registerCommands(commands as unknown as Parameters<
+      ScholarContributionClass['registerCommands']
+    >[0])
+    return { ...context, commands }
+  }
+
+  it('reuses and activates one central settings widget on repeated Open', async () => {
+    const { commands, widgetManager, shell } = register()
+    const widget = createFakeLlmSettingsWidget(false)
+    widgetManager.getOrCreateWidget.mockResolvedValue(widget)
+
+    await commands.handlerFor(ScholarCommands.OPEN_LLM_SETTINGS).execute()
+    Object.defineProperty(widget, 'isAttached', { value: true, configurable: true })
+    await commands.handlerFor(ScholarCommands.OPEN_LLM_SETTINGS).execute()
+
+    expect(widgetManager.getOrCreateWidget).toHaveBeenCalledTimes(2)
+    expect(widgetManager.getOrCreateWidget).toHaveBeenNthCalledWith(
+      1,
+      SCHOLAR_LLM_SETTINGS_WIDGET_ID,
+    )
+    expect(shell.addWidget).toHaveBeenCalledOnce()
+    expect(shell.addWidget).toHaveBeenCalledWith(widget, { area: 'main' })
+    expect(shell.activateWidget).toHaveBeenCalledTimes(2)
+    expect(shell.activateWidget).toHaveBeenLastCalledWith(SCHOLAR_LLM_SETTINGS_WIDGET_ID)
+  })
+
+  it('scopes toolbar actions to the settings widget and honors dirty/pending state', () => {
+    const { commands, llmSnapshot } = register()
+    const settingsWidget = createFakeLlmSettingsWidget()
+    const foreignWidget = createForeignWidget()
+    const save = commands.handlerFor(ScholarCommands.SAVE_LLM_SETTINGS)
+    const refresh = commands.handlerFor(ScholarCommands.REFRESH_LLM_MODELS)
+    const testHtml = commands.handlerFor(ScholarCommands.TEST_LLM_HTML_INJECTION)
+
+    expect(save.isVisible?.(undefined)).toBe(true)
+    expect(save.isVisible?.(settingsWidget)).toBe(true)
+    expect(save.isVisible?.(foreignWidget)).toBe(false)
+    expect(save.isEnabled?.(settingsWidget)).toBe(false)
+
+    llmSnapshot.dirty = true
+    expect(save.isEnabled?.(settingsWidget)).toBe(true)
+    llmSnapshot.validation.canSave = false
+    expect(save.isEnabled?.(settingsWidget)).toBe(false)
+    llmSnapshot.validation.canSave = true
+
+    expect(refresh.isEnabled?.(settingsWidget)).toBe(true)
+    llmSnapshot.models.status = 'loading'
+    expect(refresh.isEnabled?.(settingsWidget)).toBe(false)
+    llmSnapshot.models.status = 'idle'
+
+    expect(testHtml.isEnabled?.(settingsWidget)).toBe(true)
+    llmSnapshot.testByWorkflow.html_injection.status = 'pending'
+    expect(testHtml.isEnabled?.(settingsWidget)).toBe(false)
+    llmSnapshot.testByWorkflow.html_injection.status = 'idle'
+    llmSnapshot.saving = true
+    expect(save.isEnabled?.(settingsWidget)).toBe(false)
+    expect(refresh.isEnabled?.(settingsWidget)).toBe(false)
+    expect(testHtml.isEnabled?.(settingsWidget)).toBe(false)
+  })
+
+  it('executes Save, Revert, Refresh, and exactly targeted workflow tests without arguments', async () => {
+    const { commands, llmSettings, messageService } = register()
+
+    await commands.handlerFor(ScholarCommands.SAVE_LLM_SETTINGS).execute()
+    await commands.handlerFor(ScholarCommands.REVERT_LLM_SETTINGS).execute()
+    await commands.handlerFor(ScholarCommands.REFRESH_LLM_MODELS).execute()
+    await commands.handlerFor(ScholarCommands.TEST_LLM_KG_EXTRACTION).execute()
+    await commands.handlerFor(ScholarCommands.TEST_LLM_HTML_INJECTION).execute()
+    await commands.handlerFor(ScholarCommands.TEST_LLM_TOOLTIP_SUGGESTION).execute()
+
+    expect(llmSettings.save).toHaveBeenCalledOnce()
+    expect(llmSettings.revert).toHaveBeenCalledOnce()
+    expect(llmSettings.listModels).toHaveBeenCalledOnce()
+    expect(llmSettings.testWorkflow.mock.calls.map(call => call[0])).toEqual([
+      'kg_extraction',
+      'html_injection',
+      'tooltip_suggestion',
+    ])
+    expect(messageService.info).toHaveBeenCalledWith('LLM settings saved.')
+  })
+
+  it('reports action failures without exposing them as unhandled command errors', async () => {
+    const { commands, llmSettings, messageService } = register()
+    llmSettings.save.mockRejectedValueOnce(new Error('Save rejected'))
+
+    await expect(commands.handlerFor(ScholarCommands.SAVE_LLM_SETTINGS).execute())
+      .resolves.toBeUndefined()
+    expect(messageService.error).toHaveBeenCalledWith(
+      'Could not save LLM settings: Save rejected',
     )
   })
 })
@@ -800,6 +948,12 @@ describe('ScholarContribution active-paper commands', () => {
       ScholarCommands.GENERATE_SUGGESTIONS.id,
       ScholarCommands.APPLY_SUGGESTIONS.id,
       ScholarCommands.CREATE_MANUAL_SUGGESTION.id,
+      ScholarCommands.SAVE_LLM_SETTINGS.id,
+      ScholarCommands.REVERT_LLM_SETTINGS.id,
+      ScholarCommands.REFRESH_LLM_MODELS.id,
+      ScholarCommands.TEST_LLM_KG_EXTRACTION.id,
+      ScholarCommands.TEST_LLM_HTML_INJECTION.id,
+      ScholarCommands.TEST_LLM_TOOLTIP_SUGGESTION.id,
     ])
     registry.items.forEach(item => {
       expect(item.group).toBe('navigation')
@@ -825,6 +979,23 @@ describe('ScholarContribution active-paper commands', () => {
 
     expect(listener).toHaveBeenCalledTimes(registry.items.length)
 
+    contribution.onStop()
+  })
+
+  it('fires toolbar onDidChange when LLM settings state changes', () => {
+    const { contribution, llmSettings } = createContribution(store)
+    const registry = new FakeToolbarRegistry()
+    contribution.registerToolbarItems(registry as unknown as Parameters<
+      ScholarContributionClass['registerToolbarItems']
+    >[0])
+    const listener = vi.fn()
+    registry.items.forEach(item => item.onDidChange?.(listener))
+
+    contribution.onStart()
+    const llmListener = llmSettings.onDidChange.mock.calls[0][0] as () => void
+    llmListener()
+
+    expect(listener).toHaveBeenCalledTimes(registry.items.length)
     contribution.onStop()
   })
 
@@ -1171,6 +1342,35 @@ describe('ScholarContribution Upload LaTeX', () => {
 })
 
 describe('ScholarContribution menus', () => {
+  it('registers Open LLM Settings in File and Manage settings menus only', () => {
+    const store = createFakeStore(emptySnapshot())
+    const { contribution } = createContribution(store)
+    const registered: { path: string[], commandId: string }[] = []
+    const menus = {
+      registerMenuAction: (path: string[], action: { commandId: string }) => {
+        registered.push({ path, commandId: action.commandId })
+        return { dispose: () => undefined }
+      },
+    }
+
+    contribution.registerMenus(menus as unknown as Parameters<
+      ScholarContributionClass['registerMenus']
+    >[0])
+
+    const pathsForOpen = registered
+      .filter(entry => entry.commandId === ScholarCommands.OPEN_LLM_SETTINGS.id)
+      .map(entry => entry.path)
+    expect(pathsForOpen).toEqual([
+      CommonMenusNs.FILE_SETTINGS_SUBMENU_OPEN,
+      CommonMenusNs.MANAGE_SETTINGS,
+    ])
+    const fileSaveIds = registered
+      .filter(entry => JSON.stringify(entry.path) === JSON.stringify(CommonMenusNs.FILE_SAVE))
+      .map(entry => entry.commandId)
+    expect(fileSaveIds).not.toContain(ScholarCommands.SAVE_LLM_SETTINGS.id)
+    expect(fileSaveIds).not.toContain(ScholarCommands.REVERT_LLM_SETTINGS.id)
+  })
+
   it('no longer registers Refresh Library in the View > Views menu (moved to the library toolbar)', () => {
     const store = createFakeStore(emptySnapshot())
     const { contribution } = createContribution(store)

@@ -17,7 +17,13 @@ import { TabBarToolbarContribution } from '@theia/core/lib/browser/shell/tab-bar
 import { ContainerModule } from '@theia/core/shared/inversify'
 
 import { HttpReaderWorkspaceApi } from '../../../../lib/reader-workspace-api'
+import { HttpLlmSettingsApi } from '../../../../lib/llm-settings-api'
 import { ScholarContribution } from './scholar-contribution'
+import { ScholarLlmSettingsService } from './scholar-llm-settings-service'
+import {
+  SCHOLAR_LLM_SETTINGS_WIDGET_ID,
+  ScholarLlmSettingsWidget,
+} from './scholar-llm-settings-widget'
 import {
   SCHOLAR_ANNOTATIONS_WIDGET_ID,
   SCHOLAR_LIBRARY_CONTEXT_MENU,
@@ -64,10 +70,18 @@ import './style/generated.css'
 
 export default new ContainerModule(bind => {
   bind(HttpReaderWorkspaceApi).toSelf().inSingletonScope()
+  bind(HttpLlmSettingsApi).toSelf().inSingletonScope()
   bind(ScholarWorkspaceService).toSelf().inSingletonScope()
   bind(ScholarAnnotationService).toSelf().inSingletonScope()
   bind(ScholarSuggestionService).toSelf().inSingletonScope()
+  bind(ScholarLlmSettingsService).toSelf().inSingletonScope()
   bindScholarGraphPropertyView(bind)
+
+  bind(ScholarLlmSettingsWidget).toSelf().inSingletonScope()
+  bind(WidgetFactory).toDynamicValue(context => ({
+    id: SCHOLAR_LLM_SETTINGS_WIDGET_ID,
+    createWidget: () => context.container.get(ScholarLlmSettingsWidget),
+  })).inSingletonScope()
 
   bind(WidgetFactory).toDynamicValue(context => ({
     id: SCHOLAR_LIBRARY_WIDGET_ID,

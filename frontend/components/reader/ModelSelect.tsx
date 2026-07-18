@@ -10,10 +10,13 @@ interface ModelOption {
 }
 
 interface ModelSelectProps {
+  id?: string;
+  ariaLabel?: string;
   value: string;
   options: ModelOption[];
   placeholder?: string;
   onChange: (value: string) => void;
+  disabled?: boolean;
 }
 
 /**
@@ -22,7 +25,15 @@ interface ModelSelectProps {
  * - Click the chevron (or focus + type) to see and pick from suggestions
  * - Selected value is highlighted in the dropdown
  */
-export function ModelSelect({ value, options, placeholder, onChange }: ModelSelectProps) {
+export function ModelSelect({
+  id,
+  ariaLabel,
+  value,
+  options,
+  placeholder,
+  onChange,
+  disabled = false,
+}: ModelSelectProps) {
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState('');
   const ref = useRef<HTMLDivElement>(null);
@@ -74,13 +85,16 @@ export function ModelSelect({ value, options, placeholder, onChange }: ModelSele
     <div className="relative flex-1" ref={ref}>
       <div className="flex">
         <input
+          id={id}
+          aria-label={ariaLabel}
           type="text"
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          onFocus={() => hasOptions && setOpen(true)}
+          onFocus={() => !disabled && hasOptions && setOpen(true)}
           onKeyDown={handleKeyDown}
           placeholder={placeholder || 'Type or select a model...'}
           className={componentStyles.input.default + ' rounded-r-none'}
+          disabled={disabled}
         />
         {hasOptions && (
           <button
@@ -88,6 +102,8 @@ export function ModelSelect({ value, options, placeholder, onChange }: ModelSele
             onClick={() => setOpen(!open)}
             className="flex-shrink-0 px-3 border border-l-0 border-slate-300 rounded-r-md bg-slate-50 hover:bg-slate-100 text-slate-500 transition-colors"
             title={open ? 'Close suggestions' : 'Show suggestions'}
+            aria-label={open ? 'Close model suggestions' : 'Show model suggestions'}
+            disabled={disabled}
           >
             <ChevronDown
               size={16}

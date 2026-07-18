@@ -114,6 +114,8 @@ frontend/theia/
         ├── scholar-annotation-service.ts # Shared annotation selection and draft state
         ├── scholar-suggestion-service.ts # Per-paper suggestion state and API workflows
         ├── scholar-suggestion-widgets.tsx # Native grouped tree and details/editor
+        ├── scholar-llm-settings-service.ts # Evented LLM baseline/draft and Saveable state
+        ├── scholar-llm-settings-widget.tsx # Restorable central LLM Settings tab
         ├── scholar-commands.ts         # Shared Theia command definitions
         ├── scholar-contribution.ts     # Layout, commands, keybindings, status
         └── scholar-frontend-module.ts  # Dependency injection and factories
@@ -181,9 +183,29 @@ endpoints do not stream percentage progress, so these phases intentionally use
 an indeterminate spinner rather than a fabricated percentage.
 
 The Next.js `TooltipSuggestionsDialog.tsx` remains the reference-client
-consumer of the unchanged backend contracts. The native workflow does not add
-LLM API-key or model settings; Generate only shares the existing
+consumer of the tooltip contracts. Generate shares the existing
 `scholar-agent-expertise` storage key and default text with that client.
+
+LLM provider and workflow settings are available in a separate central `LLM
+Settings` tab. `ScholarLlmSettingsService` owns an immutable server baseline,
+an in-memory draft, explicit keep/replace/clear credential intent, discovery
+metadata, and one test outcome per workflow. Its generation and fingerprint
+guards reject late model-list or test responses after the relevant draft has
+changed. It implements Theia `Saveable`, while `ScholarLlmSettingsWidget`
+exposes it as a `SaveableSource`; native close therefore provides Save, Don't
+Save, and Cancel, and failed saves leave the tab dirty. The widget intentionally
+does not implement `storeState` or `restoreState`, so layout persistence stores
+only its stable factory identity and never the form draft or plaintext key.
+
+`Open LLM Settings` reuses one widget and is available from the command palette,
+`File → Settings`, and the Manage settings menu. The tab toolbar exposes Revert,
+Refresh Models, and one targeted Test action per workflow. Native `File → Save`
+and `Ctrl/Cmd+S` work through `Saveable`, avoiding a duplicate settings-specific
+File menu entry. The Next.js `SettingsDialog.tsx` and the Theia service both use
+`lib/llm-settings-api.ts`, which strictly maps camelCase UI objects to snake_case
+wire JSON. Discovery and tests use the exact unsaved connection draft; API keys
+are sent only in request bodies and never in URLs, command arguments, layout
+state, notifications, or response snapshots.
 
 ```bash
 cd frontend
@@ -235,6 +257,22 @@ POST /api/papers/{paperId}/tooltips/suggest
 POST /api/papers/{paperId}/tooltips/apply
 { suggestions: [...] }
 ```
+
+### LLM Settings Endpoints
+
+Both the Next.js reference modal and the native Theia tab use the same typed
+adapter for these contracts:
+
+```text
+GET  /api/settings/llm         load normalized baseline and credential metadata
+PUT  /api/settings/llm         save all three workflow models and key intent
+POST /api/settings/llm/models  discover models using the unsaved connection body
+POST /api/settings/llm/test    invoke one selected unsaved workflow/model
+```
+
+Responses expose only a mask and `database` / `environment` / `none` source.
+The three independent model keys are `kg_extraction`, `html_injection`, and
+`tooltip_suggestion`; there is no shared user-facing default model.
 
 ### SSE Streaming
 
