@@ -67,6 +67,7 @@ import { ScholarSuggestionService } from './scholar-suggestion-service'
 import {
   SCHOLAR_SUGGESTION_EDITOR_WIDGET_ID,
   SCHOLAR_SUGGESTIONS_CONTEXT_MENU,
+  SCHOLAR_SUGGESTIONS_WIDGET_ID,
   ScholarSuggestionEditorWidget,
   ScholarSuggestionsTreeWidget,
   isScholarSuggestionTarget,
@@ -156,6 +157,16 @@ export class ScholarContribution implements
       mode: 'tab-after',
       ref: annotations,
     })
+  }
+
+  async onDidInitializeLayout(app: FrontendApplication): Promise<void> {
+    try {
+      await this.migrateLegacyTooltipDraftsLayout(app)
+    } catch (reason) {
+      await this.messageService.warn(
+        `Could not migrate the Tooltip Drafts layout: ${errorMessage(reason)}`,
+      )
+    }
   }
 
   onStop(): void {
@@ -992,6 +1003,86 @@ export class ScholarContribution implements
       if (activate) {
         container.activateWidget(SCHOLAR_SUGGESTION_EDITOR_WIDGET_ID)
       }
+    }
+  }
+
+  private async migrateLegacyTooltipDraftsLayout(app: FrontendApplication): Promise<void> {
+    const annotations = this.widgetManager.tryGetWidget<ViewContainer>(
+      SCHOLAR_ANNOTATIONS_WIDGET_ID,
+    )
+    const existingTooltipDrafts = this.widgetManager.tryGetWidget<ViewContainer>(
+      SCHOLAR_TOOLTIP_DRAFTS_WIDGET_ID,
+    )
+    if (!(annotations instanceof ViewContainer)
+      || (existingTooltipDrafts && app.shell.getAreaFor(existingTooltipDrafts))) {
+      return
+    }
+
+    const legacyParts = annotations.getParts()
+      .filter(part => (
+        part.wrapped.id === SCHOLAR_SUGGESTIONS_WIDGET_ID
+        || part.wrapped.id === SCHOLAR_SUGGESTION_EDITOR_WIDGET_ID
+      ))
+      .map(part => ({
+        wrapped: part.wrapped,
+        options: part.options,
+        originalContainerId: part.originalContainerId,
+        originalContainerTitle: part.originalContainerTitle,
+        collapsed: part.collapsed,
+        hidden: part.isHidden,
+      }))
+    if (legacyParts.length === 0) {
+      return
+    }
+
+    legacyParts.forEach(part => annotations.removeWidget(part.wrapped))
+    let tooltipDrafts = existingTooltipDrafts
+    try {
+      tooltipDrafts ??= await this.widgetManager.getOrCreateWidget<ViewContainer>(
+        SCHOLAR_TOOLTIP_DRAFTS_WIDGET_ID,
+      )
+      if (!(tooltipDrafts instanceof ViewContainer)) {
+        throw new Error('Tooltip Drafts did not create a view container')
+      }
+      for (const part of legacyParts) {
+        if (!tooltipDrafts.getPartFor(part.wrapped)) {
+          const isTree = part.wrapped.id === SCHOLAR_SUGGESTIONS_WIDGET_ID
+          tooltipDrafts.addWidget(part.wrapped, {
+            order: isTree ? 10 : 20,
+            weight: isTree ? 0.65 : 0.35,
+            initiallyCollapsed: !isTree,
+          })
+        }
+      }
+      if (!app.shell.getAreaFor(tooltipDrafts)) {
+        await app.shell.addWidget(tooltipDrafts, {
+          area: 'right',
+          mode: 'tab-after',
+          ref: annotations,
+        })
+      }
+      tooltipDrafts.revealWidget(SCHOLAR_SUGGESTIONS_WIDGET_ID)
+    } catch (reason) {
+      const failedTooltipDrafts = tooltipDrafts
+      if (failedTooltipDrafts instanceof ViewContainer) {
+        legacyParts.forEach(part => failedTooltipDrafts.removeWidget(part.wrapped))
+      }
+      for (const part of legacyParts) {
+        if (!annotations.getPartFor(part.wrapped)) {
+          annotations.addWidget(
+            part.wrapped,
+            part.options,
+            part.originalContainerId,
+            part.originalContainerTitle,
+          )
+          const restoredPart = annotations.getPartFor(part.wrapped)
+          if (restoredPart) {
+            restoredPart.collapsed = part.collapsed
+            restoredPart.setHidden(part.hidden)
+          }
+        }
+      }
+      throw reason
     }
   }
 

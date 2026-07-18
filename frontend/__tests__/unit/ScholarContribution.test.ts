@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { Command, CommandHandler } from '@theia/core'
-import type { CommonMenus } from '@theia/core/lib/browser'
+import type { CommonMenus, ViewContainer as TheiaViewContainer } from '@theia/core/lib/browser'
 import type { Paper, PaperDetail } from '@/hooks/usePapers'
 import type { ReaderWorkspaceSnapshot } from '@/lib/reader-workspace-store'
 import type { ScholarCommands as ScholarCommandsNamespace } from '@/theia/scholar-extension/src/browser/scholar-commands'
@@ -39,14 +39,21 @@ let ScholarAnnotationService: typeof ScholarAnnotationServiceClass
 let ScholarPaperWidget: typeof ScholarPaperWidgetClass
 let ScholarPaperGraphWidget: typeof ScholarPaperGraphWidgetClass
 let ScholarLibraryWidget: typeof ScholarLibraryWidgetClass
+let ViewContainerCtor: typeof import('@theia/core/lib/browser').ViewContainer
 let SCHOLAR_LIBRARY_CONTEXT_MENU: string[]
+let SCHOLAR_ANNOTATIONS_WIDGET_ID: string
+let SCHOLAR_TOOLTIP_DRAFTS_WIDGET_ID: string
 let SCHOLAR_PAPER_FACTORY_ID: string
 let SCHOLAR_PAPER_GRAPH_FACTORY_ID: string
+let SCHOLAR_SUGGESTIONS_WIDGET_ID: string
+let SCHOLAR_SUGGESTION_EDITOR_WIDGET_ID: string
 
 beforeAll(async () => {
   vi.stubGlobal('DragEvent', class DragEvent extends Event {})
   document.queryCommandSupported = vi.fn(() => false)
-  ;({ CommonMenus: CommonMenusNs } = await import('@theia/core/lib/browser'))
+  ;({ CommonMenus: CommonMenusNs, ViewContainer: ViewContainerCtor } = await import(
+    '@theia/core/lib/browser'
+  ))
   ;({ ScholarCommands } = await import(
     '@/theia/scholar-extension/src/browser/scholar-commands'
   ))
@@ -59,8 +66,19 @@ beforeAll(async () => {
   ;({ ScholarPaperWidget, SCHOLAR_PAPER_FACTORY_ID } = await import(
     '@/theia/scholar-extension/src/browser/scholar-paper-widget'
   ))
-  ;({ ScholarLibraryWidget, SCHOLAR_LIBRARY_CONTEXT_MENU } = await import(
+  ;({
+    ScholarLibraryWidget,
+    SCHOLAR_LIBRARY_CONTEXT_MENU,
+    SCHOLAR_ANNOTATIONS_WIDGET_ID,
+    SCHOLAR_TOOLTIP_DRAFTS_WIDGET_ID,
+  } = await import(
     '@/theia/scholar-extension/src/browser/scholar-side-widgets'
+  ))
+  ;({
+    SCHOLAR_SUGGESTIONS_WIDGET_ID,
+    SCHOLAR_SUGGESTION_EDITOR_WIDGET_ID,
+  } = await import(
+    '@/theia/scholar-extension/src/browser/scholar-suggestion-widgets'
   ))
   ;({ ScholarPaperGraphWidget, SCHOLAR_PAPER_GRAPH_FACTORY_ID } = await import(
     '@/theia/scholar-extension/src/browser/scholar-paper-graph-widget'
@@ -207,6 +225,55 @@ function createForeignWidget(): ScholarLibraryWidgetClass {
   return Object.create(ScholarLibraryWidget.prototype) as ScholarLibraryWidgetClass
 }
 
+function createFakeViewContainer(
+  id: string,
+  widgets: Array<{ id: string }>,
+): TheiaViewContainer {
+  const container = Object.create(ViewContainerCtor.prototype) as TheiaViewContainer
+  const createPart = (wrapped: { id: string }) => ({
+    wrapped,
+    options: undefined,
+    originalContainerId: id,
+    originalContainerTitle: undefined,
+    collapsed: false,
+    isHidden: false,
+    setHidden: vi.fn(),
+  })
+  const parts = widgets.map(createPart)
+  Object.defineProperties(container, {
+    id: { value: id, configurable: true },
+    isAttached: { value: false, configurable: true },
+    getParts: { value: vi.fn(() => parts), configurable: true },
+    getPartFor: {
+      value: vi.fn((widget: { id: string }) => parts.find(part => part.wrapped.id === widget.id)),
+      configurable: true,
+    },
+    removeWidget: {
+      value: vi.fn((widget: { id: string }) => {
+        const index = parts.findIndex(part => part.wrapped.id === widget.id)
+        if (index === -1) {
+          return false
+        }
+        parts.splice(index, 1)
+        return true
+      }),
+      configurable: true,
+    },
+    addWidget: {
+      value: vi.fn((widget: { id: string }) => {
+        parts.push(createPart(widget))
+        return { dispose: () => undefined }
+      }),
+      configurable: true,
+    },
+    revealWidget: {
+      value: vi.fn((widgetId: string) => parts.find(part => part.wrapped.id === widgetId)),
+      configurable: true,
+    },
+  })
+  return container
+}
+
 function createLibraryNode(paperId: string): ScholarLibraryTreeNode {
   return {
     id: `paper:${paperId}`,
@@ -220,6 +287,7 @@ function createContribution(store: ReturnType<typeof createFakeStore>) {
   const widgetManager = {
     getOrCreateWidget: vi.fn(),
     getWidgets: vi.fn(() => [] as unknown[]),
+    tryGetWidget: vi.fn(),
   }
   const shell: {
     activeWidget: unknown
@@ -227,12 +295,14 @@ function createContribution(store: ReturnType<typeof createFakeStore>) {
     addWidget: ReturnType<typeof vi.fn>
     activateWidget: ReturnType<typeof vi.fn>
     getCurrentWidget: ReturnType<typeof vi.fn>
+    getAreaFor: ReturnType<typeof vi.fn>
   } = {
     activeWidget: undefined,
     onDidChangeCurrentWidget: vi.fn(() => ({ dispose: () => undefined })),
     addWidget: vi.fn().mockResolvedValue(undefined),
     activateWidget: vi.fn().mockResolvedValue(undefined),
     getCurrentWidget: vi.fn(() => undefined),
+    getAreaFor: vi.fn(() => undefined),
   }
   const statusBar = {
     setElement: vi.fn().mockResolvedValue(undefined),
@@ -271,6 +341,119 @@ function createContribution(store: ReturnType<typeof createFakeStore>) {
 
   return { contribution, widgetManager, shell, statusBar, messageService }
 }
+
+describe('ScholarContribution Tooltip Drafts layout migration', () => {
+  async function migrate(context: ReturnType<typeof createContribution>): Promise<void> {
+    const contribution = context.contribution as unknown as {
+      onDidInitializeLayout(app: unknown): Promise<void>
+    }
+    await contribution.onDidInitializeLayout({ shell: context.shell })
+  }
+
+  it('moves legacy suggestion parts into a dedicated right-side container after restore', async () => {
+    const context = createContribution(createFakeStore(emptySnapshot()))
+    const comments = { id: 'scholar-agent:comments' }
+    const suggestions = { id: SCHOLAR_SUGGESTIONS_WIDGET_ID }
+    const suggestionEditor = { id: SCHOLAR_SUGGESTION_EDITOR_WIDGET_ID }
+    const annotations = createFakeViewContainer(SCHOLAR_ANNOTATIONS_WIDGET_ID, [
+      comments,
+      suggestions,
+      suggestionEditor,
+    ])
+    const tooltipDrafts = createFakeViewContainer(SCHOLAR_TOOLTIP_DRAFTS_WIDGET_ID, [
+      suggestions,
+      suggestionEditor,
+    ])
+    context.widgetManager.tryGetWidget.mockImplementation((widgetId: string) => {
+      if (widgetId === SCHOLAR_ANNOTATIONS_WIDGET_ID) {
+        return annotations
+      }
+      return undefined
+    })
+    context.widgetManager.getOrCreateWidget.mockResolvedValue(tooltipDrafts)
+
+    await migrate(context)
+
+    expect(annotations.getParts().map(part => part.wrapped.id)).toEqual([comments.id])
+    expect(annotations.removeWidget).toHaveBeenCalledTimes(2)
+    expect(context.shell.addWidget).toHaveBeenCalledWith(tooltipDrafts, {
+      area: 'right',
+      mode: 'tab-after',
+      ref: annotations,
+    })
+    expect(tooltipDrafts.revealWidget).toHaveBeenCalledWith(SCHOLAR_SUGGESTIONS_WIDGET_ID)
+
+    await migrate(context)
+    expect(context.shell.addWidget).toHaveBeenCalledTimes(1)
+    expect(annotations.removeWidget).toHaveBeenCalledTimes(2)
+  })
+
+  it('preserves user-moved parts when the dedicated container already belongs to the shell', async () => {
+    const context = createContribution(createFakeStore(emptySnapshot()))
+    const suggestions = { id: SCHOLAR_SUGGESTIONS_WIDGET_ID }
+    const annotations = createFakeViewContainer(SCHOLAR_ANNOTATIONS_WIDGET_ID, [suggestions])
+    const tooltipDrafts = createFakeViewContainer(SCHOLAR_TOOLTIP_DRAFTS_WIDGET_ID, [])
+    context.widgetManager.tryGetWidget.mockImplementation((widgetId: string) => {
+      if (widgetId === SCHOLAR_ANNOTATIONS_WIDGET_ID) {
+        return annotations
+      }
+      if (widgetId === SCHOLAR_TOOLTIP_DRAFTS_WIDGET_ID) {
+        return tooltipDrafts
+      }
+      return undefined
+    })
+    context.shell.getAreaFor.mockImplementation((widget: unknown) => (
+      widget === tooltipDrafts ? 'right' : undefined
+    ))
+
+    await migrate(context)
+
+    expect(annotations.removeWidget).not.toHaveBeenCalled()
+    expect(context.widgetManager.getOrCreateWidget).not.toHaveBeenCalled()
+    expect(context.shell.addWidget).not.toHaveBeenCalled()
+  })
+
+  it('leaves a clean layout unchanged when Annotations has no legacy suggestion parts', async () => {
+    const context = createContribution(createFakeStore(emptySnapshot()))
+    const annotations = createFakeViewContainer(SCHOLAR_ANNOTATIONS_WIDGET_ID, [
+      { id: 'scholar-agent:comments' },
+    ])
+    context.widgetManager.tryGetWidget.mockImplementation((widgetId: string) => (
+      widgetId === SCHOLAR_ANNOTATIONS_WIDGET_ID ? annotations : undefined
+    ))
+
+    await migrate(context)
+
+    expect(annotations.removeWidget).not.toHaveBeenCalled()
+    expect(context.widgetManager.getOrCreateWidget).not.toHaveBeenCalled()
+    expect(context.shell.addWidget).not.toHaveBeenCalled()
+  })
+
+  it('restores legacy parts and warns when the dedicated container cannot be created', async () => {
+    const context = createContribution(createFakeStore(emptySnapshot()))
+    const suggestions = { id: SCHOLAR_SUGGESTIONS_WIDGET_ID }
+    const suggestionEditor = { id: SCHOLAR_SUGGESTION_EDITOR_WIDGET_ID }
+    const annotations = createFakeViewContainer(SCHOLAR_ANNOTATIONS_WIDGET_ID, [
+      suggestions,
+      suggestionEditor,
+    ])
+    context.widgetManager.tryGetWidget.mockImplementation((widgetId: string) => (
+      widgetId === SCHOLAR_ANNOTATIONS_WIDGET_ID ? annotations : undefined
+    ))
+    context.widgetManager.getOrCreateWidget.mockRejectedValue(new Error('factory failed'))
+
+    await migrate(context)
+
+    expect(annotations.getParts().map(part => part.wrapped.id)).toEqual([
+      SCHOLAR_SUGGESTIONS_WIDGET_ID,
+      SCHOLAR_SUGGESTION_EDITOR_WIDGET_ID,
+    ])
+    expect(context.shell.addWidget).not.toHaveBeenCalled()
+    expect(context.messageService.warn).toHaveBeenCalledWith(
+      'Could not migrate the Tooltip Drafts layout: factory failed',
+    )
+  })
+})
 
 describe('ScholarContribution active-paper commands', () => {
   let snapshot: ReaderWorkspaceSnapshot

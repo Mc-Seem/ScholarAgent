@@ -158,8 +158,11 @@ The separate right-sidebar `Tooltip Drafts` `ViewContainer` holds `Suggestions`
 and `Suggestion Details`, making pending manual and AI content directly
 discoverable without the `Annotations` overflow menu. Its tree is expanded on
 first open, details are revealed when a draft is focused or created, and the
-container can be reopened through `View → Views`. `Suggestions` is a searchable
-native `TreeWidget` grouped as
+container can be reopened through `View → Views`. After Theia restores a legacy
+layout, `ScholarContribution.onDidInitializeLayout` moves any saved suggestion
+parts out of `Annotations` and adds this container beside it without resetting
+unrelated tabs, panel sizes, or placements. `Suggestions` is a searchable native
+`TreeWidget` grouped as
 `Manual / AI → entity type → suggestion`. Its leaf and group checkboxes derive
 tri-state selection from `ScholarSuggestionService`, while row focus reveals
 the separate `Suggestion Details` `ReactWidget`. The service keeps checked IDs,
