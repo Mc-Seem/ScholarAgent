@@ -54,6 +54,7 @@ frontend/
 │   │   ├── TooltipList.tsx     # Paragraph comments list
 │   │   ├── GlossaryList.tsx    # Entity glossary list
 │   │   ├── KnowledgeGraphView.tsx  # React Flow graph
+│   │   ├── knowledge-graph-controller.ts # Framework-neutral graph control bridge
 │   │   ├── GraphNode.tsx       # KG node component
 │   │   └── ...
 │   └── ui/                     # Reusable design system components
@@ -142,6 +143,30 @@ Knowledge Graph` opens a dedicated central tab per paper (one
 right of the paper it belongs to. Selecting a graph node or edge publishes a
 source-aware value through Theia's `SelectionService`; the standard bottom
 `Property View` displays its paper, entity or relation details and connections.
+
+`KnowledgeGraphView` remains the sole owner of graph loading, React Flow nodes
+and edges, filters, selection, focus, and dagre layout. A stable
+`KnowledgeGraphController` exposes only a framework-neutral snapshot and graph
+actions. Each `ScholarPaperGraphWidget` owns one controller subscription and
+clears it on React unmount, controller replacement, or widget disposal, so
+restored and split graph tabs cannot mutate one another.
+
+The Theia graph tab sets `showEmbeddedControls={false}`: its React search/filter
+strip and focus chip are replaced by native tab-toolbar and command-palette
+commands, while the React Flow minimap and pan/zoom controls remain part of the
+canvas. Node search uses Theia's fuzzy single-select picker over labels, types,
+and details. Node and relationship filters use a grouped, preselected
+multi-select picker and commit atomically only on Accept; cancellation preserves
+the current filters, including when every type is hidden. Focus is a toggled
+command, reset reruns the current dagre layout and fits the viewport, and Reveal
+in Paper is enabled only for a selected node with a source DOM ID.
+
+The active graph publishes visible/total node and relationship counts, selected
+filter labels, and focus state through a dedicated status-bar element. The
+contribution subscribes only to the current graph widget and rechecks controller
+identity after asynchronous pickers, preventing a closed or replaced tab from
+receiving late results. The standalone Next.js reader keeps embedded controls
+and selection overlays by default.
 
 The `Annotations` `ViewContainer` contains `Comments`, `Glossary`, and
 `Annotation` for content already attached to the paper. Comments and glossary

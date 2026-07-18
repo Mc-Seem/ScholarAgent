@@ -2,8 +2,13 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as React from 'react'
 
+const reactFlowSpies = vi.hoisted(() => ({
+  fitView: vi.fn(),
+  setCenter: vi.fn(),
+}))
+
 vi.mock('reactflow', () => {
-  const reactFlowInstance = { fitView: vi.fn(), setCenter: vi.fn() }
+  const reactFlowInstance = reactFlowSpies
 
   function ReactFlowMock(props: {
     nodes: Array<{ id: string; data: { label: string } }>
@@ -70,8 +75,8 @@ vi.mock('reactflow', () => {
   return {
     default: ReactFlowMock,
     Background: () => null,
-    Controls: () => null,
-    MiniMap: () => null,
+    Controls: () => <div data-testid="flow-controls" />,
+    MiniMap: () => <div data-testid="flow-minimap" />,
     useNodesState,
     useEdgesState,
     useReactFlow,
@@ -90,6 +95,7 @@ vi.mock('@/components/reader/KnowledgeGraphProgress', () => ({
 }))
 
 import { KnowledgeGraphView } from '@/components/reader/KnowledgeGraphView'
+import type { KnowledgeGraphController } from '@/components/reader/knowledge-graph-controller'
 
 function graphFixture() {
   return {
@@ -285,5 +291,232 @@ describe('KnowledgeGraphView selection overlay visibility', () => {
     await act(async () => undefined)
     expect(screen.queryByText('A well-known theorem.')).not.toBeInTheDocument()
     expect(screen.queryByLabelText('Close')).not.toBeInTheDocument()
+  })
+})
+
+describe('KnowledgeGraphView controller bridge', () => {
+  beforeEach(() => {
+    reactFlowSpies.fitView.mockClear()
+    reactFlowSpies.setCenter.mockClear()
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: () => Promise.resolve(graphFixture()),
+    }))
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.unstubAllGlobals()
+  })
+
+  it('registers one stable controller and unregisters it on unmount', async () => {
+    const controllers: Array<KnowledgeGraphController | null> = []
+    const onControllerChange = vi.fn((controller: KnowledgeGraphController | null) => {
+      controllers.push(controller)
+    })
+    const { rerender, unmount } = await renderGraph({ onControllerChange })
+
+    const controller = controllers.find((value): value is KnowledgeGraphController => value !== null)
+    expect(controller).toBeDefined()
+    expect(controller?.getSnapshot().status).toBe('ready')
+
+    rerender(<KnowledgeGraphView paperId="paper-a" onControllerChange={onControllerChange} />)
+    await act(async () => undefined)
+
+    expect(controllers.filter(value => value !== null)).toEqual([controller])
+
+    unmount()
+    expect(controllers.at(-1)).toBeNull()
+  })
+
+  it('publishes view-neutral search, filter, count, selection, and capability state', async () => {
+    let controller: KnowledgeGraphController | null = null
+    await renderGraph({
+      onControllerChange: value => {
+        controller = value
+      },
+    })
+
+    const snapshot = controller!.getSnapshot()
+    expect(snapshot).toEqual(expect.objectContaining({
+      status: 'ready',
+      visibleNodeCount: 2,
+      totalNodeCount: 2,
+      visibleEdgeCount: 1,
+      totalEdgeCount: 1,
+      selectedNode: null,
+      focusMode: false,
+      focusedNodeId: null,
+      canFocusSelection: false,
+      canRevealSelectionInPaper: false,
+    }))
+    expect(snapshot.searchItems).toContainEqual({
+      id: 'n1',
+      label: 'Theorem 1',
+      nodeType: 'theorem',
+      detail: 'A well-known theorem.',
+    })
+    expect(snapshot.nodeTypeFilters).toContainEqual({
+      type: 'theorem',
+      label: 'Theorems',
+      count: 1,
+      selected: true,
+    })
+    expect(snapshot.edgeTypeFilters).toContainEqual({
+      type: 'depends_on',
+      label: 'Depends on',
+      count: 1,
+      selected: true,
+    })
+  })
+
+  it('reveals filtered nodes and delegates focus, layout, and source actions', async () => {
+    let controller: KnowledgeGraphController | null = null
+    const onSelectionChange = vi.fn()
+    const onNavigate = vi.fn()
+    await renderGraph({
+      onControllerChange: value => {
+        controller = value
+      },
+      onSelectionChange,
+      onNavigate,
+    })
+
+    act(() => controller!.setVisibleTypes([], []))
+    await waitFor(() => expect(controller!.getSnapshot().visibleNodeCount).toBe(0))
+
+    act(() => controller!.revealNode('n1'))
+    await waitFor(() => expect(screen.getByTestId('node-n1')).toBeInTheDocument())
+
+    expect(controller!.getSnapshot()).toEqual(expect.objectContaining({
+      visibleNodeCount: 1,
+      visibleEdgeCount: 0,
+      selectedNode: expect.objectContaining({
+        id: 'n1',
+        label: 'Theorem 1',
+        nodeType: 'theorem',
+        domNodeId: 'dom-n1',
+      }),
+      canFocusSelection: true,
+      canRevealSelectionInPaper: true,
+    }))
+    expect(onSelectionChange).toHaveBeenCalledWith(expect.objectContaining({ id: 'n1' }))
+    await waitFor(() => expect(reactFlowSpies.setCenter).toHaveBeenCalled())
+
+    act(() => controller!.focusSelection())
+    await waitFor(() => expect(controller!.getSnapshot()).toEqual(expect.objectContaining({
+      focusMode: true,
+      focusedNodeId: 'n1',
+    })))
+
+    act(() => controller!.revealSelectionInPaper())
+    expect(onNavigate).toHaveBeenCalledWith('dom-n1')
+
+    act(() => controller!.resetLayout())
+    await waitFor(() => expect(reactFlowSpies.fitView).toHaveBeenCalled())
+
+    act(() => controller!.clearFocus())
+    await waitFor(() => expect(controller!.getSnapshot().focusMode).toBe(false))
+  })
+
+  it('notifies subscribers only when the public snapshot changes', async () => {
+    let controller: KnowledgeGraphController | null = null
+    await renderGraph({
+      onControllerChange: value => {
+        controller = value
+      },
+    })
+    const listener = vi.fn()
+    const unsubscribe = controller!.subscribe(listener)
+
+    fireEvent.change(screen.getByPlaceholderText('Search entities...'), {
+      target: { value: 'theorem' },
+    })
+    await act(async () => undefined)
+    expect(listener).not.toHaveBeenCalled()
+
+    act(() => controller!.setVisibleTypes(
+      ['formula', 'symbol', 'definition', 'theorem'],
+      ['has_symbol', 'uses', 'depends_on', 'defines', 'extends', 'mentions'],
+    ))
+    await act(async () => undefined)
+    expect(listener).not.toHaveBeenCalled()
+
+    act(() => controller!.setVisibleTypes(['theorem'], ['depends_on']))
+    await waitFor(() => expect(listener).toHaveBeenCalledTimes(1))
+
+    unsubscribe()
+    act(() => controller!.setVisibleTypes([], []))
+    await act(async () => undefined)
+    expect(listener).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps embedded controls by default and hides only shell-replaced controls when requested', async () => {
+    const { unmount } = await renderGraph()
+
+    expect(screen.getByPlaceholderText('Search entities...')).toBeInTheDocument()
+    expect(screen.getByTitle('Filter visible nodes and relationships')).toBeInTheDocument()
+    expect(screen.getByTestId('react-flow-mock').parentElement).toHaveStyle({
+      height: 'calc(100% - 36px)',
+    })
+    expect(screen.getByTestId('flow-controls')).toBeInTheDocument()
+    expect(screen.getByTestId('flow-minimap')).toBeInTheDocument()
+
+    unmount()
+    let controller: KnowledgeGraphController | null = null
+    await renderGraph({
+      showEmbeddedControls: false,
+      onControllerChange: value => {
+        controller = value
+      },
+    })
+
+    expect(screen.queryByPlaceholderText('Search entities...')).not.toBeInTheDocument()
+    expect(screen.queryByTitle('Filter visible nodes and relationships')).not.toBeInTheDocument()
+    expect(screen.getByTestId('react-flow-mock').parentElement).toHaveStyle({ height: '100%' })
+    expect(screen.getByTestId('flow-controls')).toBeInTheDocument()
+    expect(screen.getByTestId('flow-minimap')).toBeInTheDocument()
+
+    act(() => controller!.revealNode('n1'))
+    act(() => controller!.focusSelection())
+    await waitFor(() => expect(controller!.getSnapshot().focusMode).toBe(true))
+    expect(screen.queryByText('Focusing on:')).not.toBeInTheDocument()
+  })
+
+  it('reports loading and error lifecycle states without enabling selection actions', async () => {
+    let resolveFetch: ((value: unknown) => void) | undefined
+    vi.stubGlobal('fetch', vi.fn().mockReturnValue(new Promise(resolve => {
+      resolveFetch = resolve
+    })))
+    let controller: KnowledgeGraphController | null = null
+    render(
+      <KnowledgeGraphView
+        paperId="paper-a"
+        onControllerChange={value => {
+          controller = value
+        }}
+      />,
+    )
+    await waitFor(() => expect(controller).not.toBeNull())
+    expect(controller!.getSnapshot()).toEqual(expect.objectContaining({
+      status: 'loading',
+      canFocusSelection: false,
+      canRevealSelectionInPaper: false,
+    }))
+
+    await act(async () => {
+      resolveFetch?.({
+        ok: false,
+        status: 500,
+        statusText: 'Server Error',
+      })
+    })
+    await waitFor(() => expect(controller!.getSnapshot().status).toBe('error'))
+    expect(controller!.getSnapshot()).toEqual(expect.objectContaining({
+      canFocusSelection: false,
+      canRevealSelectionInPaper: false,
+    }))
   })
 })

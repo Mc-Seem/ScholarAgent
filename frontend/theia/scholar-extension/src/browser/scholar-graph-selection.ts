@@ -49,6 +49,7 @@ function isNodePayload(
     && isOptionalString(value.statement)
     && isOptionalString(value.summary)
     && isOptionalString(value.latex)
+    && isOptionalString(value.domNodeId)
     && Array.isArray(value.incomingConnections)
     && value.incomingConnections.every(isConnection)
     && Array.isArray(value.outgoingConnections)

@@ -22,9 +22,14 @@ import { GraphNode } from './GraphNode';
 import { KnowledgeGraphProgress } from './KnowledgeGraphProgress';
 import { EdgeInfoPanel } from './EdgeInfoPanel';
 import { NodeInfoPanel, ConnectionInfo } from './NodeInfoPanel';
-import { Loader2, AlertCircle, Network, Search, X, Focus, Maximize2, Filter, ChevronDown } from 'lucide-react';
+import { Loader2, AlertCircle, Network, Search, X, Focus, Filter, ChevronDown } from 'lucide-react';
 import { EmptyState } from '../ui';
 import { apiUrl } from '../../hooks/useApi';
+import type {
+  KnowledgeGraphController,
+  KnowledgeGraphControllerSnapshot,
+  KnowledgeGraphLifecycleStatus,
+} from './knowledge-graph-controller';
 
 // Custom node types
 const nodeTypes = {
@@ -44,6 +49,43 @@ const edgeColors: Record<string, string> = {
   mentions: '#94a3b8',   // slate
 };
 
+const nodeTypeOptions = [
+  { type: 'formula', label: 'Formulas', color: 'bg-amber-500' },
+  { type: 'symbol', label: 'Symbols', color: 'bg-blue-500' },
+  { type: 'definition', label: 'Definitions', color: 'bg-emerald-500' },
+  { type: 'theorem', label: 'Theorems', color: 'bg-violet-500' },
+] as const;
+
+const edgeTypeOptions = [
+  { type: 'has_symbol', label: 'Has symbol', color: 'bg-amber-500' },
+  { type: 'uses', label: 'Uses', color: 'bg-indigo-500' },
+  { type: 'depends_on', label: 'Depends on', color: 'bg-amber-500' },
+  { type: 'defines', label: 'Defines', color: 'bg-emerald-500' },
+  { type: 'extends', label: 'Extends', color: 'bg-violet-500' },
+  { type: 'mentions', label: 'Mentions', color: 'bg-slate-400' },
+] as const;
+
+const defaultNodeTypes = nodeTypeOptions.map(option => option.type);
+const defaultEdgeTypes = edgeTypeOptions.map(option => option.type);
+
+const emptyControllerSnapshot: KnowledgeGraphControllerSnapshot = {
+  status: 'loading',
+  searchItems: [],
+  nodeTypeFilters: [],
+  edgeTypeFilters: [],
+  visibleNodeCount: 0,
+  totalNodeCount: 0,
+  visibleEdgeCount: 0,
+  totalEdgeCount: 0,
+  selectedNode: null,
+  focusMode: false,
+  focusedNodeId: null,
+  canFocusSelection: false,
+  canRevealSelectionInPaper: false,
+};
+
+type KnowledgeGraphControllerActions = Omit<KnowledgeGraphController, 'getSnapshot' | 'subscribe'>;
+
 export interface KnowledgeGraphNodeSelection {
   kind: 'node';
   id: string;
@@ -54,6 +96,7 @@ export interface KnowledgeGraphNodeSelection {
   statement?: string;
   summary?: string;
   latex?: string;
+  domNodeId?: string;
   incomingConnections: ConnectionInfo[];
   outgoingConnections: ConnectionInfo[];
 }
@@ -75,6 +118,8 @@ export interface KnowledgeGraphViewProps {
   onNavigate?: (domNodeId: string) => void;
   onRegisterFocusHandler?: (handler: (nodeId: string) => void) => void;
   onSelectionChange?: (selection: KnowledgeGraphSelection | null) => void;
+  onControllerChange?: (controller: KnowledgeGraphController | null) => void;
+  showEmbeddedControls?: boolean;
   showSelectionDetails?: boolean;
 }
 
@@ -193,6 +238,8 @@ function KnowledgeGraphViewInner({
   onNavigate,
   onRegisterFocusHandler,
   onSelectionChange,
+  onControllerChange,
+  showEmbeddedControls = true,
   showSelectionDetails = true,
 }: KnowledgeGraphViewProps) {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
@@ -223,11 +270,40 @@ function KnowledgeGraphViewInner({
 
   // Filter state
   const [showFilterMenu, setShowFilterMenu] = useState(false);
-  const defaultNodeTypes = ['formula', 'symbol', 'definition', 'theorem'];
-  const defaultEdgeTypes = ['has_symbol', 'uses', 'depends_on', 'defines', 'extends', 'mentions'];
   const [visibleNodeTypes, setVisibleNodeTypes] = useState<Set<string>>(new Set(defaultNodeTypes));
   const [visibleEdgeTypes, setVisibleEdgeTypes] = useState<Set<string>>(new Set(defaultEdgeTypes));
   const filterMenuRef = useRef<HTMLDivElement>(null);
+
+  const controllerSnapshotRef = useRef<KnowledgeGraphControllerSnapshot>(emptyControllerSnapshot);
+  const controllerListenersRef = useRef(new Set<() => void>());
+  const controllerActionsRef = useRef<KnowledgeGraphControllerActions>({
+    revealNode: (_nodeId: string) => undefined,
+    setVisibleTypes: (_nodeTypes: readonly string[], _edgeTypes: readonly string[]) => undefined,
+    focusSelection: () => undefined,
+    clearFocus: () => undefined,
+    resetLayout: () => undefined,
+    revealSelectionInPaper: () => undefined,
+  });
+  const controller = useMemo<KnowledgeGraphController>(() => ({
+    getSnapshot: () => controllerSnapshotRef.current,
+    subscribe: listener => {
+      controllerListenersRef.current.add(listener);
+      return () => controllerListenersRef.current.delete(listener);
+    },
+    revealNode: nodeId => controllerActionsRef.current.revealNode(nodeId),
+    setVisibleTypes: (nodeTypeIds, edgeTypeIds) => (
+      controllerActionsRef.current.setVisibleTypes(nodeTypeIds, edgeTypeIds)
+    ),
+    focusSelection: () => controllerActionsRef.current.focusSelection(),
+    clearFocus: () => controllerActionsRef.current.clearFocus(),
+    resetLayout: () => controllerActionsRef.current.resetLayout(),
+    revealSelectionInPaper: () => controllerActionsRef.current.revealSelectionInPaper(),
+  }), []);
+
+  useEffect(() => {
+    onControllerChange?.(controller);
+    return () => onControllerChange?.(null);
+  }, [controller, onControllerChange]);
 
   // React Flow instance for programmatic control
   const reactFlowInstance = useReactFlow();
@@ -393,10 +469,7 @@ function KnowledgeGraphViewInner({
     return { nodes: filteredNodes, edges: filteredEdges };
   }, []);
 
-  // Update displayed graph when focus mode, focused node, or filters change
-  useEffect(() => {
-    if (allNodes.length === 0) return;
-
+  const visibleGraph = useMemo(() => {
     let workingNodes = allNodes;
     let workingEdges = allEdges;
 
@@ -424,8 +497,19 @@ function KnowledgeGraphViewInner({
       data: { ...n.data, isFocused: focusMode && n.id === focusedNodeId }
     }));
 
+    return { nodes: nodesWithFocus, edges: workingEdges };
+  }, [focusMode, focusedNodeId, allNodes, allEdges, visibleNodeTypes, visibleEdgeTypes, computeSubgraph]);
+
+  // Update displayed graph when focus mode, focused node, or filters change
+  useEffect(() => {
+    if (allNodes.length === 0) {
+      setNodes([]);
+      setEdges([]);
+      return;
+    }
+
     // Re-layout
-    const layouted = hierarchicalLayout([...nodesWithFocus], [...workingEdges]);
+    const layouted = hierarchicalLayout([...visibleGraph.nodes], [...visibleGraph.edges]);
 
     setNodes(layouted.nodes);
     setEdges(layouted.edges);
@@ -436,7 +520,7 @@ function KnowledgeGraphViewInner({
         reactFlowInstance.fitView({ padding: 0.2, duration: 300 });
       }, 50);
     }
-  }, [focusMode, focusedNodeId, allNodes, allEdges, visibleNodeTypes, visibleEdgeTypes, computeSubgraph, setNodes, setEdges, reactFlowInstance]);
+  }, [focusMode, focusedNodeId, allNodes.length, visibleGraph, setNodes, setEdges, reactFlowInstance]);
 
   // Compute connections for a node
   const getNodeConnections = useCallback((nodeId: string): { incoming: ConnectionInfo[], outgoing: ConnectionInfo[] } => {
@@ -483,6 +567,7 @@ function KnowledgeGraphViewInner({
       statement: node.data.statement,
       summary: node.data.summary,
       latex: node.data.latex,
+      domNodeId: node.data.domNodeId,
       incomingConnections: connections.incoming,
       outgoingConnections: connections.outgoing,
     };
@@ -532,6 +617,12 @@ function KnowledgeGraphViewInner({
     // Look in allNodes to find node data (in case we're in focus mode and node isn't displayed)
     const nodeData = allNodes.find(n => n.id === nodeId);
     if (nodeData) {
+      setVisibleNodeTypes(previousTypes => {
+        if (previousTypes.has(nodeData.data.nodeType)) {
+          return previousTypes;
+        }
+        return new Set([...previousTypes, nodeData.data.nodeType]);
+      });
       selectNode(nodeData);
 
       // Activate focus mode if requested (shows subgraph with neighbors)
@@ -541,18 +632,16 @@ function KnowledgeGraphViewInner({
       }
 
       if (centerOnNode) {
-        // Find the node in current display
-        const displayedNode = nodes.find(n => n.id === nodeId);
-        if (displayedNode) {
+        setTimeout(() => {
           reactFlowInstance.setCenter(
-            displayedNode.position.x + 90,
-            displayedNode.position.y + 40,
+            nodeData.position.x + 90,
+            nodeData.position.y + 40,
             { zoom: 1, duration: 500 }
           );
-        }
+        }, 50);
       }
     }
-  }, [allNodes, nodes, reactFlowInstance, selectNode]);
+  }, [allNodes, reactFlowInstance, selectNode]);
 
   // Register the focus handler with parent
   useEffect(() => {
@@ -672,6 +761,188 @@ function KnowledgeGraphViewInner({
     });
   };
 
+  const controllerStatus: KnowledgeGraphLifecycleStatus = isBuilding
+    ? 'building'
+    : loading
+      ? 'loading'
+      : error
+        ? 'error'
+        : allNodes.length === 0
+          ? 'empty'
+          : 'ready';
+
+  const revealNode = useCallback((nodeId: string) => {
+    if (controllerStatus !== 'ready') return;
+
+    const node = allNodes.find(candidate => candidate.id === nodeId);
+    if (!node) return;
+
+    if (focusMode && focusedNodeId) {
+      const focusedSubgraph = computeSubgraph(focusedNodeId, allNodes, allEdges);
+      if (!focusedSubgraph.nodes.some(candidate => candidate.id === nodeId)) {
+        setFocusMode(false);
+        setFocusedNodeId(null);
+      }
+    }
+    showNodeById(nodeId, true);
+  }, [controllerStatus, allNodes, allEdges, focusMode, focusedNodeId, computeSubgraph, showNodeById]);
+
+  const setControllerVisibleTypes = useCallback((
+    nodeTypeIds: readonly string[],
+    edgeTypeIds: readonly string[],
+  ) => {
+    if (controllerStatus !== 'ready') return;
+    setVisibleNodeTypes(new Set(nodeTypeIds));
+    setVisibleEdgeTypes(new Set(edgeTypeIds));
+  }, [controllerStatus]);
+
+  const focusSelection = useCallback(() => {
+    if (controllerStatus !== 'ready' || !selectedNode) return;
+    setFocusMode(true);
+    setFocusedNodeId(selectedNode.id);
+  }, [controllerStatus, selectedNode]);
+
+  const clearFocus = useCallback(() => {
+    if (controllerStatus !== 'ready') return;
+    setFocusMode(false);
+    setFocusedNodeId(null);
+  }, [controllerStatus]);
+
+  const resetLayout = useCallback(() => {
+    if (controllerStatus !== 'ready' || nodes.length === 0) return;
+
+    const layouted = hierarchicalLayout(
+      nodes.map(node => ({
+        ...node,
+        data: { ...node.data },
+        position: { ...node.position },
+      })),
+      edges.map(edge => ({ ...edge })),
+    );
+    setNodes(layouted.nodes);
+    setEdges(layouted.edges);
+    setTimeout(() => {
+      reactFlowInstance.fitView({ padding: 0.2, duration: 300 });
+    }, 50);
+  }, [controllerStatus, nodes, edges, setNodes, setEdges, reactFlowInstance]);
+
+  const revealSelectionInPaper = useCallback(() => {
+    if (controllerStatus !== 'ready' || !selectedNode?.domNodeId) return;
+    selectedNode.onNavigate();
+  }, [controllerStatus, selectedNode]);
+
+  controllerActionsRef.current = {
+    revealNode,
+    setVisibleTypes: setControllerVisibleTypes,
+    focusSelection,
+    clearFocus,
+    resetLayout,
+    revealSelectionInPaper,
+  };
+
+  const searchItems = useMemo(() => allNodes.map(node => ({
+    id: node.id,
+    label: node.data.label,
+    nodeType: node.data.nodeType,
+    detail: [
+      node.data.context,
+      node.data.definition,
+      node.data.statement,
+      node.data.summary,
+    ].find(value => typeof value === 'string' && value.trim().length > 0),
+  })), [allNodes]);
+
+  const nodeTypeFilters = useMemo(() => {
+    const configuredTypes = new Set(nodeTypeOptions.map(option => option.type as string));
+    const extraTypes = [...new Set(
+      allNodes
+        .map(node => node.data.nodeType as string)
+        .filter(type => !configuredTypes.has(type)),
+    )].sort();
+    const options = [
+      ...nodeTypeOptions.map(option => ({ type: option.type, label: option.label })),
+      ...extraTypes.map(type => ({
+        type,
+        label: type.replace(/_/g, ' '),
+      })),
+    ];
+
+    return options.map(option => ({
+      ...option,
+      count: allNodes.filter(node => node.data.nodeType === option.type).length,
+      selected: visibleNodeTypes.has(option.type),
+    }));
+  }, [allNodes, visibleNodeTypes]);
+
+  const edgeTypeFilters = useMemo(() => {
+    const configuredTypes = new Set(edgeTypeOptions.map(option => option.type as string));
+    const extraTypes = [...new Set(
+      allEdges
+        .map(edge => String(edge.label ?? edge.type))
+        .filter(type => !configuredTypes.has(type)),
+    )].sort();
+    const options = [
+      ...edgeTypeOptions.map(option => ({ type: option.type, label: option.label })),
+      ...extraTypes.map(type => ({
+        type,
+        label: type.replace(/_/g, ' '),
+      })),
+    ];
+
+    return options.map(option => ({
+      ...option,
+      count: allEdges.filter(edge => String(edge.label ?? edge.type) === option.type).length,
+      selected: visibleEdgeTypes.has(option.type),
+    }));
+  }, [allEdges, visibleEdgeTypes]);
+
+  const controllerSnapshot = useMemo<KnowledgeGraphControllerSnapshot>(() => ({
+    status: controllerStatus,
+    searchItems,
+    nodeTypeFilters,
+    edgeTypeFilters,
+    visibleNodeCount: visibleGraph.nodes.length,
+    totalNodeCount: allNodes.length,
+    visibleEdgeCount: visibleGraph.edges.length,
+    totalEdgeCount: allEdges.length,
+    selectedNode: selectedNode
+      ? {
+          id: selectedNode.id,
+          label: selectedNode.label,
+          nodeType: selectedNode.nodeType,
+          domNodeId: selectedNode.domNodeId,
+        }
+      : null,
+    focusMode,
+    focusedNodeId,
+    canFocusSelection: controllerStatus === 'ready' && selectedNode !== null,
+    canRevealSelectionInPaper: controllerStatus === 'ready' && Boolean(selectedNode?.domNodeId),
+  }), [
+    controllerStatus,
+    searchItems,
+    nodeTypeFilters,
+    edgeTypeFilters,
+    visibleGraph.nodes.length,
+    visibleGraph.edges.length,
+    allNodes.length,
+    allEdges.length,
+    selectedNode,
+    focusMode,
+    focusedNodeId,
+  ]);
+  const controllerSnapshotKey = useMemo(
+    () => JSON.stringify(controllerSnapshot),
+    [controllerSnapshot],
+  );
+  const lastControllerSnapshotKeyRef = useRef(JSON.stringify(emptyControllerSnapshot));
+  controllerSnapshotRef.current = controllerSnapshot;
+
+  useEffect(() => {
+    if (lastControllerSnapshotKeyRef.current === controllerSnapshotKey) return;
+    lastControllerSnapshotKeyRef.current = controllerSnapshotKey;
+    controllerListenersRef.current.forEach(listener => listener());
+  }, [controllerSnapshotKey]);
+
   // Check if any filters are active
   const hasActiveFilters = visibleNodeTypes.size < defaultNodeTypes.length || visibleEdgeTypes.size < defaultEdgeTypes.length;
 
@@ -744,7 +1015,8 @@ function KnowledgeGraphViewInner({
   return (
     <div className="w-full h-full">
       {/* Search and stats bar */}
-      <div className="px-3 py-2 bg-slate-50 border-b border-slate-200 flex items-center gap-4">
+      {showEmbeddedControls && (
+        <div className="px-3 py-2 bg-slate-50 border-b border-slate-200 flex items-center gap-4">
         {/* Search bar */}
         <div ref={searchContainerRef} className="relative flex-shrink-0">
           <div className="relative">
@@ -827,12 +1099,7 @@ function KnowledgeGraphViewInner({
               {/* Node types */}
               <div className="px-3 py-1">
                 <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1">Node Types</div>
-                {[
-                  { type: 'formula', label: 'Formulas', color: 'bg-amber-500' },
-                  { type: 'symbol', label: 'Symbols', color: 'bg-blue-500' },
-                  { type: 'definition', label: 'Definitions', color: 'bg-emerald-500' },
-                  { type: 'theorem', label: 'Theorems', color: 'bg-violet-500' },
-                ].map(({ type, label, color }) => (
+                {nodeTypeOptions.map(({ type, label, color }) => (
                   <label key={type} className="flex items-center gap-2 py-1 cursor-pointer hover:bg-slate-50 -mx-3 px-3">
                     <input
                       type="checkbox"
@@ -851,14 +1118,7 @@ function KnowledgeGraphViewInner({
               {/* Edge types */}
               <div className="px-3 py-1">
                 <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1">Relationship Types</div>
-                {[
-                  { type: 'has_symbol', label: 'Has symbol', color: 'bg-amber-500' },
-                  { type: 'uses', label: 'Uses', color: 'bg-indigo-500' },
-                  { type: 'depends_on', label: 'Depends on', color: 'bg-amber-500' },
-                  { type: 'defines', label: 'Defines', color: 'bg-emerald-500' },
-                  { type: 'extends', label: 'Extends', color: 'bg-violet-500' },
-                  { type: 'mentions', label: 'Mentions', color: 'bg-slate-400' },
-                ].map(({ type, label, color }) => (
+                {edgeTypeOptions.map(({ type, label, color }) => (
                   <label key={type} className="flex items-center gap-2 py-1 cursor-pointer hover:bg-slate-50 -mx-3 px-3">
                     <input
                       type="checkbox"
@@ -898,10 +1158,14 @@ function KnowledgeGraphViewInner({
             {(graphData.metadata.formula_count ?? graphData.metadata.entity_counts?.formula ?? 0)}F · {graphData.metadata.symbol_count}S · {graphData.metadata.definition_count}D · {graphData.metadata.theorem_count}T · {graphData.metadata.edge_count}R
           </div>
         )}
-      </div>
+        </div>
+      )}
 
       {/* Graph */}
-      <div className="w-full relative" style={{ height: 'calc(100% - 36px)' }}>
+      <div
+        className="w-full relative"
+        style={{ height: showEmbeddedControls ? 'calc(100% - 36px)' : '100%' }}
+      >
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -934,7 +1198,7 @@ function KnowledgeGraphViewInner({
         </ReactFlow>
 
         {/* Focus mode indicator - top left overlay */}
-        {focusMode && (
+        {showEmbeddedControls && focusMode && (
           <div className="absolute top-4 left-4 z-10">
             {focusedNodeId ? (
               <div className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-white rounded-lg shadow-md border border-indigo-200">

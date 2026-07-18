@@ -26,6 +26,11 @@ import {
   TabBarToolbarContribution,
   TabBarToolbarRegistry,
 } from '@theia/core/lib/browser/shell/tab-bar-toolbar'
+import {
+  QuickInputService,
+  type QuickPickItem,
+  type QuickPickSeparator,
+} from '@theia/core/lib/browser/quick-input/quick-input-service'
 import { inject, injectable } from '@theia/core/shared/inversify'
 
 import type { Paper, PaperDetail } from '../../../../hooks/usePapers'
@@ -82,7 +87,17 @@ import {
 import { ScholarWorkspaceService } from './scholar-workspace-service'
 
 const STATUS_BAR_ID = 'scholar-agent.active-paper'
+const GRAPH_STATUS_BAR_ID = 'scholar-agent.graph-status'
 const UPLOAD_ACCEPT = '.tar.gz,.tgz,.zip,.tex'
+
+interface GraphSearchQuickPickItem extends QuickPickItem {
+  id: string
+}
+
+interface GraphFilterQuickPickItem extends QuickPickItem {
+  filterKind: 'node' | 'edge'
+  filterType: string
+}
 
 @injectable()
 export class ScholarContribution implements
@@ -93,6 +108,8 @@ export class ScholarContribution implements
   TabBarToolbarContribution {
   private readonly toDispose = new DisposableCollection()
   private readonly onToolbarItemsChangedEmitter = new Emitter<void>()
+  private activeGraphWidgetSubscription: Disposable = Disposable.create(() => undefined)
+  private boundGraphWidget: ScholarPaperGraphWidget | undefined
   private pendingUploadInput: HTMLInputElement | undefined
   private pendingUploadCleanup: (() => void) | undefined
 
@@ -105,8 +122,10 @@ export class ScholarContribution implements
     @inject(ApplicationShell) private readonly shell: ApplicationShell,
     @inject(StatusBar) private readonly statusBar: StatusBar,
     @inject(MessageService) private readonly messageService: MessageService,
+    @inject(QuickInputService) private readonly quickInputService: QuickInputService,
   ) {
     this.toDispose.push(this.onToolbarItemsChangedEmitter)
+    this.toDispose.push(Disposable.create(() => this.activeGraphWidgetSubscription.dispose()))
   }
 
   initialize(): void {
@@ -122,6 +141,7 @@ export class ScholarContribution implements
       if (newValue instanceof ScholarPaperWidget) {
         this.store.activatePaper(newValue.options.paperId)
       }
+      this.bindActiveGraphWidget(newValue)
     }))
     this.toDispose.push(Disposable.create(this.store.subscribe(() => {
       void this.updateStatusBar()
@@ -145,6 +165,7 @@ export class ScholarContribution implements
       this.onToolbarItemsChangedEmitter.fire()
     }))
     void this.updateStatusBar()
+    this.bindActiveGraphWidget(this.shell.activeWidget)
   }
 
   async initializeLayout(app: FrontendApplication): Promise<void> {
@@ -183,6 +204,7 @@ export class ScholarContribution implements
     this.pendingUploadCleanup?.()
     this.toDispose.dispose()
     void this.statusBar.removeElement(STATUS_BAR_ID)
+    void this.statusBar.removeElement(GRAPH_STATUS_BAR_ID)
   }
 
   registerCommands(commands: CommandRegistry): void {
@@ -336,6 +358,34 @@ export class ScholarContribution implements
       isEnabled: (argument: unknown) => this.canOpenGraph(argument),
       isVisible: (argument: unknown) => Boolean(this.paperIdOf(argument)),
     })
+    commands.registerCommand(ScholarCommands.SEARCH_GRAPH, {
+      execute: (argument: unknown) => this.searchGraph(argument),
+      isEnabled: (argument: unknown) => this.canControlGraph(argument),
+      isVisible: (argument: unknown) => Boolean(this.graphWidgetOf(argument)),
+    })
+    commands.registerCommand(ScholarCommands.FILTER_GRAPH, {
+      execute: (argument: unknown) => this.filterGraph(argument),
+      isEnabled: (argument: unknown) => this.canControlGraph(argument),
+      isVisible: (argument: unknown) => Boolean(this.graphWidgetOf(argument)),
+    })
+    commands.registerCommand(ScholarCommands.TOGGLE_GRAPH_FOCUS, {
+      execute: (argument: unknown) => this.toggleGraphFocus(argument),
+      isEnabled: (argument: unknown) => this.canToggleGraphFocus(argument),
+      isVisible: (argument: unknown) => Boolean(this.graphWidgetOf(argument)),
+      isToggled: (argument: unknown) => Boolean(
+        this.graphWidgetOf(argument)?.getGraphSnapshot()?.focusMode,
+      ),
+    })
+    commands.registerCommand(ScholarCommands.RESET_GRAPH_LAYOUT, {
+      execute: (argument: unknown) => this.resetGraphLayout(argument),
+      isEnabled: (argument: unknown) => this.canControlGraph(argument),
+      isVisible: (argument: unknown) => Boolean(this.graphWidgetOf(argument)),
+    })
+    commands.registerCommand(ScholarCommands.REVEAL_GRAPH_SELECTION, {
+      execute: (argument: unknown) => this.revealGraphSelection(argument),
+      isEnabled: (argument: unknown) => this.canRevealGraphSelection(argument),
+      isVisible: (argument: unknown) => Boolean(this.graphWidgetOf(argument)),
+    })
     commands.registerCommand(ScholarCommands.GENERATE_SUGGESTIONS, {
       execute: (argument: unknown) => this.generateSuggestions(argument),
       isEnabled: (argument: unknown) => this.canGenerateSuggestions(argument),
@@ -385,6 +435,41 @@ export class ScholarContribution implements
       command: ScholarCommands.OPEN_GRAPH.id,
       group: 'navigation',
       priority: 40,
+      onDidChange: this.onToolbarItemsChangedEmitter.event,
+    }))
+    this.toDispose.push(registry.registerItem({
+      id: ScholarCommands.SEARCH_GRAPH.id,
+      command: ScholarCommands.SEARCH_GRAPH.id,
+      group: 'navigation',
+      priority: 10,
+      onDidChange: this.onToolbarItemsChangedEmitter.event,
+    }))
+    this.toDispose.push(registry.registerItem({
+      id: ScholarCommands.FILTER_GRAPH.id,
+      command: ScholarCommands.FILTER_GRAPH.id,
+      group: 'navigation',
+      priority: 20,
+      onDidChange: this.onToolbarItemsChangedEmitter.event,
+    }))
+    this.toDispose.push(registry.registerItem({
+      id: ScholarCommands.TOGGLE_GRAPH_FOCUS.id,
+      command: ScholarCommands.TOGGLE_GRAPH_FOCUS.id,
+      group: 'navigation',
+      priority: 30,
+      onDidChange: this.onToolbarItemsChangedEmitter.event,
+    }))
+    this.toDispose.push(registry.registerItem({
+      id: ScholarCommands.RESET_GRAPH_LAYOUT.id,
+      command: ScholarCommands.RESET_GRAPH_LAYOUT.id,
+      group: 'navigation',
+      priority: 40,
+      onDidChange: this.onToolbarItemsChangedEmitter.event,
+    }))
+    this.toDispose.push(registry.registerItem({
+      id: ScholarCommands.REVEAL_GRAPH_SELECTION.id,
+      command: ScholarCommands.REVEAL_GRAPH_SELECTION.id,
+      group: 'navigation',
+      priority: 50,
       onDidChange: this.onToolbarItemsChangedEmitter.event,
     }))
     this.toDispose.push(registry.registerItem({
@@ -579,6 +664,179 @@ export class ScholarContribution implements
     return this.shell.activeWidget instanceof ScholarPaperWidget
       ? this.shell.activeWidget
       : undefined
+  }
+
+  private get activeGraphWidget(): ScholarPaperGraphWidget | undefined {
+    return this.shell.activeWidget instanceof ScholarPaperGraphWidget
+      ? this.shell.activeWidget
+      : undefined
+  }
+
+  private graphWidgetOf(argument: unknown): ScholarPaperGraphWidget | undefined {
+    if (argument === undefined) {
+      return this.activeGraphWidget
+    }
+    return argument instanceof ScholarPaperGraphWidget ? argument : undefined
+  }
+
+  private canControlGraph(argument: unknown): boolean {
+    const widget = this.graphWidgetOf(argument)
+    return Boolean(widget?.getGraphController() && widget.getGraphSnapshot()?.status === 'ready')
+  }
+
+  private canToggleGraphFocus(argument: unknown): boolean {
+    const widget = this.graphWidgetOf(argument)
+    const snapshot = widget?.getGraphSnapshot()
+    return Boolean(
+      widget?.getGraphController()
+      && snapshot?.status === 'ready'
+      && (snapshot.focusMode || snapshot.canFocusSelection),
+    )
+  }
+
+  private canRevealGraphSelection(argument: unknown): boolean {
+    const widget = this.graphWidgetOf(argument)
+    const snapshot = widget?.getGraphSnapshot()
+    return Boolean(
+      widget?.getGraphController()
+      && snapshot?.status === 'ready'
+      && snapshot.canRevealSelectionInPaper,
+    )
+  }
+
+  private toggleGraphFocus(argument: unknown): void {
+    const widget = this.graphWidgetOf(argument)
+    const snapshot = widget?.getGraphSnapshot()
+    if (!widget || snapshot?.status !== 'ready') {
+      return
+    }
+    if (snapshot.focusMode) {
+      widget.clearFocus()
+    } else if (snapshot.canFocusSelection) {
+      widget.focusSelection()
+    }
+  }
+
+  private resetGraphLayout(argument: unknown): void {
+    if (!this.canControlGraph(argument)) {
+      return
+    }
+    this.graphWidgetOf(argument)?.resetLayout()
+  }
+
+  private revealGraphSelection(argument: unknown): void {
+    if (!this.canRevealGraphSelection(argument)) {
+      return
+    }
+    this.graphWidgetOf(argument)?.revealSelectionInPaper()
+  }
+
+  private async searchGraph(argument: unknown): Promise<void> {
+    const widget = this.graphWidgetOf(argument)
+    const controller = widget?.getGraphController()
+    const snapshot = widget?.getGraphSnapshot()
+    if (!widget || !controller || snapshot?.status !== 'ready') {
+      return
+    }
+
+    const items: GraphSearchQuickPickItem[] = snapshot.searchItems.map(item => ({
+      id: item.id,
+      label: item.label,
+      description: item.nodeType,
+      detail: item.detail,
+    }))
+    const selected = await this.quickInputService.pick(items, {
+      title: 'Search Knowledge Graph',
+      placeHolder: 'Search nodes by label, type, or detail',
+      canPickMany: false,
+      matchOnDescription: true,
+      matchOnDetail: true,
+    })
+
+    if (!selected
+      || widget.getGraphController() !== controller
+      || widget.getGraphSnapshot()?.status !== 'ready') {
+      return
+    }
+    widget.revealNode(selected.id)
+  }
+
+  private async filterGraph(argument: unknown): Promise<void> {
+    const widget = this.graphWidgetOf(argument)
+    const controller = widget?.getGraphController()
+    const snapshot = widget?.getGraphSnapshot()
+    if (!widget || !controller || snapshot?.status !== 'ready') {
+      return
+    }
+
+    const nodeItems: GraphFilterQuickPickItem[] = snapshot.nodeTypeFilters.map(option => ({
+      id: `node:${option.type}`,
+      label: option.label,
+      description: option.type,
+      detail: `${option.count} node${option.count === 1 ? '' : 's'}`,
+      filterKind: 'node',
+      filterType: option.type,
+    }))
+    const edgeItems: GraphFilterQuickPickItem[] = snapshot.edgeTypeFilters.map(option => ({
+      id: `edge:${option.type}`,
+      label: option.label,
+      description: option.type,
+      detail: `${option.count} relationship${option.count === 1 ? '' : 's'}`,
+      filterKind: 'edge',
+      filterType: option.type,
+    }))
+    const items: Array<GraphFilterQuickPickItem | QuickPickSeparator> = [
+      { type: 'separator', label: 'Node Types' },
+      ...nodeItems,
+      { type: 'separator', label: 'Relationship Types' },
+      ...edgeItems,
+    ]
+
+    const picker = this.quickInputService.createQuickPick<GraphFilterQuickPickItem>()
+    picker.title = 'Filter Knowledge Graph'
+    picker.placeholder = 'Select visible node and relationship types'
+    picker.canSelectMany = true
+    picker.matchOnDescription = true
+    picker.matchOnDetail = true
+    picker.items = items
+    picker.selectedItems = [
+      ...nodeItems.filter(item => snapshot.nodeTypeFilters.some(
+        option => option.type === item.filterType && option.selected,
+      )),
+      ...edgeItems.filter(item => snapshot.edgeTypeFilters.some(
+        option => option.type === item.filterType && option.selected,
+      )),
+    ]
+
+    await new Promise<void>(resolve => {
+      const pickerDisposables = new DisposableCollection()
+      let finished = false
+      const finish = (): void => {
+        if (finished) return
+        finished = true
+        pickerDisposables.dispose()
+        picker.dispose()
+        resolve()
+      }
+
+      pickerDisposables.push(picker.onDidAccept(() => {
+        if (widget.getGraphController() === controller
+          && widget.getGraphSnapshot()?.status === 'ready') {
+          const selectedItems = [...picker.selectedItems]
+          widget.setVisibleTypes(
+            selectedItems
+              .filter(item => item.filterKind === 'node')
+              .map(item => item.filterType),
+            selectedItems
+              .filter(item => item.filterKind === 'edge')
+              .map(item => item.filterType),
+          )
+        }
+        picker.hide()
+      }))
+      pickerDisposables.push(picker.onDidHide(finish))
+      picker.show()
+    })
   }
 
   /**
@@ -1261,6 +1519,82 @@ export class ScholarContribution implements
     } catch (reason) {
       await this.messageService.error(`Could not test LLM connection: ${errorMessage(reason)}`)
     }
+  }
+
+  private bindActiveGraphWidget(widget: unknown): void {
+    const graphWidget = widget instanceof ScholarPaperGraphWidget ? widget : undefined
+    const previousGraphWidget = this.boundGraphWidget
+    this.activeGraphWidgetSubscription.dispose()
+    this.boundGraphWidget = graphWidget
+    this.activeGraphWidgetSubscription = graphWidget
+      ? graphWidget.onDidChangeGraphState(() => {
+          if (this.boundGraphWidget === graphWidget && this.shell.activeWidget === graphWidget) {
+            this.updateGraphStatus(graphWidget)
+            this.onToolbarItemsChangedEmitter.fire()
+          }
+        })
+      : Disposable.create(() => undefined)
+
+    this.updateGraphStatus(graphWidget)
+    if (previousGraphWidget !== graphWidget) {
+      this.onToolbarItemsChangedEmitter.fire()
+    }
+  }
+
+  private updateGraphStatus(widget: ScholarPaperGraphWidget | undefined): void {
+    if (!widget) {
+      void this.statusBar.removeElement(GRAPH_STATUS_BAR_ID)
+      return
+    }
+
+    const snapshot = widget.getGraphSnapshot()
+    if (!snapshot || snapshot.status !== 'ready') {
+      const status = snapshot?.status ?? 'loading'
+      const statusText = status === 'error'
+        ? '$(error) Graph error'
+        : status === 'empty'
+          ? '$(type-hierarchy) Graph empty'
+          : `$(sync~spin) Graph ${status}…`
+      void this.statusBar.setElement(GRAPH_STATUS_BAR_ID, {
+        text: statusText,
+        alignment: StatusBarAlignment.LEFT,
+        priority: 99,
+        tooltip: `Knowledge Graph: ${status}`,
+      })
+      return
+    }
+
+    const nodeFilters = this.describeGraphFilters(snapshot.nodeTypeFilters)
+    const edgeFilters = this.describeGraphFilters(snapshot.edgeTypeFilters)
+    const focusedNode = snapshot.focusedNodeId
+      ? snapshot.searchItems.find(item => item.id === snapshot.focusedNodeId)
+      : undefined
+    const focus = snapshot.focusMode ? focusedNode?.label ?? snapshot.focusedNodeId ?? 'on' : 'off'
+    void this.statusBar.setElement(GRAPH_STATUS_BAR_ID, {
+      text: `$(type-hierarchy) ${snapshot.visibleNodeCount}/${snapshot.totalNodeCount} nodes`
+        + ` · ${snapshot.visibleEdgeCount}/${snapshot.totalEdgeCount} links`
+        + ` · N: ${nodeFilters} · R: ${edgeFilters} · Focus: ${focus}`,
+      alignment: StatusBarAlignment.LEFT,
+      priority: 99,
+      tooltip: `Knowledge Graph\nNodes: ${snapshot.visibleNodeCount}/${snapshot.totalNodeCount}`
+        + `\nRelationships: ${snapshot.visibleEdgeCount}/${snapshot.totalEdgeCount}`
+        + `\nNode filters: ${nodeFilters}`
+        + `\nRelationship filters: ${edgeFilters}`
+        + `\nFocus: ${focus}`,
+    })
+  }
+
+  private describeGraphFilters(
+    filters: readonly { label: string; selected: boolean }[],
+  ): string {
+    const selected = filters.filter(filter => filter.selected)
+    if (selected.length === 0) {
+      return 'none'
+    }
+    if (selected.length === filters.length) {
+      return 'all'
+    }
+    return selected.map(filter => filter.label).join(', ')
   }
 
   private async updateStatusBar(): Promise<void> {

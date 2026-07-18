@@ -4,6 +4,10 @@ import type { Command, CommandHandler } from '@theia/core'
 import type { CommonMenus, ViewContainer as TheiaViewContainer } from '@theia/core/lib/browser'
 import type { Paper, PaperDetail } from '@/hooks/usePapers'
 import type { ReaderWorkspaceSnapshot } from '@/lib/reader-workspace-store'
+import type {
+  KnowledgeGraphController,
+  KnowledgeGraphControllerSnapshot,
+} from '@/components/reader/knowledge-graph-controller'
 import type { ScholarCommands as ScholarCommandsNamespace } from '@/theia/scholar-extension/src/browser/scholar-commands'
 import type { ScholarContribution as ScholarContributionClass } from '@/theia/scholar-extension/src/browser/scholar-contribution'
 import type { ScholarPaperWidget as ScholarPaperWidgetClass } from '@/theia/scholar-extension/src/browser/scholar-paper-widget'
@@ -202,8 +206,60 @@ function createFakePaperWidget(paperId: string, isAttached = true): ScholarPaper
   return widget
 }
 
-function createFakeGraphWidget(paperId: string, isAttached = true): ScholarPaperGraphWidgetClass {
+function graphSnapshot(
+  overrides: Partial<KnowledgeGraphControllerSnapshot> = {},
+): KnowledgeGraphControllerSnapshot {
+  return {
+    status: 'ready',
+    searchItems: [
+      { id: 'node-1', label: 'Theorem One', nodeType: 'theorem', detail: 'Main result' },
+      { id: 'node-2', label: 'Definition Two', nodeType: 'definition', detail: 'Supporting concept' },
+    ],
+    nodeTypeFilters: [
+      { type: 'theorem', label: 'Theorems', count: 1, selected: true },
+      { type: 'definition', label: 'Definitions', count: 1, selected: false },
+    ],
+    edgeTypeFilters: [
+      { type: 'depends_on', label: 'Depends on', count: 2, selected: true },
+      { type: 'uses', label: 'Uses', count: 1, selected: false },
+    ],
+    visibleNodeCount: 1,
+    totalNodeCount: 2,
+    visibleEdgeCount: 2,
+    totalEdgeCount: 3,
+    selectedNode: null,
+    focusMode: false,
+    focusedNodeId: null,
+    canFocusSelection: false,
+    canRevealSelectionInPaper: false,
+    ...overrides,
+  }
+}
+
+const graphStateListeners = new WeakMap<ScholarPaperGraphWidgetClass, Set<() => void>>()
+
+function emitGraphStateChange(widget: ScholarPaperGraphWidgetClass): void {
+  graphStateListeners.get(widget)?.forEach(listener => listener())
+}
+
+function createFakeGraphWidget(
+  paperId: string,
+  isAttached = true,
+  snapshot = graphSnapshot(),
+): ScholarPaperGraphWidgetClass {
   const widget = Object.create(ScholarPaperGraphWidget.prototype) as ScholarPaperGraphWidgetClass
+  const stateListeners = new Set<() => void>()
+  graphStateListeners.set(widget, stateListeners)
+  const controller: KnowledgeGraphController = {
+    getSnapshot: vi.fn(() => snapshot),
+    subscribe: vi.fn(() => () => undefined),
+    revealNode: vi.fn(),
+    setVisibleTypes: vi.fn(),
+    focusSelection: vi.fn(),
+    clearFocus: vi.fn(),
+    resetLayout: vi.fn(),
+    revealSelectionInPaper: vi.fn(),
+  }
   Object.defineProperty(widget, 'options', {
     value: { paperId },
     configurable: true,
@@ -224,7 +280,67 @@ function createFakeGraphWidget(paperId: string, isAttached = true): ScholarPaper
     value: vi.fn(),
     configurable: true,
   })
+  Object.defineProperties(widget, {
+    getGraphController: { value: vi.fn(() => controller), configurable: true },
+    getGraphSnapshot: { value: vi.fn(() => snapshot), configurable: true },
+    revealNode: { value: vi.fn(), configurable: true },
+    setVisibleTypes: { value: vi.fn(), configurable: true },
+    focusSelection: { value: vi.fn(), configurable: true },
+    clearFocus: { value: vi.fn(), configurable: true },
+    resetLayout: { value: vi.fn(), configurable: true },
+    revealSelectionInPaper: { value: vi.fn(), configurable: true },
+    onDidChangeGraphState: {
+      value: (listener: () => void) => {
+        stateListeners.add(listener)
+        return { dispose: () => stateListeners.delete(listener) }
+      },
+      configurable: true,
+    },
+  })
   return widget
+}
+
+interface FakeQuickPickItem {
+  type?: 'item' | 'separator'
+  id?: string
+  label?: string
+  description?: string
+  detail?: string
+  filterKind?: 'node' | 'edge'
+  filterType?: string
+}
+
+function createFakeQuickPick() {
+  const acceptListeners = new Set<() => void>()
+  const hideListeners = new Set<() => void>()
+  let hidden = false
+  const picker = {
+    title: undefined as string | undefined,
+    placeholder: undefined as string | undefined,
+    items: [] as FakeQuickPickItem[],
+    selectedItems: [] as FakeQuickPickItem[],
+    canSelectMany: false,
+    matchOnDescription: false,
+    matchOnDetail: false,
+    show: vi.fn(),
+    hide: vi.fn(() => {
+      if (hidden) return
+      hidden = true
+      hideListeners.forEach(listener => listener())
+    }),
+    dispose: vi.fn(),
+    onDidAccept: vi.fn((listener: () => void) => {
+      acceptListeners.add(listener)
+      return { dispose: () => acceptListeners.delete(listener) }
+    }),
+    onDidHide: vi.fn((listener: () => void) => {
+      hideListeners.add(listener)
+      return { dispose: () => hideListeners.delete(listener) }
+    }),
+    accept: () => acceptListeners.forEach(listener => listener()),
+    cancel: () => picker.hide(),
+  }
+  return picker
 }
 
 function createForeignWidget(): ScholarLibraryWidgetClass {
@@ -304,6 +420,7 @@ function createContribution(store: ReturnType<typeof createFakeStore>) {
     getWidgets: vi.fn(() => [] as unknown[]),
     tryGetWidget: vi.fn(),
   }
+  let currentWidgetListener: ((event: { newValue: unknown }) => void) | undefined
   const shell: {
     activeWidget: unknown
     onDidChangeCurrentWidget: ReturnType<typeof vi.fn>
@@ -313,7 +430,16 @@ function createContribution(store: ReturnType<typeof createFakeStore>) {
     getAreaFor: ReturnType<typeof vi.fn>
   } = {
     activeWidget: undefined,
-    onDidChangeCurrentWidget: vi.fn(() => ({ dispose: () => undefined })),
+    onDidChangeCurrentWidget: vi.fn((listener: (event: { newValue: unknown }) => void) => {
+      currentWidgetListener = listener
+      return {
+        dispose: () => {
+          if (currentWidgetListener === listener) {
+            currentWidgetListener = undefined
+          }
+        },
+      }
+    }),
     addWidget: vi.fn().mockResolvedValue(undefined),
     activateWidget: vi.fn().mockResolvedValue(undefined),
     getCurrentWidget: vi.fn(() => undefined),
@@ -327,6 +453,10 @@ function createContribution(store: ReturnType<typeof createFakeStore>) {
     error: vi.fn().mockResolvedValue(undefined),
     warn: vi.fn().mockResolvedValue(undefined),
     info: vi.fn().mockResolvedValue(undefined),
+  }
+  const quickInputService = {
+    pick: vi.fn(),
+    createQuickPick: vi.fn(),
   }
   const annotations = new ScholarAnnotationService()
   const suggestions = {
@@ -380,6 +510,7 @@ function createContribution(store: ReturnType<typeof createFakeStore>) {
     shell,
     statusBar,
     messageService,
+    quickInputService,
   )
 
   return {
@@ -388,6 +519,8 @@ function createContribution(store: ReturnType<typeof createFakeStore>) {
     shell,
     statusBar,
     messageService,
+    quickInputService,
+    fireCurrentWidgetChanged: () => currentWidgetListener?.({ newValue: shell.activeWidget }),
     llmSettings,
     llmSnapshot,
   }
@@ -942,6 +1075,11 @@ describe('ScholarContribution active-paper commands', () => {
       ScholarCommands.BUILD_KNOWLEDGE_GRAPH.id,
       ScholarCommands.DELETE_PAPER.id,
       ScholarCommands.OPEN_GRAPH.id,
+      ScholarCommands.SEARCH_GRAPH.id,
+      ScholarCommands.FILTER_GRAPH.id,
+      ScholarCommands.TOGGLE_GRAPH_FOCUS.id,
+      ScholarCommands.RESET_GRAPH_LAYOUT.id,
+      ScholarCommands.REVEAL_GRAPH_SELECTION.id,
       ScholarCommands.REFRESH_LIBRARY.id,
       ScholarCommands.UPLOAD_LATEX.id,
       ScholarCommands.IMPORT_ARXIV.id,
@@ -1051,6 +1189,401 @@ describe('ScholarContribution active-paper commands', () => {
     register()
     await commands.handlerFor(ScholarCommands.REFRESH_LIBRARY).execute(createForeignWidget())
     expect(store.loadLibrary).toHaveBeenCalledOnce()
+  })
+})
+
+describe('ScholarContribution graph search and filters', () => {
+  function register() {
+    const context = createContribution(createFakeStore(emptySnapshot()))
+    const commands = new FakeCommandRegistry()
+    const toolbar = new FakeToolbarRegistry()
+    context.contribution.registerCommands(commands as unknown as Parameters<
+      ScholarContributionClass['registerCommands']
+    >[0])
+    context.contribution.registerToolbarItems(toolbar as unknown as Parameters<
+      ScholarContributionClass['registerToolbarItems']
+    >[0])
+    return { ...context, commands, toolbar }
+  }
+
+  it('registers native search/filter commands and scopes them to a ready graph target', () => {
+    const { commands, toolbar, shell } = register()
+    const snapshot = graphSnapshot()
+    const graphWidget = createFakeGraphWidget('paper-a', true, snapshot)
+    const foreignWidget = createForeignWidget()
+
+    for (const command of [ScholarCommands.SEARCH_GRAPH, ScholarCommands.FILTER_GRAPH]) {
+      const handler = commands.handlerFor(command)
+      expect(handler.isVisible?.(graphWidget)).toBe(true)
+      expect(handler.isEnabled?.(graphWidget)).toBe(true)
+      expect(handler.isVisible?.(foreignWidget)).toBe(false)
+      expect(handler.isVisible?.(undefined)).toBe(false)
+      expect(toolbar.items.some(item => item.command === command.id)).toBe(true)
+      expect(command.iconClass).toMatch(/^codicon codicon-/)
+    }
+
+    shell.activeWidget = graphWidget
+    expect(commands.handlerFor(ScholarCommands.SEARCH_GRAPH).isVisible?.(undefined)).toBe(true)
+
+    snapshot.status = 'loading'
+    expect(commands.handlerFor(ScholarCommands.SEARCH_GRAPH).isEnabled?.(graphWidget)).toBe(false)
+    expect(commands.handlerFor(ScholarCommands.FILTER_GRAPH).isEnabled?.(graphWidget)).toBe(false)
+    snapshot.status = 'error'
+    expect(commands.handlerFor(ScholarCommands.SEARCH_GRAPH).isEnabled?.(graphWidget)).toBe(false)
+  })
+
+  it('opens fuzzy node search over label, type, and detail and reveals the accepted node', async () => {
+    const { commands, quickInputService } = register()
+    const graphWidget = createFakeGraphWidget('paper-a')
+    quickInputService.pick.mockImplementation(async (items: FakeQuickPickItem[]) => items[1])
+
+    await commands.handlerFor(ScholarCommands.SEARCH_GRAPH).execute(graphWidget)
+
+    expect(quickInputService.pick).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({
+          id: 'node-1',
+          label: 'Theorem One',
+          description: 'theorem',
+          detail: 'Main result',
+        }),
+        expect.objectContaining({
+          id: 'node-2',
+          label: 'Definition Two',
+          description: 'definition',
+          detail: 'Supporting concept',
+        }),
+      ],
+      expect.objectContaining({
+        canPickMany: false,
+        matchOnDescription: true,
+        matchOnDetail: true,
+      }),
+    )
+    expect(graphWidget.revealNode).toHaveBeenCalledWith('node-2')
+  })
+
+  it('does not reveal a search result after cancellation or controller replacement', async () => {
+    const { commands, quickInputService } = register()
+    const graphWidget = createFakeGraphWidget('paper-a')
+    const handler = commands.handlerFor(ScholarCommands.SEARCH_GRAPH)
+
+    quickInputService.pick.mockResolvedValueOnce(undefined)
+    await handler.execute(graphWidget)
+    expect(graphWidget.revealNode).not.toHaveBeenCalled()
+
+    let resolvePick: ((item: FakeQuickPickItem) => void) | undefined
+    let firstItem: FakeQuickPickItem | undefined
+    quickInputService.pick.mockImplementationOnce((items: FakeQuickPickItem[]) => {
+      firstItem = items[0]
+      return new Promise(resolve => {
+        resolvePick = resolve
+      })
+    })
+    const pending = handler.execute(graphWidget)
+    vi.mocked(graphWidget.getGraphController).mockReturnValue(undefined)
+    resolvePick?.(firstItem!)
+    await pending
+
+    expect(graphWidget.revealNode).not.toHaveBeenCalled()
+  })
+
+  it('preselects current filters and applies node/relationship choices atomically on Accept', async () => {
+    const { commands, quickInputService } = register()
+    const graphWidget = createFakeGraphWidget('paper-a')
+    const picker = createFakeQuickPick()
+    quickInputService.createQuickPick.mockReturnValue(picker)
+
+    const pending = commands.handlerFor(ScholarCommands.FILTER_GRAPH).execute(graphWidget)
+
+    expect(picker.canSelectMany).toBe(true)
+    expect(picker.items.filter(item => item.type === 'separator').map(item => item.label)).toEqual([
+      'Node Types',
+      'Relationship Types',
+    ])
+    expect(picker.selectedItems.map(item => item.filterType)).toEqual([
+      'theorem',
+      'depends_on',
+    ])
+    expect(graphWidget.setVisibleTypes).not.toHaveBeenCalled()
+
+    picker.selectedItems = [
+      picker.items.find(item => item.filterKind === 'node' && item.filterType === 'definition')!,
+      picker.items.find(item => item.filterKind === 'edge' && item.filterType === 'uses')!,
+    ]
+    picker.accept()
+    await pending
+
+    expect(graphWidget.setVisibleTypes).toHaveBeenCalledOnce()
+    expect(graphWidget.setVisibleTypes).toHaveBeenCalledWith(['definition'], ['uses'])
+  })
+
+  it('leaves filters untouched on Escape and ignores Accept from a replaced controller', async () => {
+    const { commands, quickInputService } = register()
+    const graphWidget = createFakeGraphWidget('paper-a')
+    const handler = commands.handlerFor(ScholarCommands.FILTER_GRAPH)
+
+    const cancelledPicker = createFakeQuickPick()
+    quickInputService.createQuickPick.mockReturnValueOnce(cancelledPicker)
+    const cancelled = handler.execute(graphWidget)
+    cancelledPicker.selectedItems = []
+    cancelledPicker.cancel()
+    await cancelled
+    expect(graphWidget.setVisibleTypes).not.toHaveBeenCalled()
+
+    const stalePicker = createFakeQuickPick()
+    quickInputService.createQuickPick.mockReturnValueOnce(stalePicker)
+    const stale = handler.execute(graphWidget)
+    vi.mocked(graphWidget.getGraphController).mockReturnValue(undefined)
+    stalePicker.selectedItems = []
+    stalePicker.accept()
+    await stale
+    expect(graphWidget.setVisibleTypes).not.toHaveBeenCalled()
+  })
+
+  it('keeps filtering enabled when every type is hidden so filters can be restored', async () => {
+    const { commands, quickInputService } = register()
+    const snapshot = graphSnapshot({
+      nodeTypeFilters: graphSnapshot().nodeTypeFilters.map(option => ({ ...option, selected: false })),
+      edgeTypeFilters: graphSnapshot().edgeTypeFilters.map(option => ({ ...option, selected: false })),
+      visibleNodeCount: 0,
+      visibleEdgeCount: 0,
+    })
+    const graphWidget = createFakeGraphWidget('paper-a', true, snapshot)
+    const handler = commands.handlerFor(ScholarCommands.FILTER_GRAPH)
+    const picker = createFakeQuickPick()
+    quickInputService.createQuickPick.mockReturnValue(picker)
+
+    expect(handler.isEnabled?.(graphWidget)).toBe(true)
+    const pending = handler.execute(graphWidget)
+    expect(picker.selectedItems).toEqual([])
+    picker.selectedItems = [
+      picker.items.find(item => item.filterKind === 'node' && item.filterType === 'theorem')!,
+    ]
+    picker.accept()
+    await pending
+
+    expect(graphWidget.setVisibleTypes).toHaveBeenCalledWith(['theorem'], [])
+  })
+})
+
+describe('ScholarContribution graph focus, layout, source, and status', () => {
+  function register(snapshot = graphSnapshot()) {
+    const context = createContribution(createFakeStore(emptySnapshot()))
+    const commands = new FakeCommandRegistry()
+    const toolbar = new FakeToolbarRegistry()
+    context.contribution.registerCommands(commands as unknown as Parameters<
+      ScholarContributionClass['registerCommands']
+    >[0])
+    context.contribution.registerToolbarItems(toolbar as unknown as Parameters<
+      ScholarContributionClass['registerToolbarItems']
+    >[0])
+    const widget = createFakeGraphWidget('paper-a', true, snapshot)
+    return { ...context, commands, toolbar, widget, snapshot }
+  }
+
+  function start(context: ReturnType<typeof register>): void {
+    ;(context.contribution as unknown as { onStart(app: unknown): void }).onStart({})
+  }
+
+  it('registers focus, layout, and source commands only for graph targets', () => {
+    const context = register()
+    const foreignWidget = createForeignWidget()
+
+    for (const command of [
+      ScholarCommands.TOGGLE_GRAPH_FOCUS,
+      ScholarCommands.RESET_GRAPH_LAYOUT,
+      ScholarCommands.REVEAL_GRAPH_SELECTION,
+    ]) {
+      const handler = context.commands.handlerFor(command)
+      expect(handler.isVisible?.(context.widget)).toBe(true)
+      expect(handler.isVisible?.(foreignWidget)).toBe(false)
+      expect(context.toolbar.items.some(item => item.command === command.id)).toBe(true)
+      expect(command.iconClass).toMatch(/^codicon codicon-/)
+    }
+  })
+
+  it('focuses a selected node, remains enabled while toggled, and clears focus on repeat', async () => {
+    const snapshot = graphSnapshot({
+      selectedNode: {
+        id: 'node-1',
+        label: 'Theorem One',
+        nodeType: 'theorem',
+        domNodeId: 'dom-node-1',
+      },
+      canFocusSelection: true,
+      canRevealSelectionInPaper: true,
+    })
+    const { commands, widget } = register(snapshot)
+    const handler = commands.handlerFor(ScholarCommands.TOGGLE_GRAPH_FOCUS)
+
+    expect(handler.isEnabled?.(widget)).toBe(true)
+    expect(handler.isToggled?.(widget)).toBe(false)
+    await handler.execute(widget)
+    expect(widget.focusSelection).toHaveBeenCalledOnce()
+
+    snapshot.focusMode = true
+    snapshot.focusedNodeId = 'node-1'
+    snapshot.selectedNode = null
+    snapshot.canFocusSelection = false
+    expect(handler.isEnabled?.(widget)).toBe(true)
+    expect(handler.isToggled?.(widget)).toBe(true)
+    await handler.execute(widget)
+    expect(widget.clearFocus).toHaveBeenCalledOnce()
+  })
+
+  it('resets layout when ready and reveals only DOM-backed node selections', async () => {
+    const snapshot = graphSnapshot({
+      selectedNode: {
+        id: 'node-1',
+        label: 'Theorem One',
+        nodeType: 'theorem',
+        domNodeId: 'dom-node-1',
+      },
+      canRevealSelectionInPaper: true,
+    })
+    const { commands, widget } = register(snapshot)
+    const layout = commands.handlerFor(ScholarCommands.RESET_GRAPH_LAYOUT)
+    const reveal = commands.handlerFor(ScholarCommands.REVEAL_GRAPH_SELECTION)
+
+    expect(layout.isEnabled?.(widget)).toBe(true)
+    await layout.execute(widget)
+    expect(widget.resetLayout).toHaveBeenCalledOnce()
+
+    expect(reveal.isEnabled?.(widget)).toBe(true)
+    await reveal.execute(widget)
+    expect(widget.revealSelectionInPaper).toHaveBeenCalledOnce()
+
+    snapshot.selectedNode = null
+    snapshot.canRevealSelectionInPaper = false
+    expect(reveal.isEnabled?.(widget)).toBe(false)
+    snapshot.status = 'error'
+    expect(layout.isEnabled?.(widget)).toBe(false)
+  })
+
+  it('shows native counts, active filters, and focus for the current graph only', () => {
+    const snapshot = graphSnapshot({
+      selectedNode: {
+        id: 'node-1',
+        label: 'Theorem One',
+        nodeType: 'theorem',
+        domNodeId: 'dom-node-1',
+      },
+      focusMode: true,
+      focusedNodeId: 'node-1',
+    })
+    const context = register(snapshot)
+    context.shell.activeWidget = context.widget
+    const toolbarChanged = vi.fn()
+    context.toolbar.items
+      .find(item => item.id === ScholarCommands.TOGGLE_GRAPH_FOCUS.id)
+      ?.onDidChange?.(toolbarChanged)
+
+    start(context)
+    toolbarChanged.mockClear()
+
+    const graphStatusCall = context.statusBar.setElement.mock.calls.findLast(
+      ([id]) => id === 'scholar-agent.graph-status',
+    )
+    expect(graphStatusCall).toBeDefined()
+    const graphStatus = graphStatusCall?.[1] as { text: string; tooltip: string }
+    expect(graphStatus.text).toContain('1/2 nodes')
+    expect(graphStatus.text).toContain('2/3 links')
+    expect(graphStatus.tooltip).toContain('Theorems')
+    expect(graphStatus.tooltip).toContain('Depends on')
+    expect(graphStatus.tooltip).toContain('Theorem One')
+
+    snapshot.visibleNodeCount = 2
+    snapshot.focusMode = false
+    snapshot.focusedNodeId = null
+    emitGraphStateChange(context.widget)
+
+    expect(toolbarChanged).toHaveBeenCalledOnce()
+    expect(context.statusBar.setElement.mock.calls.findLast(
+      ([id]) => id === 'scholar-agent.graph-status',
+    )?.[1]).toEqual(expect.objectContaining({ text: expect.stringContaining('2/2 nodes') }))
+
+    const statusUpdateCount = context.statusBar.setElement.mock.calls.filter(
+      ([id]) => id === 'scholar-agent.graph-status',
+    ).length
+    context.shell.activeWidget = createForeignWidget()
+    context.fireCurrentWidgetChanged()
+    expect(context.statusBar.removeElement).toHaveBeenCalledWith('scholar-agent.graph-status')
+
+    emitGraphStateChange(context.widget)
+    expect(context.statusBar.setElement.mock.calls.filter(
+      ([id]) => id === 'scholar-agent.graph-status',
+    )).toHaveLength(statusUpdateCount)
+  })
+
+  it('enables controls when a restored graph becomes ready', () => {
+    const snapshot = graphSnapshot({
+      status: 'loading',
+      visibleNodeCount: 0,
+      visibleEdgeCount: 0,
+    })
+    const context = register(snapshot)
+    context.shell.activeWidget = context.widget
+    const toolbarChanged = vi.fn()
+    context.toolbar.items
+      .find(item => item.id === ScholarCommands.RESET_GRAPH_LAYOUT.id)
+      ?.onDidChange?.(toolbarChanged)
+    start(context)
+    toolbarChanged.mockClear()
+
+    expect(context.commands.handlerFor(ScholarCommands.RESET_GRAPH_LAYOUT).isEnabled?.(
+      context.widget,
+    )).toBe(false)
+    expect(context.statusBar.setElement).toHaveBeenCalledWith(
+      'scholar-agent.graph-status',
+      expect.objectContaining({ text: expect.stringContaining('loading') }),
+    )
+
+    snapshot.status = 'ready'
+    snapshot.visibleNodeCount = 1
+    snapshot.visibleEdgeCount = 2
+    emitGraphStateChange(context.widget)
+
+    expect(context.commands.handlerFor(ScholarCommands.RESET_GRAPH_LAYOUT).isEnabled?.(
+      context.widget,
+    )).toBe(true)
+    expect(toolbarChanged).toHaveBeenCalledOnce()
+    expect(context.statusBar.setElement.mock.calls.findLast(
+      ([id]) => id === 'scholar-agent.graph-status',
+    )?.[1]).toEqual(expect.objectContaining({ text: expect.stringContaining('1/2 nodes') }))
+  })
+
+  it('subscribes only to the active graph when split tabs have independent state', () => {
+    const context = register(graphSnapshot({ visibleNodeCount: 1, totalNodeCount: 2 }))
+    const secondSnapshot = graphSnapshot({
+      visibleNodeCount: 3,
+      totalNodeCount: 4,
+      visibleEdgeCount: 4,
+      totalEdgeCount: 5,
+    })
+    const secondWidget = createFakeGraphWidget('paper-b', true, secondSnapshot)
+    context.shell.activeWidget = context.widget
+    start(context)
+
+    context.shell.activeWidget = secondWidget
+    context.fireCurrentWidgetChanged()
+    expect(context.statusBar.setElement.mock.calls.findLast(
+      ([id]) => id === 'scholar-agent.graph-status',
+    )?.[1]).toEqual(expect.objectContaining({ text: expect.stringContaining('3/4 nodes') }))
+
+    const updateCount = context.statusBar.setElement.mock.calls.filter(
+      ([id]) => id === 'scholar-agent.graph-status',
+    ).length
+    emitGraphStateChange(context.widget)
+    expect(context.statusBar.setElement.mock.calls.filter(
+      ([id]) => id === 'scholar-agent.graph-status',
+    )).toHaveLength(updateCount)
+
+    secondSnapshot.visibleNodeCount = 4
+    emitGraphStateChange(secondWidget)
+    expect(context.statusBar.setElement.mock.calls.findLast(
+      ([id]) => id === 'scholar-agent.graph-status',
+    )?.[1]).toEqual(expect.objectContaining({ text: expect.stringContaining('4/4 nodes') }))
   })
 })
 

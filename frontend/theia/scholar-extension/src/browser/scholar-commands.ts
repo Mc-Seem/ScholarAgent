@@ -131,6 +131,31 @@ export const ScholarCommands = {
     label: 'Open Knowledge Graph',
     iconClass: 'codicon codicon-type-hierarchy',
   } satisfies Command,
+  SEARCH_GRAPH: {
+    id: 'scholar-agent.search-graph',
+    label: 'Search Knowledge Graph',
+    iconClass: 'codicon codicon-search',
+  } satisfies Command,
+  FILTER_GRAPH: {
+    id: 'scholar-agent.filter-graph',
+    label: 'Filter Knowledge Graph',
+    iconClass: 'codicon codicon-filter',
+  } satisfies Command,
+  TOGGLE_GRAPH_FOCUS: {
+    id: 'scholar-agent.toggle-graph-focus',
+    label: 'Toggle Graph Focus',
+    iconClass: 'codicon codicon-target',
+  } satisfies Command,
+  RESET_GRAPH_LAYOUT: {
+    id: 'scholar-agent.reset-graph-layout',
+    label: 'Reset Graph Layout',
+    iconClass: 'codicon codicon-layout',
+  } satisfies Command,
+  REVEAL_GRAPH_SELECTION: {
+    id: 'scholar-agent.reveal-graph-selection',
+    label: 'Reveal Graph Selection in Paper',
+    iconClass: 'codicon codicon-go-to-file',
+  } satisfies Command,
   GENERATE_SUGGESTIONS: {
     id: 'scholar-agent.generate-suggestions',
     label: 'Generate AI Tooltip Suggestions',

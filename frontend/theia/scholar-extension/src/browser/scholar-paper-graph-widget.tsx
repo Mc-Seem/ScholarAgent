@@ -1,11 +1,15 @@
 import * as React from 'react'
-import { SelectionService } from '@theia/core'
+import { Emitter, Event, SelectionService } from '@theia/core'
 import { Message, ReactWidget } from '@theia/core/lib/browser'
 
 import {
   KnowledgeGraphView,
   type KnowledgeGraphSelection,
 } from '../../../../components/reader/KnowledgeGraphView'
+import type {
+  KnowledgeGraphController,
+  KnowledgeGraphControllerSnapshot,
+} from '../../../../components/reader/knowledge-graph-controller'
 import {
   SCHOLAR_GRAPH_SELECTION_KIND,
   ScholarGraphSelection,
@@ -32,6 +36,12 @@ export function isScholarPaperGraphWidgetOptions(
 
 export class ScholarPaperGraphWidget extends ReactWidget {
   private readonly selectionSource: ScholarGraphSelectionSource
+  private readonly graphStateChangedEmitter = new Emitter<void>()
+  private graphController: KnowledgeGraphController | undefined
+  private graphControllerUnsubscribe: (() => void) | undefined
+  private bridgeDisposed = false
+
+  readonly onDidChangeGraphState: Event<void> = this.graphStateChangedEmitter.event
 
   constructor(
     private readonly selectionService: SelectionService,
@@ -74,8 +84,46 @@ export class ScholarPaperGraphWidget extends ReactWidget {
   }
 
   override dispose(): void {
+    if (this.bridgeDisposed) {
+      return
+    }
     this.clearSelection()
+    this.setGraphController(null)
+    this.bridgeDisposed = true
     super.dispose()
+    this.graphStateChangedEmitter.dispose()
+  }
+
+  getGraphController(): KnowledgeGraphController | undefined {
+    return this.graphController
+  }
+
+  getGraphSnapshot(): KnowledgeGraphControllerSnapshot | undefined {
+    return this.graphController?.getSnapshot()
+  }
+
+  revealNode(nodeId: string): void {
+    this.graphController?.revealNode(nodeId)
+  }
+
+  setVisibleTypes(nodeTypes: readonly string[], edgeTypes: readonly string[]): void {
+    this.graphController?.setVisibleTypes(nodeTypes, edgeTypes)
+  }
+
+  focusSelection(): void {
+    this.graphController?.focusSelection()
+  }
+
+  clearFocus(): void {
+    this.graphController?.clearFocus()
+  }
+
+  resetLayout(): void {
+    this.graphController?.resetLayout()
+  }
+
+  revealSelectionInPaper(): void {
+    this.graphController?.revealSelectionInPaper()
   }
 
   private publishSelection(selection: KnowledgeGraphSelection | null): void {
@@ -96,14 +144,51 @@ export class ScholarPaperGraphWidget extends ReactWidget {
     }
   }
 
+  private readonly handleNavigate = (dataId: string): void => {
+    navigateToPaperElement(this.options.paperId, dataId)
+  }
+
+  private readonly handleSelectionChange = (selection: KnowledgeGraphSelection | null): void => {
+    this.publishSelection(selection)
+  }
+
+  private readonly handleControllerChange = (controller: KnowledgeGraphController | null): void => {
+    if (this.bridgeDisposed) {
+      return
+    }
+    this.setGraphController(controller)
+  }
+
+  private setGraphController(controller: KnowledgeGraphController | null): void {
+    const nextController = controller ?? undefined
+    if (this.graphController === nextController) {
+      return
+    }
+
+    this.graphControllerUnsubscribe?.()
+    this.graphControllerUnsubscribe = undefined
+    this.graphController = nextController
+
+    if (nextController) {
+      this.graphControllerUnsubscribe = nextController.subscribe(() => {
+        if (!this.bridgeDisposed && this.graphController === nextController) {
+          this.graphStateChangedEmitter.fire()
+        }
+      })
+    }
+    this.graphStateChangedEmitter.fire()
+  }
+
   protected override render(): React.ReactNode {
     const { paperId } = this.options
     return (
       <KnowledgeGraphView
         key={paperId}
         paperId={paperId}
-        onNavigate={dataId => navigateToPaperElement(paperId, dataId)}
-        onSelectionChange={selection => this.publishSelection(selection)}
+        onNavigate={this.handleNavigate}
+        onSelectionChange={this.handleSelectionChange}
+        onControllerChange={this.handleControllerChange}
+        showEmbeddedControls={false}
         showSelectionDetails={false}
       />
     )
