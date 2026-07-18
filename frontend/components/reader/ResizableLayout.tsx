@@ -4,6 +4,11 @@ import { useState, useEffect, useRef, ReactNode } from 'react';
 import { Panel, Group, Separator } from 'react-resizable-panels';
 import type { PanelImperativeHandle } from 'react-resizable-panels';
 import { ChevronLeft, ChevronRight, Menu, SidebarClose, User, X, RotateCcw } from 'lucide-react';
+import {
+  DEFAULT_USER_EXPERTISE,
+  readUserExpertise,
+  writeUserExpertise,
+} from '../../lib/user-expertise';
 
 interface ResizableLayoutProps {
   leftPanel: ReactNode;
@@ -15,10 +20,7 @@ interface ResizableLayoutProps {
 const STORAGE_KEYS = {
   LEFT_COLLAPSED: 'reader-left-panel-collapsed',
   RIGHT_COLLAPSED: 'reader-right-panel-collapsed',
-  EXPERTISE: 'scholar-agent-expertise',
 };
-
-const DEFAULT_EXPERTISE = "I have a general STEM background with basic understanding of mathematical notation and common scientific concepts.";
 
 export default function ResizableLayout({
   leftPanel,
@@ -29,7 +31,7 @@ export default function ResizableLayout({
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [rightCollapsed, setRightCollapsed] = useState(false);
   const [showExpertiseModal, setShowExpertiseModal] = useState(false);
-  const [expertise, setExpertise] = useState<string>(DEFAULT_EXPERTISE);
+  const [expertise, setExpertise] = useState<string>(DEFAULT_USER_EXPERTISE);
 
   const leftPanelRef = useRef<PanelImperativeHandle>(null);
   const rightPanelRef = useRef<PanelImperativeHandle>(null);
@@ -38,7 +40,7 @@ export default function ResizableLayout({
   useEffect(() => {
     const storedLeftCollapsed = localStorage.getItem(STORAGE_KEYS.LEFT_COLLAPSED);
     const storedRightCollapsed = localStorage.getItem(STORAGE_KEYS.RIGHT_COLLAPSED);
-    const storedExpertise = localStorage.getItem(STORAGE_KEYS.EXPERTISE);
+    const storedExpertise = readUserExpertise();
 
     if (storedLeftCollapsed === 'true') {
       setLeftCollapsed(true);
@@ -48,12 +50,8 @@ export default function ResizableLayout({
       setRightCollapsed(true);
       rightPanelRef.current?.collapse();
     }
-    if (storedExpertise) {
-      setExpertise(storedExpertise);
-      onExpertiseChange?.(storedExpertise);
-    } else {
-      onExpertiseChange?.(DEFAULT_EXPERTISE);
-    }
+    setExpertise(storedExpertise);
+    onExpertiseChange?.(storedExpertise);
   }, [onExpertiseChange]);
 
   const toggleLeftPanel = () => {
@@ -83,15 +81,15 @@ export default function ResizableLayout({
   };
 
   const handleSaveExpertise = () => {
-    localStorage.setItem(STORAGE_KEYS.EXPERTISE, expertise);
+    writeUserExpertise(expertise);
     onExpertiseChange?.(expertise);
     setShowExpertiseModal(false);
   };
 
   const handleResetExpertise = () => {
-    setExpertise(DEFAULT_EXPERTISE);
-    localStorage.setItem(STORAGE_KEYS.EXPERTISE, DEFAULT_EXPERTISE);
-    onExpertiseChange?.(DEFAULT_EXPERTISE);
+    setExpertise(DEFAULT_USER_EXPERTISE);
+    writeUserExpertise(DEFAULT_USER_EXPERTISE);
+    onExpertiseChange?.(DEFAULT_USER_EXPERTISE);
   };
 
   return (

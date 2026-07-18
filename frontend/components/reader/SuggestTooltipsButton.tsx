@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Sparkles, X } from 'lucide-react';
+import { DEFAULT_USER_EXPERTISE } from '../../lib/user-expertise';
 
 interface SuggestTooltipsButtonProps {
   disabled?: boolean;
@@ -9,15 +10,13 @@ interface SuggestTooltipsButtonProps {
   onSuggest: (expertise: string) => void;
 }
 
-const DEFAULT_EXPERTISE = "I have a general STEM background with basic understanding of mathematical notation and common scientific concepts.";
-
 export default function SuggestTooltipsButton({
   disabled,
   loading,
   onSuggest,
 }: SuggestTooltipsButtonProps) {
   const [showModal, setShowModal] = useState(false);
-  const [expertise, setExpertise] = useState<string>(DEFAULT_EXPERTISE);
+  const [expertise, setExpertise] = useState<string>(DEFAULT_USER_EXPERTISE);
 
   const handleSuggest = () => {
     onSuggest(expertise.trim());

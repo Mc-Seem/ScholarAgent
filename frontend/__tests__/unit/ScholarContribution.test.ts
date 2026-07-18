@@ -1,12 +1,13 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { Command, CommandHandler } from '@theia/core'
-import type { CommonMenus, ViewContainer as ViewContainerClass } from '@theia/core/lib/browser'
+import type { CommonMenus } from '@theia/core/lib/browser'
 import type { Paper, PaperDetail } from '@/hooks/usePapers'
 import type { ReaderWorkspaceSnapshot } from '@/lib/reader-workspace-store'
 import type { ScholarCommands as ScholarCommandsNamespace } from '@/theia/scholar-extension/src/browser/scholar-commands'
 import type { ScholarContribution as ScholarContributionClass } from '@/theia/scholar-extension/src/browser/scholar-contribution'
 import type { ScholarPaperWidget as ScholarPaperWidgetClass } from '@/theia/scholar-extension/src/browser/scholar-paper-widget'
+import type { ScholarPaperGraphWidget as ScholarPaperGraphWidgetClass } from '@/theia/scholar-extension/src/browser/scholar-paper-graph-widget'
 import type {
   ScholarLibraryTreeNode,
   ScholarLibraryWidget as ScholarLibraryWidgetClass,
@@ -31,22 +32,21 @@ vi.mock('@theia/core/lib/browser', async () => {
   }
 })
 
-let ViewContainer: typeof ViewContainerClass
 let CommonMenusNs: typeof CommonMenus
 let ScholarCommands: typeof ScholarCommandsNamespace
 let ScholarContribution: typeof ScholarContributionClass
 let ScholarAnnotationService: typeof ScholarAnnotationServiceClass
 let ScholarPaperWidget: typeof ScholarPaperWidgetClass
+let ScholarPaperGraphWidget: typeof ScholarPaperGraphWidgetClass
 let ScholarLibraryWidget: typeof ScholarLibraryWidgetClass
 let SCHOLAR_LIBRARY_CONTEXT_MENU: string[]
 let SCHOLAR_PAPER_FACTORY_ID: string
-let SCHOLAR_NAVIGATION_WIDGET_ID: string
-let SCHOLAR_GRAPH_WIDGET_ID: string
+let SCHOLAR_PAPER_GRAPH_FACTORY_ID: string
 
 beforeAll(async () => {
   vi.stubGlobal('DragEvent', class DragEvent extends Event {})
   document.queryCommandSupported = vi.fn(() => false)
-  ;({ ViewContainer, CommonMenus: CommonMenusNs } = await import('@theia/core/lib/browser'))
+  ;({ CommonMenus: CommonMenusNs } = await import('@theia/core/lib/browser'))
   ;({ ScholarCommands } = await import(
     '@/theia/scholar-extension/src/browser/scholar-commands'
   ))
@@ -59,11 +59,11 @@ beforeAll(async () => {
   ;({ ScholarPaperWidget, SCHOLAR_PAPER_FACTORY_ID } = await import(
     '@/theia/scholar-extension/src/browser/scholar-paper-widget'
   ))
-  ;({ ScholarLibraryWidget, SCHOLAR_LIBRARY_CONTEXT_MENU, SCHOLAR_NAVIGATION_WIDGET_ID } = await import(
+  ;({ ScholarLibraryWidget, SCHOLAR_LIBRARY_CONTEXT_MENU } = await import(
     '@/theia/scholar-extension/src/browser/scholar-side-widgets'
   ))
-  ;({ SCHOLAR_GRAPH_WIDGET_ID } = await import(
-    '@/theia/scholar-extension/src/browser/scholar-native-widgets'
+  ;({ ScholarPaperGraphWidget, SCHOLAR_PAPER_GRAPH_FACTORY_ID } = await import(
+    '@/theia/scholar-extension/src/browser/scholar-paper-graph-widget'
   ))
 })
 
@@ -178,6 +178,31 @@ function createFakePaperWidget(paperId: string, isAttached = true): ScholarPaper
   return widget
 }
 
+function createFakeGraphWidget(paperId: string, isAttached = true): ScholarPaperGraphWidgetClass {
+  const widget = Object.create(ScholarPaperGraphWidget.prototype) as ScholarPaperGraphWidgetClass
+  Object.defineProperty(widget, 'options', {
+    value: { paperId },
+    configurable: true,
+  })
+  Object.defineProperty(widget, 'id', {
+    value: `scholar-agent:paper-graph:${paperId}`,
+    configurable: true,
+  })
+  Object.defineProperty(widget, 'isAttached', {
+    value: isAttached,
+    configurable: true,
+  })
+  Object.defineProperty(widget, 'close', {
+    value: vi.fn(),
+    configurable: true,
+  })
+  Object.defineProperty(widget, 'updateLabel', {
+    value: vi.fn(),
+    configurable: true,
+  })
+  return widget
+}
+
 function createForeignWidget(): ScholarLibraryWidgetClass {
   return Object.create(ScholarLibraryWidget.prototype) as ScholarLibraryWidgetClass
 }
@@ -219,6 +244,17 @@ function createContribution(store: ReturnType<typeof createFakeStore>) {
     info: vi.fn().mockResolvedValue(undefined),
   }
   const annotations = new ScholarAnnotationService()
+  const suggestions = {
+    getSnapshot: vi.fn(() => ({ activePaperId: null, papers: {} })),
+    getPaperState: vi.fn(() => ({
+      suggestions: [],
+      checkedIds: new Set<string>(),
+      focusedId: null,
+      pending: false,
+      createMode: false,
+    })),
+    onDidChange: vi.fn(() => ({ dispose: () => undefined })),
+  }
 
   const ContributionCtor = ScholarContribution as unknown as new (
     ...args: unknown[]
@@ -226,6 +262,7 @@ function createContribution(store: ReturnType<typeof createFakeStore>) {
   const contribution = new ContributionCtor(
     store,
     annotations,
+    suggestions,
     widgetManager,
     shell,
     statusBar,
@@ -393,20 +430,26 @@ describe('ScholarContribution active-paper commands', () => {
     expect(messageService.info).toHaveBeenCalledWith('Paper deleted')
   })
 
-  it('closes every open widget of the deleted paper across tabs, but never a different paper', async () => {
+  it('closes every open paper and graph widget of the deleted paper across tabs, but never a different paper', async () => {
     const { widgetManager } = register()
     const widgetA1 = createFakePaperWidget('paper-a')
     const widgetA2 = createFakePaperWidget('paper-a')
     const widgetB = createFakePaperWidget('paper-b')
-    widgetManager.getWidgets.mockReturnValue([widgetA1, widgetA2, widgetB])
+    const graphA = createFakeGraphWidget('paper-a')
+    const graphB = createFakeGraphWidget('paper-b')
+    widgetManager.getWidgets.mockImplementation((factoryId: string) =>
+      factoryId === SCHOLAR_PAPER_GRAPH_FACTORY_ID ? [graphA, graphB] : [widgetA1, widgetA2, widgetB])
     confirmDialogOpen.mockResolvedValueOnce(true)
 
     await commands.handlerFor(ScholarCommands.DELETE_PAPER).execute(createLibraryNode('paper-a'))
 
     expect(store.deletePaper).toHaveBeenCalledWith('paper-a')
+    expect(widgetManager.getWidgets).toHaveBeenCalledWith(SCHOLAR_PAPER_GRAPH_FACTORY_ID)
     expect(widgetA1.close).toHaveBeenCalledOnce()
     expect(widgetA2.close).toHaveBeenCalledOnce()
     expect(widgetB.close).not.toHaveBeenCalled()
+    expect(graphA.close).toHaveBeenCalledOnce()
+    expect(graphB.close).not.toHaveBeenCalled()
   })
 
   it('reports the error and skips the success message when deletion fails', async () => {
@@ -451,25 +494,107 @@ describe('ScholarContribution active-paper commands', () => {
     expect(store.compilePaper).not.toHaveBeenCalled()
   })
 
-  it('activates the paper and reveals the graph widget when Open Graph runs', async () => {
-    const { contribution, widgetManager, shell } = register()
+  it('creates a graph widget, opens it to the right of the matching paper widget, and activates paper + graph', async () => {
+    const { widgetManager, shell } = register()
     snapshot.papersById['paper-a'] = paperDetail('paper-a', { has_knowledge_graph: true })
-    const widget = createFakePaperWidget('paper-a')
+    const paperWidget = createFakePaperWidget('paper-a')
+    const graphWidget = createFakeGraphWidget('paper-a', false)
+    widgetManager.getWidgets.mockImplementation((factoryId: string) =>
+      factoryId === SCHOLAR_PAPER_FACTORY_ID ? [paperWidget] : [])
+    widgetManager.getOrCreateWidget.mockResolvedValue(graphWidget)
 
-    const container = Object.create(ViewContainer.prototype) as ViewContainerClass
-    Object.defineProperty(container, 'isAttached', { value: true, configurable: true })
-    Object.defineProperty(container, 'id', { value: SCHOLAR_NAVIGATION_WIDGET_ID, configurable: true })
-    Object.defineProperty(container, 'revealWidget', { value: vi.fn(), configurable: true })
-    Object.defineProperty(container, 'activateWidget', { value: vi.fn(), configurable: true })
-    widgetManager.getOrCreateWidget.mockResolvedValue(container)
+    await commands.handlerFor(ScholarCommands.OPEN_GRAPH).execute(paperWidget)
 
-    await commands.handlerFor(ScholarCommands.OPEN_GRAPH).execute(widget)
-
-    expect(widgetManager.getOrCreateWidget).toHaveBeenCalledWith(SCHOLAR_NAVIGATION_WIDGET_ID)
+    expect(widgetManager.getOrCreateWidget).toHaveBeenCalledWith(
+      SCHOLAR_PAPER_GRAPH_FACTORY_ID,
+      { paperId: 'paper-a' },
+    )
+    expect(graphWidget.updateLabel).toHaveBeenCalledWith(expect.any(String))
+    expect(shell.addWidget).toHaveBeenCalledWith(graphWidget, expect.objectContaining({
+      area: 'main',
+      mode: 'open-to-right',
+      ref: paperWidget,
+    }))
     expect(store.activatePaper).toHaveBeenCalledWith('paper-a')
-    expect(shell.activateWidget).toHaveBeenCalledWith(SCHOLAR_NAVIGATION_WIDGET_ID)
-    expect(container.revealWidget).toHaveBeenCalledWith(SCHOLAR_GRAPH_WIDGET_ID)
-    expect(container.activateWidget).toHaveBeenCalledWith(SCHOLAR_GRAPH_WIDGET_ID)
+    expect(shell.activateWidget).toHaveBeenCalledWith(graphWidget.id)
+  })
+
+  it('falls back to the current main widget as the split reference when no matching paper widget is open', async () => {
+    const { widgetManager, shell } = register()
+    snapshot.papersById['paper-a'] = paperDetail('paper-a', { has_knowledge_graph: true })
+    const libraryNode = createLibraryNode('paper-a')
+    const currentMainWidget = createFakePaperWidget('paper-b')
+    const graphWidget = createFakeGraphWidget('paper-a', false)
+    widgetManager.getWidgets.mockImplementation(() => [])
+    shell.getCurrentWidget.mockReturnValue(currentMainWidget)
+    widgetManager.getOrCreateWidget.mockResolvedValue(graphWidget)
+
+    await commands.handlerFor(ScholarCommands.OPEN_GRAPH).execute(libraryNode)
+
+    expect(shell.getCurrentWidget).toHaveBeenCalledWith('main')
+    expect(shell.addWidget).toHaveBeenCalledWith(graphWidget, expect.objectContaining({
+      area: 'main',
+      mode: 'open-to-right',
+      ref: currentMainWidget,
+    }))
+  })
+
+  it('falls back to tab-after with no ref when neither a paper widget nor a current main widget exist', async () => {
+    const { widgetManager, shell } = register()
+    snapshot.papersById['paper-a'] = paperDetail('paper-a', { has_knowledge_graph: true })
+    const libraryNode = createLibraryNode('paper-a')
+    const graphWidget = createFakeGraphWidget('paper-a', false)
+    widgetManager.getWidgets.mockImplementation(() => [])
+    shell.getCurrentWidget.mockReturnValue(undefined)
+    widgetManager.getOrCreateWidget.mockResolvedValue(graphWidget)
+
+    await commands.handlerFor(ScholarCommands.OPEN_GRAPH).execute(libraryNode)
+
+    expect(shell.addWidget).toHaveBeenCalledWith(graphWidget, expect.objectContaining({
+      area: 'main',
+      mode: 'tab-after',
+      ref: undefined,
+    }))
+  })
+
+  it('reuses the already attached graph widget for the same paperId instead of re-adding it', async () => {
+    const { widgetManager, shell } = register()
+    snapshot.papersById['paper-a'] = paperDetail('paper-a', { has_knowledge_graph: true })
+    const paperWidget = createFakePaperWidget('paper-a')
+    const graphWidget = createFakeGraphWidget('paper-a', true)
+    widgetManager.getWidgets.mockImplementation((factoryId: string) =>
+      factoryId === SCHOLAR_PAPER_FACTORY_ID ? [paperWidget] : [])
+    widgetManager.getOrCreateWidget.mockResolvedValue(graphWidget)
+
+    await commands.handlerFor(ScholarCommands.OPEN_GRAPH).execute(paperWidget)
+
+    expect(shell.addWidget).not.toHaveBeenCalled()
+    expect(shell.activateWidget).toHaveBeenCalledWith(graphWidget.id)
+  })
+
+  it('creates separate graph widgets for distinct papers', async () => {
+    const { widgetManager } = register()
+    snapshot.papersById['paper-a'] = paperDetail('paper-a', { has_knowledge_graph: true })
+    snapshot.papersById['paper-b'] = paperDetail('paper-b', { has_knowledge_graph: true })
+    widgetManager.getWidgets.mockImplementation(() => [])
+    widgetManager.getOrCreateWidget.mockImplementation((_factoryId: string, options: { paperId: string }) =>
+      Promise.resolve(createFakeGraphWidget(options.paperId, false)))
+
+    await commands.handlerFor(ScholarCommands.OPEN_GRAPH).execute(createLibraryNode('paper-a'))
+    await commands.handlerFor(ScholarCommands.OPEN_GRAPH).execute(createLibraryNode('paper-b'))
+
+    const calledOptions = widgetManager.getOrCreateWidget.mock.calls.map(call => call[1])
+    expect(calledOptions[0]).toEqual({ paperId: 'paper-a' })
+    expect(calledOptions[1]).toEqual({ paperId: 'paper-b' })
+  })
+
+  it('does nothing for Open Graph when invoked on a widget from another tab', async () => {
+    const { widgetManager } = register()
+    const foreignWidget = createForeignWidget()
+
+    await commands.handlerFor(ScholarCommands.OPEN_GRAPH).execute(foreignWidget)
+
+    expect(widgetManager.getOrCreateWidget).not.toHaveBeenCalled()
   })
 
   it('registers a tab-bar toolbar item for each active-paper and library command in the navigation group', () => {
@@ -489,6 +614,9 @@ describe('ScholarContribution active-paper commands', () => {
       ScholarCommands.REFRESH_LIBRARY.id,
       ScholarCommands.UPLOAD_LATEX.id,
       ScholarCommands.IMPORT_ARXIV.id,
+      ScholarCommands.GENERATE_SUGGESTIONS.id,
+      ScholarCommands.APPLY_SUGGESTIONS.id,
+      ScholarCommands.CREATE_MANUAL_SUGGESTION.id,
     ])
     registry.items.forEach(item => {
       expect(item.group).toBe('navigation')
@@ -513,6 +641,37 @@ describe('ScholarContribution active-paper commands', () => {
     storeListener()
 
     expect(listener).toHaveBeenCalledTimes(registry.items.length)
+
+    contribution.onStop()
+  })
+
+  it('shows the active paper suggestion operation in the shared status bar', async () => {
+    snapshot.activePaperId = 'paper-a'
+    snapshot.statusByPaperId['paper-a'] = 'Applying tooltip drafts…'
+    snapshot.statusByPaperId['paper-b'] = 'Generating tooltip drafts…'
+    const { contribution, statusBar } = createContribution(store)
+
+    contribution.onStart()
+    await Promise.resolve()
+    expect(statusBar.setElement).toHaveBeenLastCalledWith(
+      'scholar-agent.active-paper',
+      expect.objectContaining({
+        text: '$(sync~spin) Applying tooltip drafts…',
+        tooltip: 'Applying tooltip drafts…',
+      }),
+    )
+
+    snapshot.activePaperId = 'paper-b'
+    const storeListener = store.subscribe.mock.calls[0][0] as () => void
+    storeListener()
+    await Promise.resolve()
+    expect(statusBar.setElement).toHaveBeenLastCalledWith(
+      'scholar-agent.active-paper',
+      expect.objectContaining({
+        text: '$(sync~spin) Generating tooltip drafts…',
+        tooltip: 'Generating tooltip drafts…',
+      }),
+    )
 
     contribution.onStop()
   })

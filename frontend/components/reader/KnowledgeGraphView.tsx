@@ -44,10 +44,38 @@ const edgeColors: Record<string, string> = {
   mentions: '#94a3b8',   // slate
 };
 
-interface KnowledgeGraphViewProps {
+export interface KnowledgeGraphNodeSelection {
+  kind: 'node';
+  id: string;
+  label: string;
+  nodeType: string;
+  context?: string;
+  definition?: string;
+  statement?: string;
+  summary?: string;
+  latex?: string;
+  incomingConnections: ConnectionInfo[];
+  outgoingConnections: ConnectionInfo[];
+}
+
+export interface KnowledgeGraphEdgeSelection {
+  kind: 'edge';
+  sourceId: string;
+  targetId: string;
+  sourceLabel: string;
+  targetLabel: string;
+  relationshipType: string;
+  evidence?: string;
+}
+
+export type KnowledgeGraphSelection = KnowledgeGraphNodeSelection | KnowledgeGraphEdgeSelection;
+
+export interface KnowledgeGraphViewProps {
   paperId: string;
   onNavigate?: (domNodeId: string) => void;
   onRegisterFocusHandler?: (handler: (nodeId: string) => void) => void;
+  onSelectionChange?: (selection: KnowledgeGraphSelection | null) => void;
+  showSelectionDetails?: boolean;
 }
 
 interface ApiNode {
@@ -160,32 +188,23 @@ function hierarchicalLayout(nodes: Node[], edges: Edge[]): { nodes: Node[]; edge
   return { nodes, edges };
 }
 
-function KnowledgeGraphViewInner({ paperId, onNavigate, onRegisterFocusHandler }: KnowledgeGraphViewProps) {
+function KnowledgeGraphViewInner({
+  paperId,
+  onNavigate,
+  onRegisterFocusHandler,
+  onSelectionChange,
+  showSelectionDetails = true,
+}: KnowledgeGraphViewProps) {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [graphData, setGraphData] = useState<GraphData | null>(null);
   const [isBuilding, setIsBuilding] = useState(false);
-  const [selectedEdge, setSelectedEdge] = useState<{
-    sourceId: string;
-    targetId: string;
-    sourceLabel: string;
-    targetLabel: string;
-    type: string;
-    evidence?: string;
-  } | null>(null);
-  const [selectedNode, setSelectedNode] = useState<{
-    id: string;
-    label: string;
-    nodeType: string;
-    context?: string;
-    definition?: string;
-    statement?: string;
-    summary?: string;
-    latex?: string;
+  const [selectedEdge, setSelectedEdge] = useState<KnowledgeGraphEdgeSelection | null>(null);
+  const [selectedNode, setSelectedNode] = useState<(KnowledgeGraphNodeSelection & {
     onNavigate: () => void;
-  } | null>(null);
+  }) | null>(null);
 
   // Search state
   const [searchQuery, setSearchQuery] = useState('');
@@ -309,10 +328,13 @@ function KnowledgeGraphViewInner({ paperId, onNavigate, onRegisterFocusHandler }
     // Reset focus and filters when rebuilding graph
     setFocusMode(false);
     setFocusedNodeId(null);
+    setSelectedNode(null);
+    setSelectedEdge(null);
     setVisibleNodeTypes(new Set(defaultNodeTypes));
     setVisibleEdgeTypes(new Set(defaultEdgeTypes));
+    onSelectionChange?.(null);
     fetchGraphData();
-  }, [fetchGraphData]);
+  }, [fetchGraphData, onSelectionChange]);
 
   const handleBuildError = useCallback((errorMsg: string) => {
     setIsBuilding(false);
@@ -416,11 +438,43 @@ function KnowledgeGraphViewInner({ paperId, onNavigate, onRegisterFocusHandler }
     }
   }, [focusMode, focusedNodeId, allNodes, allEdges, visibleNodeTypes, visibleEdgeTypes, computeSubgraph, setNodes, setEdges, reactFlowInstance]);
 
-  // Handle node click to show full details
-  const onNodeClick: NodeMouseHandler = useCallback((event, node) => {
-    event.stopPropagation();
+  // Compute connections for a node
+  const getNodeConnections = useCallback((nodeId: string): { incoming: ConnectionInfo[], outgoing: ConnectionInfo[] } => {
+    const incoming: ConnectionInfo[] = [];
+    const outgoing: ConnectionInfo[] = [];
 
-    setSelectedNode({
+    allEdges.forEach(edge => {
+      if (edge.target === nodeId) {
+        const sourceNode = allNodes.find(n => n.id === edge.source);
+        if (sourceNode) {
+          incoming.push({
+            nodeId: sourceNode.id,
+            nodeLabel: sourceNode.data.label,
+            nodeType: sourceNode.data.nodeType,
+            relationshipType: edge.label as string,
+          });
+        }
+      }
+      if (edge.source === nodeId) {
+        const targetNode = allNodes.find(n => n.id === edge.target);
+        if (targetNode) {
+          outgoing.push({
+            nodeId: targetNode.id,
+            nodeLabel: targetNode.data.label,
+            nodeType: targetNode.data.nodeType,
+            relationshipType: edge.label as string,
+          });
+        }
+      }
+    });
+
+    return { incoming, outgoing };
+  }, [allNodes, allEdges]);
+
+  const selectNode = useCallback((node: Node) => {
+    const connections = getNodeConnections(node.id);
+    const selection: KnowledgeGraphNodeSelection = {
+      kind: 'node',
       id: node.id,
       label: node.data.label,
       nodeType: node.data.nodeType,
@@ -429,14 +483,21 @@ function KnowledgeGraphViewInner({ paperId, onNavigate, onRegisterFocusHandler }
       statement: node.data.statement,
       summary: node.data.summary,
       latex: node.data.latex,
-      onNavigate: node.data.onNavigate,
-    });
-
-    // Close edge panel and menus if open
+      incomingConnections: connections.incoming,
+      outgoingConnections: connections.outgoing,
+    };
+    setSelectedNode({ ...selection, onNavigate: node.data.onNavigate });
     setSelectedEdge(null);
     setShowFilterMenu(false);
     setShowSearchResults(false);
-  }, []);
+    onSelectionChange?.(selection);
+  }, [getNodeConnections, onSelectionChange]);
+
+  // Handle node click to show full details
+  const onNodeClick: NodeMouseHandler = useCallback((event, node) => {
+    event.stopPropagation();
+    selectNode(node);
+  }, [selectNode]);
 
   // Handle edge click to show evidence
   const onEdgeClick: EdgeMouseHandler = useCallback((event, edge) => {
@@ -447,39 +508,31 @@ function KnowledgeGraphViewInner({ paperId, onNavigate, onRegisterFocusHandler }
     const targetNode = nodes.find(n => n.id === edge.target);
 
     if (sourceNode && targetNode) {
-      setSelectedEdge({
+      const selection: KnowledgeGraphEdgeSelection = {
+        kind: 'edge',
         sourceId: edge.source,
         targetId: edge.target,
         sourceLabel: sourceNode.data.label,
         targetLabel: targetNode.data.label,
-        type: (edge.label as string) || edge.type || 'unknown',
+        relationshipType: (edge.label as string) || edge.type || 'unknown',
         evidence: edge.data?.evidence,
-      });
+      };
+      setSelectedEdge(selection);
 
       // Close node panel and menus if open
       setSelectedNode(null);
       setShowFilterMenu(false);
       setShowSearchResults(false);
+      onSelectionChange?.(selection);
     }
-  }, [nodes]);
+  }, [nodes, onSelectionChange]);
 
   // Helper to show node info by ID and optionally center on it
   const showNodeById = useCallback((nodeId: string, centerOnNode = false, activateFocus = false) => {
     // Look in allNodes to find node data (in case we're in focus mode and node isn't displayed)
     const nodeData = allNodes.find(n => n.id === nodeId);
     if (nodeData) {
-      setSelectedNode({
-        id: nodeData.id,
-        label: nodeData.data.label,
-        nodeType: nodeData.data.nodeType,
-        context: nodeData.data.context,
-        definition: nodeData.data.definition,
-        statement: nodeData.data.statement,
-        summary: nodeData.data.summary,
-        latex: nodeData.data.latex,
-        onNavigate: nodeData.data.onNavigate,
-      });
-      setSelectedEdge(null);
+      selectNode(nodeData);
 
       // Activate focus mode if requested (shows subgraph with neighbors)
       if (activateFocus) {
@@ -499,7 +552,7 @@ function KnowledgeGraphViewInner({ paperId, onNavigate, onRegisterFocusHandler }
         }
       }
     }
-  }, [allNodes, nodes, reactFlowInstance]);
+  }, [allNodes, nodes, reactFlowInstance, selectNode]);
 
   // Register the focus handler with parent
   useEffect(() => {
@@ -591,7 +644,8 @@ function KnowledgeGraphViewInner({ paperId, onNavigate, onRegisterFocusHandler }
     setSelectedNode(null);
     setShowFilterMenu(false);
     setShowSearchResults(false);
-  }, []);
+    onSelectionChange?.(null);
+  }, [onSelectionChange]);
 
   // Toggle filter helpers
   const toggleNodeType = (type: string) => {
@@ -621,40 +675,6 @@ function KnowledgeGraphViewInner({ paperId, onNavigate, onRegisterFocusHandler }
   // Check if any filters are active
   const hasActiveFilters = visibleNodeTypes.size < defaultNodeTypes.length || visibleEdgeTypes.size < defaultEdgeTypes.length;
 
-  // Compute connections for a node
-  const getNodeConnections = useCallback((nodeId: string): { incoming: ConnectionInfo[], outgoing: ConnectionInfo[] } => {
-    const incoming: ConnectionInfo[] = [];
-    const outgoing: ConnectionInfo[] = [];
-
-    allEdges.forEach(edge => {
-      if (edge.target === nodeId) {
-        // Incoming edge: source -> this node
-        const sourceNode = allNodes.find(n => n.id === edge.source);
-        if (sourceNode) {
-          incoming.push({
-            nodeId: sourceNode.id,
-            nodeLabel: sourceNode.data.label,
-            nodeType: sourceNode.data.nodeType,
-            relationshipType: edge.label as string,
-          });
-        }
-      }
-      if (edge.source === nodeId) {
-        // Outgoing edge: this node -> target
-        const targetNode = allNodes.find(n => n.id === edge.target);
-        if (targetNode) {
-          outgoing.push({
-            nodeId: targetNode.id,
-            nodeLabel: targetNode.data.label,
-            nodeType: targetNode.data.nodeType,
-            relationshipType: edge.label as string,
-          });
-        }
-      }
-    });
-
-    return { incoming, outgoing };
-  }, [allNodes, allEdges]);
 
   // Show progress during build
   if (isBuilding) {
@@ -955,44 +975,48 @@ function KnowledgeGraphViewInner({ paperId, onNavigate, onRegisterFocusHandler }
         )}
 
         {/* Node info panel */}
-        {selectedNode && (() => {
-          const connections = getNodeConnections(selectedNode.id);
-          return (
-            <NodeInfoPanel
-              label={selectedNode.label}
-              nodeType={selectedNode.nodeType}
-              context={selectedNode.context}
-              definition={selectedNode.definition}
-              statement={selectedNode.statement}
-              summary={selectedNode.summary}
-              latex={selectedNode.latex}
-              onNavigate={() => {
-                selectedNode.onNavigate();
-                setSelectedNode(null);
-              }}
-              onClose={() => setSelectedNode(null)}
-              onFocus={() => {
-                setFocusMode(true);
-                setFocusedNodeId(selectedNode.id);
-              }}
-              isFocused={focusMode && focusedNodeId === selectedNode.id}
-              incomingConnections={connections.incoming}
-              outgoingConnections={connections.outgoing}
-              onConnectionClick={(nodeId) => showNodeById(nodeId, true)}
-            />
-          );
-        })()}
+        {showSelectionDetails && selectedNode && (
+          <NodeInfoPanel
+            label={selectedNode.label}
+            nodeType={selectedNode.nodeType}
+            context={selectedNode.context}
+            definition={selectedNode.definition}
+            statement={selectedNode.statement}
+            summary={selectedNode.summary}
+            latex={selectedNode.latex}
+            onNavigate={() => {
+              selectedNode.onNavigate();
+              setSelectedNode(null);
+              onSelectionChange?.(null);
+            }}
+            onClose={() => {
+              setSelectedNode(null);
+              onSelectionChange?.(null);
+            }}
+            onFocus={() => {
+              setFocusMode(true);
+              setFocusedNodeId(selectedNode.id);
+            }}
+            isFocused={focusMode && focusedNodeId === selectedNode.id}
+            incomingConnections={selectedNode.incomingConnections}
+            outgoingConnections={selectedNode.outgoingConnections}
+            onConnectionClick={(nodeId) => showNodeById(nodeId, true)}
+          />
+        )}
 
         {/* Edge info panel */}
-        {selectedEdge && (
+        {showSelectionDetails && selectedEdge && (
           <EdgeInfoPanel
             sourceLabel={selectedEdge.sourceLabel}
             targetLabel={selectedEdge.targetLabel}
-            relationshipType={selectedEdge.type}
+            relationshipType={selectedEdge.relationshipType}
             evidence={selectedEdge.evidence}
             onClickSource={() => showNodeById(selectedEdge.sourceId)}
             onClickTarget={() => showNodeById(selectedEdge.targetId)}
-            onClose={() => setSelectedEdge(null)}
+            onClose={() => {
+              setSelectedEdge(null);
+              onSelectionChange?.(null);
+            }}
           />
         )}
       </div>

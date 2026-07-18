@@ -4,7 +4,6 @@ import {
   CompositeTreeNode,
   ContextMenuRenderer,
   ExpandableTreeNode,
-  Message,
   type NodeProps,
   ReactWidget,
   SelectableTreeNode,
@@ -15,7 +14,6 @@ import {
 } from '@theia/core/lib/browser'
 import { inject, injectable, postConstruct } from '@theia/core/shared/inversify'
 
-import { KnowledgeGraphView } from '../../../../components/reader/KnowledgeGraphView'
 import { LatexText } from '../../../../components/reader/LatexText'
 import type { Tooltip } from '../../../../hooks/useTooltips'
 import {
@@ -38,7 +36,6 @@ import { ScholarCommands } from './scholar-commands'
 import { ScholarWorkspaceService } from './scholar-workspace-service'
 
 export const SCHOLAR_OUTLINE_WIDGET_ID = 'scholar-agent:outline'
-export const SCHOLAR_GRAPH_WIDGET_ID = 'scholar-agent:graph'
 export const SCHOLAR_COMMENTS_WIDGET_ID = 'scholar-agent:comments'
 export const SCHOLAR_GLOSSARY_WIDGET_ID = 'scholar-agent:glossary'
 export const SCHOLAR_ANNOTATION_EDITOR_WIDGET_ID = 'scholar-agent:annotation-editor'
@@ -294,46 +291,6 @@ export class ScholarGlossaryWidget extends ScholarTreeWidget {
     }
     super.handleDblClickEvent(node, event)
   }
-}
-
-@injectable()
-export class ScholarGraphWidget extends ReactWidget {
-  constructor(
-    @inject(ScholarWorkspaceService) private readonly store: ScholarWorkspaceService,
-  ) {
-    super()
-    this.id = SCHOLAR_GRAPH_WIDGET_ID
-    this.title.label = 'Graph'
-    this.title.caption = 'Knowledge Graph'
-    this.title.iconClass = 'codicon codicon-type-hierarchy'
-    this.node.classList.add('scholar-widget', 'scholar-native-graph')
-    this.toDispose.push(Disposable.create(this.store.subscribe(() => this.update())))
-    this.update()
-  }
-
-  protected override render(): React.ReactNode {
-    return <ScholarGraphContent store={this.store} />
-  }
-
-  protected override onActivateRequest(message: Message): void {
-    super.onActivateRequest(message)
-    this.node.focus({ preventScroll: true })
-  }
-}
-
-function ScholarGraphContent({ store }: { store: ScholarWorkspaceService }): React.ReactElement {
-  const snapshot = useScholarSnapshot(store)
-  const paperId = snapshot.activePaperId
-  if (!paperId) {
-    return <div className="scholar-empty">Open a paper to view its knowledge graph.</div>
-  }
-  return (
-    <KnowledgeGraphView
-      key={paperId}
-      paperId={paperId}
-      onNavigate={dataId => navigateToPaperElement(paperId, dataId)}
-    />
-  )
 }
 
 @injectable()

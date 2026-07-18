@@ -1,4 +1,4 @@
-import { MessageService } from '@theia/core'
+import { MessageService, SelectionService } from '@theia/core'
 import {
   CommandContribution,
   MenuContribution,
@@ -16,12 +16,14 @@ import {
 import { TabBarToolbarContribution } from '@theia/core/lib/browser/shell/tab-bar-toolbar'
 import { ContainerModule } from '@theia/core/shared/inversify'
 
+import { HttpReaderWorkspaceApi } from '../../../../lib/reader-workspace-api'
 import { ScholarContribution } from './scholar-contribution'
 import {
   SCHOLAR_ANNOTATIONS_WIDGET_ID,
   SCHOLAR_LIBRARY_CONTEXT_MENU,
   SCHOLAR_LIBRARY_WIDGET_ID,
   SCHOLAR_NAVIGATION_WIDGET_ID,
+  SCHOLAR_TOOLTIP_DRAFTS_WIDGET_ID,
   ScholarLibraryWidget,
 } from './scholar-side-widgets'
 import { ScholarAnnotationService } from './scholar-annotation-service'
@@ -29,13 +31,11 @@ import {
   SCHOLAR_ANNOTATION_EDITOR_WIDGET_ID,
   SCHOLAR_COMMENTS_WIDGET_ID,
   SCHOLAR_GLOSSARY_WIDGET_ID,
-  SCHOLAR_GRAPH_WIDGET_ID,
   SCHOLAR_OUTLINE_WIDGET_ID,
   SCHOLAR_TREE_CONTEXT_MENU,
   ScholarAnnotationEditorWidget,
   ScholarCommentsWidget,
   ScholarGlossaryWidget,
-  ScholarGraphWidget,
   ScholarOutlineWidget,
 } from './scholar-native-widgets'
 import {
@@ -43,12 +43,31 @@ import {
   ScholarPaperWidget,
   isScholarPaperWidgetOptions,
 } from './scholar-paper-widget'
+import {
+  SCHOLAR_PAPER_GRAPH_FACTORY_ID,
+  ScholarPaperGraphWidget,
+  isScholarPaperGraphWidgetOptions,
+} from './scholar-paper-graph-widget'
+import { ScholarSuggestionService } from './scholar-suggestion-service'
+import {
+  SCHOLAR_SUGGESTION_EDITOR_WIDGET_ID,
+  SCHOLAR_SUGGESTIONS_CONTEXT_MENU,
+  SCHOLAR_SUGGESTIONS_WIDGET_ID,
+  ScholarSuggestionEditorWidget,
+  ScholarSuggestionsTreeWidget,
+} from './scholar-suggestion-widgets'
+import {
+  bindScholarGraphPropertyView,
+} from './scholar-graph-property-view'
 import { ScholarWorkspaceService } from './scholar-workspace-service'
 import './style/generated.css'
 
 export default new ContainerModule(bind => {
+  bind(HttpReaderWorkspaceApi).toSelf().inSingletonScope()
   bind(ScholarWorkspaceService).toSelf().inSingletonScope()
   bind(ScholarAnnotationService).toSelf().inSingletonScope()
+  bind(ScholarSuggestionService).toSelf().inSingletonScope()
+  bindScholarGraphPropertyView(bind)
 
   bind(WidgetFactory).toDynamicValue(context => ({
     id: SCHOLAR_LIBRARY_WIDGET_ID,
@@ -74,12 +93,6 @@ export default new ContainerModule(bind => {
     }).get(ScholarOutlineWidget),
   })).inSingletonScope()
 
-  bind(ScholarGraphWidget).toSelf().inSingletonScope()
-  bind(WidgetFactory).toDynamicValue(context => ({
-    id: SCHOLAR_GRAPH_WIDGET_ID,
-    createWidget: () => context.container.get(ScholarGraphWidget),
-  })).inSingletonScope()
-
   bind(WidgetFactory).toDynamicValue(context => ({
     id: SCHOLAR_NAVIGATION_WIDGET_ID,
     createWidget: async () => {
@@ -93,12 +106,8 @@ export default new ContainerModule(bind => {
         closeable: true,
       })
       const widgetManager = context.container.get(WidgetManager)
-      const [outline, graph] = await Promise.all([
-        widgetManager.getOrCreateWidget(SCHOLAR_OUTLINE_WIDGET_ID),
-        widgetManager.getOrCreateWidget(SCHOLAR_GRAPH_WIDGET_ID),
-      ])
-      viewContainer.addWidget(outline, { order: 10, weight: 0.4 })
-      viewContainer.addWidget(graph, { order: 20, weight: 0.6, initiallyCollapsed: true })
+      const outline = await widgetManager.getOrCreateWidget(SCHOLAR_OUTLINE_WIDGET_ID)
+      viewContainer.addWidget(outline, { order: 10, weight: 1 })
       return viewContainer
     },
   })).inSingletonScope()
@@ -129,10 +138,29 @@ export default new ContainerModule(bind => {
     }).get(ScholarGlossaryWidget),
   })).inSingletonScope()
 
+  bind(WidgetFactory).toDynamicValue(context => ({
+    id: SCHOLAR_SUGGESTIONS_WIDGET_ID,
+    createWidget: () => createTreeContainer(context.container, {
+      props: {
+        ...defaultTreeProps,
+        contextMenuPath: SCHOLAR_SUGGESTIONS_CONTEXT_MENU,
+        expandOnlyOnExpansionToggleClick: true,
+        search: true,
+      },
+      widget: ScholarSuggestionsTreeWidget,
+    }).get(ScholarSuggestionsTreeWidget),
+  })).inSingletonScope()
+
   bind(ScholarAnnotationEditorWidget).toSelf().inSingletonScope()
   bind(WidgetFactory).toDynamicValue(context => ({
     id: SCHOLAR_ANNOTATION_EDITOR_WIDGET_ID,
     createWidget: () => context.container.get(ScholarAnnotationEditorWidget),
+  })).inSingletonScope()
+
+  bind(ScholarSuggestionEditorWidget).toSelf().inSingletonScope()
+  bind(WidgetFactory).toDynamicValue(context => ({
+    id: SCHOLAR_SUGGESTION_EDITOR_WIDGET_ID,
+    createWidget: () => context.container.get(ScholarSuggestionEditorWidget),
   })).inSingletonScope()
 
   bind(WidgetFactory).toDynamicValue(context => ({
@@ -143,7 +171,7 @@ export default new ContainerModule(bind => {
       })
       viewContainer.setTitleOptions({
         label: 'Annotations',
-        caption: 'Comments and Glossary',
+        caption: 'Comments, Glossary, and Applied Annotations',
         iconClass: 'codicon codicon-comment-discussion',
         closeable: true,
       })
@@ -161,6 +189,33 @@ export default new ContainerModule(bind => {
   })).inSingletonScope()
 
   bind(WidgetFactory).toDynamicValue(context => ({
+    id: SCHOLAR_TOOLTIP_DRAFTS_WIDGET_ID,
+    createWidget: async () => {
+      const viewContainer = context.container.get<ViewContainer.Factory>(ViewContainer.Factory)({
+        id: SCHOLAR_TOOLTIP_DRAFTS_WIDGET_ID,
+      })
+      viewContainer.setTitleOptions({
+        label: 'Tooltip Drafts',
+        caption: 'Manual and AI Tooltip Drafts',
+        iconClass: 'codicon codicon-lightbulb-sparkle',
+        closeable: true,
+      })
+      const widgetManager = context.container.get(WidgetManager)
+      const [suggestions, suggestionEditor] = await Promise.all([
+        widgetManager.getOrCreateWidget(SCHOLAR_SUGGESTIONS_WIDGET_ID),
+        widgetManager.getOrCreateWidget(SCHOLAR_SUGGESTION_EDITOR_WIDGET_ID),
+      ])
+      viewContainer.addWidget(suggestions, { order: 10, weight: 0.65 })
+      viewContainer.addWidget(suggestionEditor, {
+        order: 20,
+        weight: 0.35,
+        initiallyCollapsed: true,
+      })
+      return viewContainer
+    },
+  })).inSingletonScope()
+
+  bind(WidgetFactory).toDynamicValue(context => ({
     id: SCHOLAR_PAPER_FACTORY_ID,
     createWidget: (options: unknown) => {
       if (!isScholarPaperWidgetOptions(options)) {
@@ -170,6 +225,19 @@ export default new ContainerModule(bind => {
         context.container.get(ScholarWorkspaceService),
         context.container.get(MessageService),
         context.container.get(ContextMenuRenderer),
+        options,
+      )
+    },
+  })).inSingletonScope()
+
+  bind(WidgetFactory).toDynamicValue(context => ({
+    id: SCHOLAR_PAPER_GRAPH_FACTORY_ID,
+    createWidget: (options: unknown) => {
+      if (!isScholarPaperGraphWidgetOptions(options)) {
+        throw new Error('A valid paperId is required to restore a graph widget')
+      }
+      return new ScholarPaperGraphWidget(
+        context.container.get(SelectionService),
         options,
       )
     },

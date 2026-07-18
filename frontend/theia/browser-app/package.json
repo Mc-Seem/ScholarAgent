@@ -5,7 +5,8 @@
   "dependencies": {
     "@scholar-agent/theia-extension": "0.1.0",
     "@theia/core": "1.73.0",
-    "@theia/preferences": "1.73.0"
+    "@theia/preferences": "1.73.0",
+    "@theia/property-view": "1.73.0"
   },
   "devDependencies": {
     "@theia/cli": "1.73.0"

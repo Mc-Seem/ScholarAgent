@@ -105,10 +105,15 @@ frontend/theia/
 └── scholar-extension/
     └── src/browser/
         ├── scholar-paper-widget.tsx    # Dynamic central tab per paper
+        ├── scholar-paper-graph-widget.tsx # Dynamic central knowledge-graph tab per paper
+        ├── scholar-graph-selection.ts  # Source-aware Theia graph selection
+        ├── scholar-graph-property-view.tsx # Native Property View provider
         ├── scholar-side-widgets.tsx    # Papers library
-        ├── scholar-native-widgets.tsx  # Native trees, graph, annotation detail/editor
+        ├── scholar-native-widgets.tsx  # Native trees, annotation detail/editor
         ├── scholar-annotation-preview.tsx # LaTeX-aware comment tree rows
         ├── scholar-annotation-service.ts # Shared annotation selection and draft state
+        ├── scholar-suggestion-service.ts # Per-paper suggestion state and API workflows
+        ├── scholar-suggestion-widgets.tsx # Native grouped tree and details/editor
         ├── scholar-commands.ts         # Shared Theia command definitions
         ├── scholar-contribution.ts     # Layout, commands, keybindings, status
         └── scholar-frontend-module.ts  # Dependency injection and factories
@@ -117,8 +122,9 @@ frontend/theia/
 `ReaderWorkspaceStore` is framework-independent and shared by every widget.
 It caches paper details and tooltips by paper ID, deduplicates concurrent loads,
 and keeps active-entity state isolated per tab. Activating an already loaded
-tab therefore does not refetch it. `HttpReaderWorkspaceApi` supplies the common
-FastAPI client and compilation and knowledge-graph SSE subscriptions.
+tab therefore does not refetch it. A singleton `HttpReaderWorkspaceApi` supplies
+the common FastAPI client, typed tooltip-suggestion operations, and compilation
+and knowledge-graph SSE subscriptions.
 
 Theia persists widget factory options (`paperId` and label), so paper tabs,
 split groups, and side-view layout restore across restarts. The Next.js
@@ -126,22 +132,55 @@ split groups, and side-view layout restore across restarts. The Next.js
 
 The paper widget exposes scoped find through its toolbar, the Edit menu, and
 `Ctrl/Cmd+F`; matches are limited to the active paper even in split layouts.
-The `Navigate` `ViewContainer` has independently collapsible `Sections` and
-`Graph` parts. `Sections` uses Theia's `TreeWidget`, including keyboard
-navigation, selection, incremental search, and theme tokens.
+The `Navigate` `ViewContainer` holds `Sections`, built on Theia's `TreeWidget`,
+including keyboard navigation, selection, incremental search, and theme
+tokens. The knowledge graph is not part of this side container: `Open
+Knowledge Graph` opens a dedicated central tab per paper (one
+`ScholarPaperGraphWidget` per `paperId`, reused on repeat opens), split to the
+right of the paper it belongs to. Selecting a graph node or edge publishes a
+source-aware value through Theia's `SelectionService`; the standard bottom
+`Property View` displays its paper, entity or relation details and connections.
 
 The `Annotations` `ViewContainer` contains `Comments`, `Glossary`, and
-`Annotation`. Comments and glossary entries are compact `TreeWidget` rows
-grouped by section or entity type. A comment row previews the attached passage,
-followed by the annotation in the theme's muted text color. LaTeX in both parts
-is rendered with MathJax while the row remains compact. Selecting it reveals
-the full annotation and attached passage, also with LaTeX rendering, in the
-`Annotation` part; double-clicking or `Reveal in Paper` navigates to the source
-block. The same part switches in place to edit mode and returns to the detail
-view after save or cancel. Right-click and detail actions share Theia commands,
-while creation also uses the embedded editor instead of a floating React
-popover. The tree data transformations live in
+`Annotation` for content already attached to the paper. Comments and glossary
+entries are compact `TreeWidget` rows grouped by section or entity type. A
+comment row previews the attached passage, followed by the annotation in the
+theme's muted text color. LaTeX in both parts is rendered with MathJax while the
+row remains compact. Selecting it reveals the full annotation and attached
+passage, also with LaTeX rendering, in the `Annotation` part; double-clicking or
+`Reveal in Paper` navigates to the source block. The same part switches in place
+to edit mode and returns to the detail view after save or cancel. Right-click
+and detail actions share Theia commands, while creation also uses the embedded
+editor instead of a floating React popover. The tree data transformations live in
 `lib/scholar-native-tree.ts` so they remain framework-independent and testable.
+
+The separate right-sidebar `Tooltip Drafts` `ViewContainer` holds `Suggestions`
+and `Suggestion Details`, making pending manual and AI content directly
+discoverable without the `Annotations` overflow menu. Its tree is expanded on
+first open, details are revealed when a draft is focused or created, and the
+container can be reopened through `View → Views`. `Suggestions` is a searchable
+native `TreeWidget` grouped as
+`Manual / AI → entity type → suggestion`. Its leaf and group checkboxes derive
+tri-state selection from `ScholarSuggestionService`, while row focus reveals
+the separate `Suggestion Details` `ReactWidget`. The service keeps checked IDs,
+focus, transient edits, create drafts, loading, and mutation state isolated by
+paper ID and rejects stale list responses. `Generate`, `Apply`, `Create Manual
+Suggestion`, and `Delete Suggestion` are Theia commands exposed through the tree
+toolbar, context menu, or details widget. Apply refreshes the shared paper and
+tooltip caches so the reader and comments update immediately.
+
+Generate and Apply publish per-paper `Generating tooltip drafts…` and
+`Applying tooltip drafts…` phases through the shared workspace status, so the
+native bottom status bar stays visible for the entire request and subsequent
+reload. The finish callback is ownership-guarded: a late completion cannot
+clear a newer operation or another paper's status. The current suggestion
+endpoints do not stream percentage progress, so these phases intentionally use
+an indeterminate spinner rather than a fabricated percentage.
+
+The Next.js `TooltipSuggestionsDialog.tsx` remains the reference-client
+consumer of the unchanged backend contracts. The native workflow does not add
+LLM API-key or model settings; Generate only shares the existing
+`scholar-agent-expertise` storage key and default text with that client.
 
 ```bash
 cd frontend

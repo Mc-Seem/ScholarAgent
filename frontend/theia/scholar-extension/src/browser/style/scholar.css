@@ -303,10 +303,104 @@
   white-space: nowrap;
 }
 
+.scholar-suggestions-tree .theia-TreeNodeCaption {
+  gap: 0.25rem;
+}
+
+.scholar-suggestion-checkbox {
+  flex: none;
+  box-sizing: border-box;
+  width: 14px;
+  height: 14px;
+  margin: 0 4px 0 0;
+  padding: 0;
+  accent-color: var(--theia-button-background);
+  cursor: pointer;
+}
+
+.scholar-suggestion-checkbox:focus-visible {
+  outline: 1px solid var(--theia-focusBorder);
+  outline-offset: 1px;
+}
+
+.scholar-suggestion-checkbox:checked,
+.scholar-suggestion-checkbox:indeterminate {
+  border-color: var(--theia-focusBorder);
+}
+
+.scholar-suggestion-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scholar-suggestion-label mjx-container {
+  display: inline-block !important;
+  max-width: 100%;
+  margin: 0 !important;
+  overflow: hidden;
+  vertical-align: middle;
+}
+
+.scholar-suggestion-type,
+.scholar-suggestion-source {
+  flex: none;
+  padding: 0 0.35rem;
+  color: var(--theia-badge-foreground);
+  font-size: var(--theia-ui-font-size1);
+  line-height: 1.35rem;
+  background: var(--theia-badge-background);
+  border-radius: 0.7rem;
+}
+
+.scholar-tree-error {
+  color: var(--theia-errorForeground);
+}
+
 .scholar-native-graph {
   min-height: 180px;
   overflow: hidden;
   background: var(--theia-editor-background);
+}
+
+.scholar-graph-properties {
+  box-sizing: border-box;
+  height: 100%;
+  overflow: auto;
+  color: var(--theia-foreground);
+  background: var(--theia-editor-background);
+}
+
+.scholar-graph-properties-empty {
+  padding: 0.75rem;
+  color: var(--theia-descriptionForeground);
+}
+
+.scholar-graph-properties-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.scholar-graph-properties-table th,
+.scholar-graph-properties-table td {
+  padding: 0.4rem 0.55rem;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--theia-widget-border);
+}
+
+.scholar-graph-properties-table th {
+  width: 30%;
+  color: var(--theia-descriptionForeground);
+  font-weight: 500;
+}
+
+.scholar-graph-properties-table td {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .scholar-native-editor {
@@ -408,4 +502,92 @@
   display: flex;
   justify-content: flex-end;
   gap: 0.4rem;
+}
+
+.scholar-suggestion-editor-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.75rem;
+  color: var(--theia-descriptionForeground);
+  text-align: center;
+}
+
+.scholar-suggestion-editor-empty .theia-button,
+.scholar-suggestion-detail-actions .theia-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.scholar-suggestion-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  box-sizing: border-box;
+  min-height: 100%;
+  padding: 0.65rem;
+}
+
+.scholar-suggestion-detail-header {
+  justify-content: flex-start;
+  gap: 0.4rem;
+}
+
+.scholar-suggestion-detail-header strong {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.scholar-suggestion-preview,
+.scholar-suggestion-label-preview {
+  padding: 0.55rem;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+  background: var(--theia-editorWidget-background, var(--theia-editor-background));
+  border: 1px solid var(--theia-widget-border);
+  border-radius: 3px;
+}
+
+.scholar-suggestion-preview mjx-container,
+.scholar-suggestion-label-preview mjx-container {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.scholar-suggestion-editor .scholar-native-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  color: var(--theia-descriptionForeground);
+  font-size: var(--theia-ui-font-size1);
+}
+
+.scholar-suggestion-editor .scholar-native-textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 100px;
+  resize: vertical;
+}
+
+.scholar-suggestion-modified {
+  color: var(--theia-charts-yellow, var(--theia-descriptionForeground));
+  font-size: var(--theia-ui-font-size1);
+}
+
+.scholar-suggestion-create h3 {
+  margin: 0;
+  color: var(--theia-foreground);
+  font-size: var(--theia-ui-font-size2);
+  font-weight: 600;
+}
+
+.scholar-suggestion-label-preview > span:first-child {
+  display: block;
+  margin-bottom: 0.3rem;
+  color: var(--theia-descriptionForeground);
+  font-size: var(--theia-ui-font-size1);
 }

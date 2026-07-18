@@ -22,6 +22,7 @@ import { ScholarWorkspaceService } from './scholar-workspace-service'
 export const SCHOLAR_LIBRARY_WIDGET_ID = 'scholar-agent:library'
 export const SCHOLAR_NAVIGATION_WIDGET_ID = 'scholar-agent:navigation'
 export const SCHOLAR_ANNOTATIONS_WIDGET_ID = 'scholar-agent:annotations'
+export const SCHOLAR_TOOLTIP_DRAFTS_WIDGET_ID = 'scholar-agent:tooltip-drafts'
 export const SCHOLAR_LIBRARY_CONTEXT_MENU: MenuPath = ['scholar-agent-library-context-menu']
 
 const LIBRARY_EMPTY_MESSAGE = 'No papers yet. Use Upload LaTeX or Import from arXiv to get started.'

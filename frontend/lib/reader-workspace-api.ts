@@ -20,7 +20,174 @@ interface ApiErrorBody {
   detail?: string
 }
 
-export class HttpReaderWorkspaceApi implements ReaderWorkspaceApi {
+export interface TooltipSuggestionOccurrence {
+  section_id: string
+  dom_node_id: string
+  char_offset: number
+  length: number
+  snippet: string
+}
+
+export interface GeneratedTooltipSuggestion {
+  entity_id: string
+  entity_label: string
+  entity_type: string
+  tooltip_content: string
+  occurrences: TooltipSuggestionOccurrence[]
+}
+
+export interface TooltipSuggestion {
+  id: string
+  paper_id: string
+  entity_id: string | null
+  entity_label: string
+  entity_type: string
+  tooltip_content: string
+  is_ai_generated: boolean
+  created_at: string
+}
+
+export interface GenerateTooltipSuggestionsRequest {
+  user_expertise: string
+  entity_types?: string[] | null
+}
+
+export interface GenerateTooltipSuggestionsResponse {
+  suggestions: GeneratedTooltipSuggestion[]
+  total_entities: number
+  suggested_count: number
+}
+
+export interface CreateManualTooltipSuggestionRequest {
+  entity_label: string
+  entity_type: string
+  tooltip_content: string
+}
+
+export interface DeleteTooltipSuggestionResponse {
+  status: 'success'
+}
+
+export interface ApplyTooltipSuggestionsRequest {
+  suggestions: GeneratedTooltipSuggestion[]
+}
+
+export interface ApplyTooltipSuggestionsResponse {
+  success: boolean
+  spans_injected: number
+  tooltips_created: number
+  errors: string[]
+}
+
+export interface TooltipSuggestionApi {
+  listTooltipSuggestions(paperId: string): Promise<TooltipSuggestion[]>
+  generateTooltipSuggestions(
+    paperId: string,
+    request: GenerateTooltipSuggestionsRequest,
+  ): Promise<GenerateTooltipSuggestionsResponse>
+  createManualTooltipSuggestion(
+    paperId: string,
+    request: CreateManualTooltipSuggestionRequest,
+  ): Promise<TooltipSuggestion>
+  deleteTooltipSuggestion(
+    paperId: string,
+    suggestionId: string,
+  ): Promise<DeleteTooltipSuggestionResponse>
+  applyTooltipSuggestions(
+    paperId: string,
+    request: ApplyTooltipSuggestionsRequest,
+  ): Promise<ApplyTooltipSuggestionsResponse>
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object'
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === 'string'
+}
+
+function isNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value)
+}
+
+function isTooltipSuggestionOccurrence(value: unknown): value is TooltipSuggestionOccurrence {
+  return isRecord(value)
+    && isString(value.section_id)
+    && isString(value.dom_node_id)
+    && isNumber(value.char_offset)
+    && isNumber(value.length)
+    && isString(value.snippet)
+}
+
+function isGeneratedTooltipSuggestion(value: unknown): value is GeneratedTooltipSuggestion {
+  return isRecord(value)
+    && isString(value.entity_id)
+    && isString(value.entity_label)
+    && isString(value.entity_type)
+    && isString(value.tooltip_content)
+    && Array.isArray(value.occurrences)
+    && value.occurrences.every(isTooltipSuggestionOccurrence)
+}
+
+function isTooltipSuggestion(value: unknown): value is TooltipSuggestion {
+  return isRecord(value)
+    && isString(value.id)
+    && isString(value.paper_id)
+    && (value.entity_id === null || isString(value.entity_id))
+    && isString(value.entity_label)
+    && isString(value.entity_type)
+    && isString(value.tooltip_content)
+    && typeof value.is_ai_generated === 'boolean'
+    && isString(value.created_at)
+}
+
+function malformedResponse(): never {
+  throw new Error('Malformed response from server')
+}
+
+function parseTooltipSuggestions(value: unknown): TooltipSuggestion[] {
+  if (!Array.isArray(value) || !value.every(isTooltipSuggestion)) {
+    return malformedResponse()
+  }
+  return value
+}
+
+function parseGeneratedTooltipSuggestions(value: unknown): GenerateTooltipSuggestionsResponse {
+  if (!isRecord(value)
+    || !Array.isArray(value.suggestions)
+    || !value.suggestions.every(isGeneratedTooltipSuggestion)
+    || !isNumber(value.total_entities)
+    || !isNumber(value.suggested_count)) {
+    return malformedResponse()
+  }
+  return value as unknown as GenerateTooltipSuggestionsResponse
+}
+
+function parseTooltipSuggestion(value: unknown): TooltipSuggestion {
+  return isTooltipSuggestion(value) ? value : malformedResponse()
+}
+
+function parseDeleteTooltipSuggestionResponse(value: unknown): DeleteTooltipSuggestionResponse {
+  if (!isRecord(value) || value.status !== 'success') {
+    return malformedResponse()
+  }
+  return { status: 'success' }
+}
+
+function parseApplyTooltipSuggestionsResponse(value: unknown): ApplyTooltipSuggestionsResponse {
+  if (!isRecord(value)
+    || typeof value.success !== 'boolean'
+    || !isNumber(value.spans_injected)
+    || !isNumber(value.tooltips_created)
+    || !Array.isArray(value.errors)
+    || !value.errors.every(isString)) {
+    return malformedResponse()
+  }
+  return value as unknown as ApplyTooltipSuggestionsResponse
+}
+
+export class HttpReaderWorkspaceApi implements ReaderWorkspaceApi, TooltipSuggestionApi {
   constructor(private readonly apiBase = API_BASE) {}
 
   async listPapers(): Promise<Paper[]> {
@@ -115,6 +282,69 @@ export class HttpReaderWorkspaceApi implements ReaderWorkspaceApi {
     )
   }
 
+  async listTooltipSuggestions(paperId: string): Promise<TooltipSuggestion[]> {
+    const data = await this.request<unknown>(
+      `/api/papers/${encodeURIComponent(paperId)}/suggestions`,
+    )
+    return parseTooltipSuggestions(data)
+  }
+
+  async generateTooltipSuggestions(
+    paperId: string,
+    request: GenerateTooltipSuggestionsRequest,
+  ): Promise<GenerateTooltipSuggestionsResponse> {
+    const data = await this.request<unknown>(
+      `/api/papers/${encodeURIComponent(paperId)}/tooltips/suggest`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+      },
+    )
+    return parseGeneratedTooltipSuggestions(data)
+  }
+
+  async createManualTooltipSuggestion(
+    paperId: string,
+    request: CreateManualTooltipSuggestionRequest,
+  ): Promise<TooltipSuggestion> {
+    const data = await this.request<unknown>(
+      `/api/papers/${encodeURIComponent(paperId)}/suggestions/manual`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+      },
+    )
+    return parseTooltipSuggestion(data)
+  }
+
+  async deleteTooltipSuggestion(
+    paperId: string,
+    suggestionId: string,
+  ): Promise<DeleteTooltipSuggestionResponse> {
+    const data = await this.request<unknown>(
+      `/api/papers/${encodeURIComponent(paperId)}/suggestions/${encodeURIComponent(suggestionId)}`,
+      { method: 'DELETE' },
+    )
+    return parseDeleteTooltipSuggestionResponse(data)
+  }
+
+  async applyTooltipSuggestions(
+    paperId: string,
+    request: ApplyTooltipSuggestionsRequest,
+  ): Promise<ApplyTooltipSuggestionsResponse> {
+    const data = await this.request<unknown>(
+      `/api/papers/${encodeURIComponent(paperId)}/tooltips/apply`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+      },
+    )
+    return parseApplyTooltipSuggestionsResponse(data)
+  }
+
   watchCompilation(
     paperId: string,
     onProgress: (progress: CompilationProgress) => void,
@@ -164,7 +394,11 @@ export class HttpReaderWorkspaceApi implements ReaderWorkspaceApi {
     if (!parseJson || response.status === 204) {
       return undefined as T
     }
-    return response.json() as Promise<T>
+    try {
+      return await response.json() as T
+    } catch {
+      return malformedResponse()
+    }
   }
 
   private url(endpoint: string): string {

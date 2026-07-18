@@ -103,6 +103,7 @@ export class ReaderWorkspaceStore {
   private readonly compilationStops = new Map<string, () => void>()
   private readonly knowledgeGraphStops = new Map<string, () => void>()
   private readonly statusClearTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  private readonly paperOperationTokens = new Map<string, symbol>()
 
   constructor(private readonly api: ReaderWorkspaceApi) {}
 
@@ -262,6 +263,7 @@ export class ReaderWorkspaceStore {
     this.knowledgeGraphStops.get(paperId)?.()
     this.knowledgeGraphStops.delete(paperId)
     this.cancelStatusClear(paperId)
+    this.paperOperationTokens.delete(paperId)
 
     const nextOpenPaperIds = this.snapshot.openPaperIds.filter(id => id !== paperId)
     this.update({
@@ -356,6 +358,26 @@ export class ReaderWorkspaceStore {
         ? openPaperIds.at(-1) ?? null
         : this.snapshot.activePaperId,
     })
+  }
+
+  startPaperOperation(paperId: string, status: string): () => void {
+    const token = Symbol(status)
+    this.paperOperationTokens.set(paperId, token)
+    this.setPaperStatus(paperId, status)
+    let finished = false
+    return () => {
+      if (finished) {
+        return
+      }
+      finished = true
+      if (this.paperOperationTokens.get(paperId) !== token) {
+        return
+      }
+      this.paperOperationTokens.delete(paperId)
+      if (this.snapshot.statusByPaperId[paperId] === status) {
+        this.clearPaperStatus(paperId)
+      }
+    }
   }
 
   clearPaperStatus(paperId: string): void {

@@ -107,6 +107,26 @@ describe('ReaderWorkspaceStore', () => {
     expect(api.getPaper).toHaveBeenCalledTimes(3)
   })
 
+  it('scopes paper-operation statuses and ignores stale finish callbacks', () => {
+    const store = new ReaderWorkspaceStore(api)
+    const finishGeneration = store.startPaperOperation('paper-a', 'Generating tooltip drafts…')
+    const finishOtherPaper = store.startPaperOperation('paper-b', 'Applying tooltip drafts…')
+    const finishApply = store.startPaperOperation('paper-a', 'Applying tooltip drafts…')
+
+    expect(store.getSnapshot().statusByPaperId).toEqual({
+      'paper-a': 'Applying tooltip drafts…',
+      'paper-b': 'Applying tooltip drafts…',
+    })
+
+    finishGeneration()
+    expect(store.getSnapshot().statusByPaperId['paper-a']).toBe('Applying tooltip drafts…')
+    finishOtherPaper()
+    expect(store.getSnapshot().statusByPaperId['paper-b']).toBeUndefined()
+    finishApply()
+    finishApply()
+    expect(store.getSnapshot().statusByPaperId['paper-a']).toBeUndefined()
+  })
+
   it('publishes created and updated annotations to every subscriber', async () => {
     const created = tooltip('paper-a', 'entity-a')
     api.createTooltip = vi.fn().mockResolvedValue(created)

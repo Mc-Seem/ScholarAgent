@@ -13,6 +13,10 @@ export const ScholarCommands = {
     id: 'scholar-agent.show-annotations',
     label: 'Scholar Agent: Show Annotations',
   } satisfies Command,
+  SHOW_TOOLTIP_DRAFTS: {
+    id: 'scholar-agent.show-tooltip-drafts',
+    label: 'Scholar Agent: Show Tooltip Drafts',
+  } satisfies Command,
   REFRESH_LIBRARY: {
     id: 'scholar-agent.refresh-library',
     label: 'Scholar Agent: Refresh Paper Library',
@@ -92,5 +96,25 @@ export const ScholarCommands = {
     id: 'scholar-agent.open-graph',
     label: 'Open Knowledge Graph',
     iconClass: 'codicon codicon-type-hierarchy',
+  } satisfies Command,
+  GENERATE_SUGGESTIONS: {
+    id: 'scholar-agent.generate-suggestions',
+    label: 'Generate AI Tooltip Suggestions',
+    iconClass: 'codicon codicon-sparkle',
+  } satisfies Command,
+  APPLY_SUGGESTIONS: {
+    id: 'scholar-agent.apply-suggestions',
+    label: 'Apply Selected Tooltip Suggestions',
+    iconClass: 'codicon codicon-check-all',
+  } satisfies Command,
+  CREATE_MANUAL_SUGGESTION: {
+    id: 'scholar-agent.create-manual-suggestion',
+    label: 'Create Manual Suggestion',
+    iconClass: 'codicon codicon-add',
+  } satisfies Command,
+  DELETE_SUGGESTION: {
+    id: 'scholar-agent.delete-suggestion',
+    label: 'Delete Suggestion',
+    iconClass: 'codicon codicon-trash',
   } satisfies Command,
 }
