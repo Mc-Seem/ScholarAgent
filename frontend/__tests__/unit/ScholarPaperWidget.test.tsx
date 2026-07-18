@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import * as React from 'react'
 
@@ -8,17 +8,8 @@ import type {
   ScholarPaperWidget as ScholarPaperWidgetClass,
   ScholarPaperWidgetOptions,
 } from '@/theia/scholar-extension/src/browser/scholar-paper-widget'
+import type { ScholarAnnotationService } from '@/theia/scholar-extension/src/browser/scholar-annotation-service'
 import type { ScholarWorkspaceService } from '@/theia/scholar-extension/src/browser/scholar-workspace-service'
-
-vi.mock('@/components/reader/HTMLRenderer', () => ({
-  HTMLRenderer: ({ html }: { html: string }) => (
-    <article
-      className="html-renderer"
-      data-testid="html-renderer"
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
-  ),
-}))
 
 let ScholarPaperWidget: typeof ScholarPaperWidgetClass
 const widgets: ScholarPaperWidgetClass[] = []
@@ -53,7 +44,7 @@ afterAll(() => {
   delete (document as Partial<Document>).queryCommandSupported
 })
 
-function paperDetail(id: string, html = `<p>${id}</p>`): PaperDetail {
+function paperDetail(id: string, html = `<p>${id}</p>`, title = id): PaperDetail {
   return {
     id,
     filename: `${id}.tar.gz`,
@@ -65,12 +56,12 @@ function paperDetail(id: string, html = `<p>${id}</p>`): PaperDetail {
     sections: [],
     equations: [],
     citations: [],
-    paper_metadata: { title: id },
+    paper_metadata: { title },
     has_knowledge_graph: false,
   }
 }
 
-function snapshot(paperId: string, html?: string): ReaderWorkspaceSnapshot {
+function snapshot(paperId: string, html?: string, title?: string): ReaderWorkspaceSnapshot {
   return {
     papers: [],
     libraryLoading: false,
@@ -78,7 +69,7 @@ function snapshot(paperId: string, html?: string): ReaderWorkspaceSnapshot {
     activePaperId: paperId,
     openPaperIds: [paperId],
     loadingPaperIds: [],
-    papersById: { [paperId]: paperDetail(paperId, html) },
+    papersById: { [paperId]: paperDetail(paperId, html, title) },
     tooltipsByPaperId: {},
     activeEntityByPaperId: {},
     paperErrors: {},
@@ -94,6 +85,7 @@ function createStore(value: ReaderWorkspaceSnapshot): ScholarWorkspaceService {
     openPaper: vi.fn().mockResolvedValue(value.papersById[value.activePaperId!]),
     closePaper: vi.fn(),
     activatePaper: vi.fn(),
+    setActiveEntity: vi.fn(),
     createTooltip: vi.fn().mockResolvedValue(undefined),
     updateTooltip: vi.fn().mockResolvedValue(undefined),
     deleteTooltip: vi.fn().mockResolvedValue(undefined),
@@ -104,14 +96,16 @@ function createStore(value: ReaderWorkspaceSnapshot): ScholarWorkspaceService {
 function createWidget(
   options: ScholarPaperWidgetOptions,
   html?: string,
+  title?: string,
 ): ScholarPaperWidgetClass {
   let widget: ScholarPaperWidgetClass | undefined
   act(() => {
     widget = new ScholarPaperWidget(
-      createStore(snapshot(options.paperId, html)),
+      createStore(snapshot(options.paperId, html, title)),
       { error: vi.fn() } as never,
       { render: vi.fn() } as never,
       options,
+      { select: vi.fn() } as never,
     )
   })
   widgets.push(widget!)
@@ -132,7 +126,98 @@ function installSearchRoot(widget: ScholarPaperWidgetClass, text: string): HTMLE
   return widget.node.querySelector<HTMLElement>('.html-renderer')!
 }
 
-describe('ScholarPaperWidget native search bridge', () => {
+describe('ScholarPaperWidget', () => {
+  it('selects the applied semantic tooltip when its entity is clicked', () => {
+    const value = snapshot(
+      'paper-a',
+      '<p><span class="kg-entity" data-entity-id="entity-attention">attention</span></p>',
+    )
+    value.tooltipsByPaperId['paper-a'] = [{
+      id: 'tooltip-attention',
+      paper_id: 'paper-a',
+      entity_id: 'entity-attention',
+      dom_node_id: null,
+      target_text: 'attention',
+      content: 'A mechanism that weights relevant input elements.',
+      is_pinned: false,
+      display_order: null,
+      created_at: '2026-07-15T00:00:00Z',
+      updated_at: '2026-07-15T00:00:00Z',
+    }]
+    const store = createStore(value)
+    const annotations = { select: vi.fn() } as unknown as ScholarAnnotationService
+    let widget: ScholarPaperWidgetClass | undefined
+    act(() => {
+      widget = new ScholarPaperWidget(
+        store,
+        { error: vi.fn() } as never,
+        { render: vi.fn() } as never,
+        { paperId: 'paper-a', label: 'Paper A' },
+        annotations,
+      )
+    })
+    widgets.push(widget!)
+    renderWidget(widget!)
+
+    fireEvent.click(screen.getByText('attention'))
+
+    expect(store.setActiveEntity).toHaveBeenCalledWith('paper-a', 'entity-attention')
+    expect(annotations.select).toHaveBeenCalledWith('paper-a', 'tooltip-attention')
+  })
+
+  it('does not select an entity when an ordinary article element is clicked', () => {
+    const value = snapshot('paper-a', '<p data-id="paragraph-1">Paragraph</p>')
+    const store = createStore(value)
+    const annotations = { select: vi.fn() } as unknown as ScholarAnnotationService
+    let widget: ScholarPaperWidgetClass | undefined
+    act(() => {
+      widget = new ScholarPaperWidget(
+        store,
+        { error: vi.fn() } as never,
+        { render: vi.fn() } as never,
+        { paperId: 'paper-a', label: 'Paper A' },
+        annotations,
+      )
+    })
+    widgets.push(widget!)
+    const view = renderWidget(widget!)
+
+    fireEvent.click(view.container.querySelector('[data-id="paragraph-1"]')!)
+
+    expect(store.setActiveEntity).not.toHaveBeenCalled()
+    expect(annotations.select).not.toHaveBeenCalled()
+  })
+
+  it('truncates a long paper title in the tab and preserves it in the caption', async () => {
+    const longTitle = 'This is a very very long paper title that should definitely be truncated in the tab label because it is just too long'
+    const widget = createWidget(
+      { paperId: 'paper-a', label: 'Paper A' },
+      '<p>Paper body</p>',
+      longTitle,
+    )
+
+    await act(async () => {
+      ;(widget as unknown as { loadPaper(): void }).loadPaper()
+      await Promise.resolve()
+    })
+
+    expect(widget.title.label.length).toBeLessThan(longTitle.length)
+    expect(widget.title.label).toContain('…')
+    expect(widget.title.caption).toBe(longTitle)
+  })
+
+  it('keeps the Abstract text at body size and gives the paper side padding', () => {
+    const widget = createWidget(
+      { paperId: 'paper-a', label: 'Paper A' },
+      '<p>Body text</p><div class="ltx_abstract">Abstract text</div>',
+    )
+    const view = renderWidget(widget)
+    const css = view.container.querySelector('style')?.textContent ?? ''
+
+    expect(css).toMatch(/\.ltx_abstract\s*{[^}]*font-size:\s*1rem/)
+    expect(css).toMatch(/\.html-renderer\s*{[^}]*padding-(left|right|inline)/)
+  })
+
   it('renders the paper at full height without the embedded search toolbar', () => {
     const widget = createWidget({ paperId: 'paper-a', label: 'Paper A' }, '<p>Paper body</p>')
     const view = renderWidget(widget)

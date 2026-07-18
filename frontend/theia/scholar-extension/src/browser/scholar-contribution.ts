@@ -18,7 +18,6 @@ import {
   FrontendApplicationContribution,
   KeybindingContribution,
   KeybindingRegistry,
-  SingleTextInputDialog,
   StatusBar,
   StatusBarAlignment,
   ViewContainer,
@@ -47,6 +46,7 @@ import {
   ScholarLlmSettingsWidget,
 } from './scholar-llm-settings-widget'
 import { navigateToPaperElement, paperLabel } from './scholar-react'
+import { ScholarTextareaDialog } from './scholar-textarea-dialog'
 import {
   SCHOLAR_ANNOTATIONS_WIDGET_ID,
   SCHOLAR_LIBRARY_CONTEXT_MENU,
@@ -91,6 +91,7 @@ import {
   isScholarSuggestionTreeNode,
 } from './scholar-suggestion-widgets'
 import { ScholarWorkspaceService } from './scholar-workspace-service'
+import { ScholarArxivImportDialog } from './scholar-arxiv-import-dialog'
 
 const STATUS_BAR_ID = 'scholar-agent.active-paper'
 const GRAPH_STATUS_BAR_ID = 'scholar-agent.graph-status'
@@ -359,6 +360,11 @@ export class ScholarContribution implements
       isEnabled: (argument: unknown) => this.canBuildKnowledgeGraph(argument),
       isVisible: (argument: unknown) => Boolean(this.paperIdOf(argument)),
     })
+    commands.registerCommand(ScholarCommands.STOP_KNOWLEDGE_GRAPH, {
+      execute: (argument: unknown) => this.stopKnowledgeGraphFromWidget(argument),
+      isEnabled: (argument: unknown) => this.canStopKnowledgeGraph(argument),
+      isVisible: (argument: unknown) => this.canStopKnowledgeGraph(argument),
+    })
     commands.registerCommand(ScholarCommands.DELETE_PAPER, {
       execute: (argument: unknown) => this.deletePaperFromWidget(argument),
       isEnabled: (argument: unknown) => Boolean(this.paperIdOf(argument)),
@@ -454,6 +460,13 @@ export class ScholarContribution implements
     this.toDispose.push(registry.registerItem({
       id: ScholarCommands.BUILD_KNOWLEDGE_GRAPH.id,
       command: ScholarCommands.BUILD_KNOWLEDGE_GRAPH.id,
+      group: 'navigation',
+      priority: 20,
+      onDidChange: this.onToolbarItemsChangedEmitter.event,
+    }))
+    this.toDispose.push(registry.registerItem({
+      id: ScholarCommands.STOP_KNOWLEDGE_GRAPH.id,
+      command: ScholarCommands.STOP_KNOWLEDGE_GRAPH.id,
       group: 'navigation',
       priority: 20,
       onDidChange: this.onToolbarItemsChangedEmitter.event,
@@ -637,6 +650,10 @@ export class ScholarContribution implements
     menus.registerMenuAction(SCHOLAR_LIBRARY_CONTEXT_MENU, {
       commandId: ScholarCommands.BUILD_KNOWLEDGE_GRAPH.id,
       order: 'b20',
+    })
+    menus.registerMenuAction(SCHOLAR_LIBRARY_CONTEXT_MENU, {
+      commandId: ScholarCommands.STOP_KNOWLEDGE_GRAPH.id,
+      order: 'b21',
     })
     menus.registerMenuAction(SCHOLAR_LIBRARY_CONTEXT_MENU, {
       commandId: ScholarCommands.DELETE_PAPER.id,
@@ -927,6 +944,19 @@ export class ScholarContribution implements
     return Boolean(paper?.has_html) && !this.store.getSnapshot().statusByPaperId[paperId]
   }
 
+  private canStopKnowledgeGraph(argument: unknown): boolean {
+    const paperId = this.paperIdOf(argument)
+    if (!paperId) {
+      return false
+    }
+    const snapshot = this.store.getSnapshot()
+    const progress = snapshot.knowledgeGraphProgressByPaperId[paperId]
+    return progress?.stage === 'starting'
+      || progress?.stage === 'extracting'
+      || snapshot.statusByPaperId[paperId] === 'Starting knowledge graph build…'
+      || snapshot.statusByPaperId[paperId] === 'Stopping knowledge graph build…'
+  }
+
   private canOpenGraph(argument: unknown): boolean {
     const paperId = this.paperIdOf(argument)
     if (!paperId) {
@@ -1018,8 +1048,9 @@ export class ScholarContribution implements
     if (!paperId) {
       return
     }
-    const dialog = new SingleTextInputDialog({
+    const dialog = new ScholarTextareaDialog({
       title: 'Generate AI Tooltip Suggestions',
+      placeholder: 'Describe your background/expertise (e.g. "graduate student in topology")…',
       initialValue: readUserExpertise(),
       confirmButtonLabel: 'Generate',
       validate: input => input.trim() ? '' : 'Expertise is required.',
@@ -1111,10 +1142,30 @@ export class ScholarContribution implements
     if (!paperId) {
       return
     }
+    const confirmed = await new ConfirmDialog({
+      title: 'Build Knowledge Graph',
+      msg: 'Build the knowledge graph now? This can take several minutes and use paid LLM tokens.',
+      ok: 'Build',
+    }).open()
+    if (!confirmed) {
+      return
+    }
     try {
       await this.store.buildKnowledgeGraph(paperId)
     } catch (reason) {
       await this.messageService.error(`Could not build knowledge graph: ${errorMessage(reason)}`)
+    }
+  }
+
+  private async stopKnowledgeGraphFromWidget(argument: unknown): Promise<void> {
+    const paperId = this.paperIdOf(argument)
+    if (!paperId) {
+      return
+    }
+    try {
+      await this.store.cancelKnowledgeGraph(paperId)
+    } catch (reason) {
+      await this.messageService.error(`Could not stop knowledge graph build: ${errorMessage(reason)}`)
     }
   }
 
@@ -1219,9 +1270,8 @@ export class ScholarContribution implements
   }
 
   private async importArxiv(): Promise<void> {
-    const dialog = new SingleTextInputDialog({
+    const dialog = new ScholarArxivImportDialog({
       title: 'Import from arXiv',
-      placeholder: 'arXiv id or URL',
     })
     const value = await dialog.open()
     const trimmed = value?.trim()

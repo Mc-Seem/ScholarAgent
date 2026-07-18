@@ -89,28 +89,27 @@ abstract class ScholarTreeWidget extends TreeWidget {
     if (!isScholarTreeNode(node)) {
       return undefined
     }
-    return <div className={`scholar-tree-icon codicon codicon-${entryIcon(node.entry)}`} />
+    const icon = entryIcon(node.entry)
+    return icon
+      ? <div className={`scholar-tree-icon codicon codicon-${icon}`} />
+      : undefined
   }
 
   protected override getCaptionChildren(node: TreeNode, props: NodeProps): React.ReactNode {
-    const caption = super.getCaptionChildren(node, props)
     if (!isScholarTreeNode(node)) {
-      return caption
+      return super.getCaptionChildren(node, props)
     }
-    const content = node.entry.kind === 'comment' && !this.searchHighlights?.has(node.id)
-      ? (
-          <ScholarAnnotationPreview
-            targetText={node.entry.label}
-            annotation={node.entry.description}
-          />
-        )
-      : caption
+    const entry = node.entry
+    const content = entry.kind === 'comment' && !this.searchHighlights?.has(node.id)
+      ? <ScholarAnnotationPreview targetText={entry.label} annotation={entry.description} />
+      : <LatexText text={entry.label} />
+
     return (
       <>
         {content}
-        {node.entry.pinned && <span className="scholar-tree-pin codicon codicon-pinned" />}
-        {node.entry.count !== undefined && (
-          <span className="scholar-tree-count">{node.entry.count}</span>
+        {entry.pinned && <span className="scholar-tree-pin codicon codicon-pinned" />}
+        {entry.count !== undefined && (
+          <span className="scholar-tree-count">{entry.count}</span>
         )}
       </>
     )
@@ -183,7 +182,9 @@ export class ScholarOutlineWidget extends ScholarTreeWidget {
     const paper = snapshot.activePaperId
       ? snapshot.papersById[snapshot.activePaperId]
       : undefined
-    return paper ? buildOutlineTree(getPaperTOC(paper.sections, paper.html_content)) : []
+    return paper
+      ? buildOutlineTree(getPaperTOC(paper.sections, paper.html_content), paper.paper_metadata?.title)
+      : []
   }
 }
 
@@ -218,6 +219,7 @@ export class ScholarCommentsWidget extends ScholarTreeWidget {
       snapshot.tooltipsByPaperId[paperId] ?? [],
       toc,
       nodeId => sectionByNode.get(nodeId),
+      paper.paper_metadata?.title,
     )
   }
 
@@ -271,20 +273,16 @@ export class ScholarGlossaryWidget extends ScholarTreeWidget {
   protected override activateEntry(entry: ScholarTreeEntry): void {
     super.activateEntry(entry)
     const paperId = this.store.getSnapshot().activePaperId
-    if (paperId && entry.entityId) {
-      this.store.setActiveEntity(paperId, entry.entityId)
+    if (paperId && entry.tooltipId) {
+      this.annotations.select(paperId, entry.tooltipId)
     }
   }
 
   protected override handleDblClickEvent(node: TreeNode, event: React.MouseEvent<HTMLElement>): void {
     if (isScholarTreeNode(node) && node.entry.tooltipId) {
-      const snapshot = this.store.getSnapshot()
-      const paperId = snapshot.activePaperId
-      const tooltip = paperId
-        ? snapshot.tooltipsByPaperId[paperId]?.find(item => item.id === node.entry.tooltipId)
-        : undefined
-      if (paperId && tooltip) {
-        this.annotations.edit(paperId, tooltip.id, tooltip.content, tooltip.target_text ?? undefined)
+      const paperId = this.store.getSnapshot().activePaperId
+      if (paperId) {
+        this.annotations.select(paperId, node.entry.tooltipId)
       }
       event.stopPropagation()
       return
@@ -303,7 +301,7 @@ export class ScholarAnnotationEditorWidget extends ReactWidget {
   ) {
     super()
     this.id = SCHOLAR_ANNOTATION_EDITOR_WIDGET_ID
-    this.title.label = 'Annotation'
+    this.title.label = 'Annotation Details'
     this.title.caption = 'Annotation Details and Editor'
     this.title.iconClass = 'codicon codicon-comment'
     this.node.classList.add('scholar-widget', 'scholar-native-editor')
@@ -425,57 +423,59 @@ function ScholarAnnotationDetail({
 
   return (
     <article className="scholar-annotation-detail">
-      <header className="scholar-annotation-detail-header">
-        <strong>Annotation</strong>
-        {tooltip.is_pinned && (
-          <span className="codicon codicon-pinned" title="Pinned" aria-label="Pinned" />
-        )}
-      </header>
-      {tooltip.target_text?.trim() && (
-        <div className="scholar-annotation-target">
-          <span>Attached to</span>
-          <blockquote><LatexText text={tooltip.target_text} /></blockquote>
-        </div>
+      {(tooltip.target_text?.trim() || tooltip.is_pinned) && (
+        <header className="scholar-annotation-detail-header scholar-suggestion-detail-header">
+          {tooltip.target_text?.trim() && (
+            <strong><LatexText text={tooltip.target_text} /></strong>
+          )}
+          {tooltip.is_pinned && (
+            <span className="codicon codicon-pinned" title="Pinned" aria-label="Pinned" />
+          )}
+        </header>
       )}
-      <div className="scholar-annotation-content">
+      <div className="scholar-suggestion-preview scholar-annotation-content">
         <LatexText text={tooltip.content} />
       </div>
       <div className="scholar-native-editor-actions scholar-annotation-detail-actions">
         <button
           type="button"
           className="theia-button secondary"
+          title="Reveal in Paper"
+          aria-label="Reveal in Paper"
           disabled={!tooltip.dom_node_id}
           onClick={() => execute(ScholarCommands.OPEN_ANNOTATION.id)}
         >
           <span className="codicon codicon-go-to-file" aria-hidden="true" />
-          Reveal in Paper
         </button>
         <button
           type="button"
           className="theia-button secondary"
+          title="Edit Annotation"
+          aria-label="Edit Annotation"
           onClick={() => execute(ScholarCommands.EDIT_ANNOTATION.id)}
         >
           <span className="codicon codicon-edit" aria-hidden="true" />
-          Edit
         </button>
         <button
           type="button"
           className="theia-button secondary"
+          title={tooltip.is_pinned ? 'Unpin Annotation' : 'Pin Annotation'}
+          aria-label={tooltip.is_pinned ? 'Unpin Annotation' : 'Pin Annotation'}
           onClick={() => execute(ScholarCommands.TOGGLE_ANNOTATION_PIN.id)}
         >
           <span
             className={`codicon codicon-${tooltip.is_pinned ? 'pinned' : 'pin'}`}
             aria-hidden="true"
           />
-          {tooltip.is_pinned ? 'Unpin' : 'Pin'}
         </button>
         <button
           type="button"
           className="theia-button secondary scholar-annotation-delete"
+          title="Delete Annotation"
+          aria-label="Delete Annotation"
           onClick={() => execute(ScholarCommands.DELETE_ANNOTATION.id)}
         >
           <span className="codicon codicon-trash" aria-hidden="true" />
-          Delete
         </button>
       </div>
     </article>
@@ -594,9 +594,21 @@ function collectTreeState(
 }
 
 function entryIcon(entry: ScholarTreeEntry): string {
-  if (entry.kind === 'section') return 'symbol-structure'
+  if (entry.kind === 'section') return ''
   if (entry.kind === 'comment') return 'comment'
-  if (entry.kind === 'glossary') return 'symbol-keyword'
+  if (entry.kind === 'glossary') {
+    const entityType = entry.entityId?.split('_', 1)[0]?.toLowerCase()
+    if (entityType === 'def' || entityType === 'definition') return 'symbol-class'
+    if (entityType === 'formula' || entityType === 'equation') return 'symbol-operator'
+    if (entityType === 'symbol') return 'symbol-variable'
+    if (entityType === 'theorem') return 'symbol-constant'
+    return 'symbol-keyword'
+  }
+  const groupLabel = entry.label.toLowerCase()
+  if (groupLabel.includes('definition')) return 'symbol-class'
+  if (groupLabel.includes('formula') || groupLabel.includes('equation')) return 'symbol-operator'
+  if (groupLabel.includes('symbol')) return 'symbol-variable'
+  if (groupLabel.includes('theorem')) return 'symbol-constant'
   return 'folder'
 }
 

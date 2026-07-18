@@ -35,6 +35,13 @@ export function paperLabel(filename: string, title?: unknown): string {
     : filename.replace(/\.(tar\.gz|tgz|zip|tex)$/i, '')
 }
 
+export function truncateLabel(label: string, maxLength = 45): string {
+  if (label.length <= maxLength) {
+    return label
+  }
+  return `${label.substring(0, maxLength - 1)}…`
+}
+
 export function navigateToPaperElement(paperId: string, dataId: string): void {
   const paperRoot = Array.from(document.querySelectorAll<HTMLElement>('[data-scholar-paper-id]'))
     .find(element => element.dataset.scholarPaperId === paperId)

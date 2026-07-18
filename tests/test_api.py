@@ -5,9 +5,12 @@ Tests for API endpoints.
 import io
 import tarfile
 from datetime import datetime
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, AsyncMock, MagicMock
 
 import pytest
+
+from backend.app.api.main import _paper_to_response
+from backend.app.database.models import Paper
 
 
 class TestRootEndpoint:
@@ -40,6 +43,19 @@ class TestPapersListEndpoint:
         data = response.json()
         papers = data if isinstance(data, list) else data.get("papers", [])
         assert isinstance(papers, list)
+
+    def test_list_summary_includes_persisted_paper_title(self):
+        """Compiled titles must be available without fetching the full paper."""
+        paper = Paper(
+            id="paper-with-title",
+            filename="arXiv:2607.02873.tar.gz",
+            paper_metadata={"title": "A Persisted Research Title"},
+            uploaded_at=datetime(2026, 7, 18),
+        )
+
+        response = _paper_to_response(paper)
+
+        assert response.title == "A Persisted Research Title"
 
 
 class TestPaperUploadEndpoint:
@@ -108,6 +124,40 @@ class TestPaperUploadEndpoint:
         id2 = response2.json().get("id") or response2.json().get("paper_id")
 
         assert id1 == id2
+
+
+class TestArxivMetadataEndpoint:
+    def test_rejects_invalid_arxiv_input_without_network_call(self, api_client):
+        with patch("backend.app.api.main.httpx.AsyncClient") as client:
+            response = api_client.get("/api/arxiv/metadata", params={"url_or_id": "not-an-id"})
+
+        assert response.status_code == 400
+        client.assert_not_called()
+
+    def test_normalizes_title_from_atom_metadata(self, api_client):
+        atom = """<?xml version="1.0" encoding="UTF-8"?>
+        <feed xmlns="http://www.w3.org/2005/Atom">
+          <entry><title>  A Paper\n  With a Normalized Title  </title></entry>
+        </feed>"""
+        upstream_response = MagicMock(text=atom)
+        upstream_response.raise_for_status.return_value = None
+        upstream_client = MagicMock()
+        upstream_client.get = AsyncMock(return_value=upstream_response)
+        context = MagicMock()
+        context.__aenter__ = AsyncMock(return_value=upstream_client)
+        context.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("backend.app.api.main.httpx.AsyncClient", return_value=context):
+            response = api_client.get(
+                "/api/arxiv/metadata",
+                params={"url_or_id": "https://arxiv.org/abs/2401.00001"},
+            )
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "arxiv_id": "2401.00001",
+            "title": "A Paper With a Normalized Title",
+        }
 
 
 class TestPaperGetEndpoint:

@@ -471,6 +471,31 @@ describe('ScholarSuggestionService', () => {
     expect(workspace.getSnapshot().statusByPaperId['paper-a']).toBeUndefined()
   })
 
+  it('streams real apply progress into the paper status and closes the stream', async () => {
+    let publishProgress: ((progress: { stage: string; current: number; total: number }) => void) | undefined
+    const stopWatching = vi.fn()
+    const watchApplyProgress = vi.fn((_paperId, onProgress) => {
+      publishProgress = onProgress
+      return stopWatching
+    })
+    Object.assign(api, { watchApplyProgress })
+    api.listTooltipSuggestions.mockResolvedValueOnce([suggestion('manual', false)])
+    const response = deferred<ApplyTooltipSuggestionsResponse>()
+    api.applyTooltipSuggestions.mockReturnValueOnce(response.promise)
+    await service.loadSuggestions('paper-a')
+
+    const applying = service.applySuggestions('paper-a')
+    expect(watchApplyProgress).toHaveBeenCalledWith('paper-a', expect.any(Function), expect.any(Function))
+
+    publishProgress?.({ stage: 'applying', current: 3, total: 8 })
+    expect(workspace.getSnapshot().statusByPaperId['paper-a'])
+      .toBe('Applying tooltip drafts… 3/8')
+
+    response.resolve({ success: true, spans_injected: 1, tooltips_created: 1, errors: [] })
+    await applying
+    expect(stopWatching).toHaveBeenCalledOnce()
+  })
+
   it('rejects conflicting mutations while one is pending and exposes the failure', async () => {
     const generation = deferred<GenerateTooltipSuggestionsResponse>()
     api.generateTooltipSuggestions.mockReturnValueOnce(generation.promise)

@@ -268,4 +268,36 @@ describe('ScholarLlmSettingsWidget SaveableSource', () => {
     expect(api.load).toHaveBeenCalledTimes(1)
     widget.dispose()
   })
+
+  it('is reopenable: a fresh widget instance after the previous one was disposed still works', async () => {
+    // Regression test for the "singleton disposed" bug: closing the tab used
+    // to dispose the one-and-only shared widget instance, and the DI
+    // container (bound in singleton scope) kept handing out that same
+    // disposed instance on every subsequent open, so the settings view
+    // stayed permanently unusable after the first close.
+    const api = createApi()
+    const service = new ScholarLlmSettingsService(api)
+    const messages = createMessages()
+
+    const firstWidget = new ScholarLlmSettingsWidget(service, messages as never)
+    firstWidget.ensureLoaded()
+    await waitFor(() => expect(api.load).toHaveBeenCalledTimes(1))
+    firstWidget.dispose()
+    expect(firstWidget.isDisposed).toBe(true)
+
+    // Simulates a transient DI binding: the widget factory is invoked again
+    // and must produce a brand-new, non-disposed instance rather than
+    // reusing `firstWidget`.
+    const secondWidget = new ScholarLlmSettingsWidget(service, messages as never)
+    expect(secondWidget).not.toBe(firstWidget)
+    expect(secondWidget.isDisposed).toBe(false)
+    expect(secondWidget.title.closable).toBe(true)
+
+    // The underlying (singleton) service already finished loading, so
+    // reopening does not need to re-fetch settings from the backend.
+    secondWidget.ensureLoaded()
+    expect(api.load).toHaveBeenCalledTimes(1)
+    expect(service.getSnapshot().loadStatus).toBe('ready')
+    secondWidget.dispose()
+  })
 })

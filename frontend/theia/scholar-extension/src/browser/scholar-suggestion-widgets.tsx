@@ -184,7 +184,6 @@ export class ScholarSuggestionsTreeWidget extends TreeWidget {
       return (
         <>
           <span className="scholar-suggestion-label"><LatexText text={node.label} /></span>
-          <span className="scholar-suggestion-type">{node.entityType}</span>
         </>
       )
     }
@@ -595,7 +594,7 @@ function ScholarManualSuggestionForm({
       )}
       <label className="scholar-native-field">
         <span>Entity type</span>
-        <input
+        <select
           className="theia-input"
           aria-label="Entity type"
           value={draft.entityType}
@@ -603,7 +602,13 @@ function ScholarManualSuggestionForm({
           onChange={event => suggestions.updateCreateDraft(paperId, {
             entityType: event.target.value,
           })}
-        />
+        >
+          <option value="definition">Definition</option>
+          <option value="formula">Formula</option>
+          <option value="symbol">Symbol</option>
+          <option value="theorem">Theorem</option>
+          <option value="other">Other</option>
+        </select>
       </label>
       <label className="scholar-native-field">
         <span>Tooltip content</span>

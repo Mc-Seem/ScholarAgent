@@ -32,7 +32,35 @@ export default function PaperLoader() {
   const [selectedPaperId, setSelectedPaperId] = useState<string | null>(null);
   const [currentPaper, setCurrentPaper] = useState<PaperDetail | null>(null);
   const [arxivInput, setArxivInput] = useState("");
+  const [arxivTitle, setArxivTitle] = useState<string | null>(null);
   const [status, setStatus] = useState<string>("");
+
+  // Fetch arXiv title for preview
+  useEffect(() => {
+    const timer = setTimeout(async () => {
+      const idMatch = arxivInput.match(/(\d{4}\.\d{4,5})|abs\/(\d{4}\.\d{4,5})/);
+      const arxivId = idMatch ? (idMatch[1] || idMatch[2]) : null;
+
+      if (arxivId) {
+        try {
+          // Use the proxy-free direct access for arXiv metadata
+          const response = await fetch(`https://export.arxiv.org/api/query?id_list=${arxivId}`);
+          if (response.ok) {
+            const text = await response.text();
+            const titleMatch = text.match(/<title>([\s\S]*?)<\/title>/m);
+            if (titleMatch && titleMatch[1] && !titleMatch[1].includes('arXiv Query')) {
+              setArxivTitle(titleMatch[1].trim().replace(/\s+/g, ' '));
+              return;
+            }
+          }
+        } catch (err) {
+          console.error('Failed to fetch arXiv title:', err);
+        }
+      }
+      setArxivTitle(null);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [arxivInput]);
   const [compilingPaperId, setCompilingPaperId] = useState<string | null>(null);
 
   // Tooltip suggestion state
@@ -492,6 +520,17 @@ export default function PaperLoader() {
               Fetch
             </button>
           </div>
+          {arxivTitle && (
+            <div className="mt-2 p-2 bg-indigo-50 border border-indigo-100 rounded-lg animate-in fade-in slide-in-from-top-1 duration-200">
+              <p className="text-xs font-semibold text-indigo-700 mb-0.5 flex items-center gap-1">
+                <FileText size={10} />
+                Preview:
+              </p>
+              <p className="text-xs text-indigo-900 line-clamp-2 leading-relaxed">
+                {arxivTitle}
+              </p>
+            </div>
+          )}
         </section>
 
         {/* Cached Papers */}

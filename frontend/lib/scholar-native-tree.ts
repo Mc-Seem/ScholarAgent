@@ -21,6 +21,7 @@ type ResolveSection = (domNodeId: string) => string | undefined
 
 const entityTypeLabels: Record<string, string> = {
   formula: 'Formulas',
+  equation: 'Formulas',
   symbol: 'Symbols',
   def: 'Definitions',
   definition: 'Definitions',
@@ -28,11 +29,14 @@ const entityTypeLabels: Record<string, string> = {
   other: 'Other',
 }
 
-export function buildOutlineTree(toc: TOCNode[]): ScholarTreeEntry[] {
+export function buildOutlineTree(toc: TOCNode[], paperTitle?: string): ScholarTreeEntry[] {
+  if (toc.length === 1 && toc[0].children.length > 0 && isPaperTitleRoot(toc[0], paperTitle)) {
+    return buildOutlineTree(toc[0].children)
+  }
   return toc.map(section => ({
     id: `section:${section.id}`,
     kind: 'section',
-    label: plainText(section.title) || 'Untitled section',
+    label: renderableText(section.title) || 'Untitled section',
     sourceId: section.id,
     children: buildOutlineTree(section.children),
   }))
@@ -87,6 +91,7 @@ export function buildCommentTree(
   tooltips: Tooltip[],
   toc: TOCNode[],
   resolveSection: ResolveSection,
+  paperTitle?: string,
 ): ScholarTreeEntry[] {
   const comments = tooltips.filter(tooltip => Boolean(tooltip.dom_node_id) && !tooltip.entity_id)
   if (comments.length === 0) {
@@ -107,7 +112,12 @@ export function buildCommentTree(
     bySection.set(sectionId, sectionComments)
   }
 
-  const result = buildCommentGroups(toc, bySection)
+  const result = buildCommentGroups(
+    toc.length === 1 && toc[0].children.length > 0 && isPaperTitleRoot(toc[0], paperTitle)
+      ? toc[0].children
+      : toc,
+    bySection,
+  )
   if (other.length > 0) {
     result.push({
       id: 'comment-group:other',
@@ -169,7 +179,7 @@ function buildCommentGroups(
     groups.push({
       id: `comment-group:${section.id}`,
       kind: 'group',
-      label: plainText(section.title) || 'Untitled section',
+      label: renderableText(section.title) || 'Untitled section',
       sourceId: section.id,
       count,
       children: [...nestedGroups, ...directComments],
@@ -192,16 +202,16 @@ function toTooltipEntry(
   tooltip: Tooltip,
   kind: Extract<ScholarTreeEntryKind, 'comment' | 'glossary'>,
 ): ScholarTreeEntry {
-  const target = plainText(tooltip.target_text ?? '')
+  const target = renderableText(tooltip.target_text ?? '')
   const content = plainText(tooltip.content)
   const label = target || content
-  const description = content && content !== label ? content : undefined
+  const description = content && content !== plainText(target) ? content : undefined
   return {
     id: `${kind}:${tooltip.id}`,
     kind,
     label: label || 'Untitled annotation',
     description,
-    searchText: kind === 'comment' && description ? `${label} — ${description}` : undefined,
+    searchText: kind === 'comment' && description ? `${plainText(label)} — ${description}` : undefined,
     sourceId: tooltip.dom_node_id ?? undefined,
     tooltipId: tooltip.id,
     entityId: tooltip.entity_id ?? undefined,
@@ -234,6 +244,41 @@ function plainText(value: string): string {
     return normalizeWhitespace(document.body.textContent ?? '')
   }
   return normalizeWhitespace(value.replace(/<[^>]*>/g, ' '))
+}
+
+function renderableText(value: string): string {
+  if (!value) {
+    return ''
+  }
+  if (typeof DOMParser === 'undefined' || !value.includes('<')) {
+    return normalizeWhitespace(value.replace(/<[^>]*>/g, ' '))
+  }
+
+  const document = new DOMParser().parseFromString(value, 'text/html')
+  document.querySelectorAll('math').forEach(math => {
+    const tex = math.querySelector(
+      'annotation[encoding="application/x-tex"], annotation[encoding="TeX"]',
+    )?.textContent?.trim() || math.getAttribute('alttext')?.trim()
+    if (tex) {
+      math.replaceWith(document.createTextNode(` $${tex}$ `))
+      return
+    }
+    const visibleMath = math.cloneNode(true) as Element
+    visibleMath.querySelectorAll('annotation, annotation-xml').forEach(annotation => annotation.remove())
+    math.replaceWith(document.createTextNode(` ${visibleMath.textContent ?? ''} `))
+  })
+  return normalizeWhitespace(document.body.textContent ?? '')
+}
+
+function isPaperTitleRoot(node: TOCNode, paperTitle?: string): boolean {
+  if (/(^|[.:_-])title($|[.:_-])/i.test(node.id)) {
+    return true
+  }
+  if (!paperTitle?.trim()) {
+    return false
+  }
+  return normalizeWhitespace(plainText(node.title)).toLocaleLowerCase()
+    === normalizeWhitespace(plainText(paperTitle)).toLocaleLowerCase()
 }
 
 function normalizeWhitespace(value: string): string {

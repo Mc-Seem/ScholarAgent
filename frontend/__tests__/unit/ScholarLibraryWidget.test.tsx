@@ -117,6 +117,45 @@ describe('ScholarLibraryWidget tree building', () => {
     expect(root.children[1].description).toContain('2401.00001')
   })
 
+  it('renders a single-line label with the full paper title available on hover', () => {
+    const snapshot = emptySnapshot()
+    const title = 'A long paper title that should remain available without widening the sidebar'
+    snapshot.papers = [paper('paper-a')]
+    snapshot.papersById['paper-a'] = {
+      ...paper('paper-a'),
+      html_content: '<p>Paper</p>',
+      sections: [],
+      equations: [],
+      citations: [],
+      paper_metadata: { title },
+      has_knowledge_graph: false,
+    }
+    const widget = createWidget(snapshot)
+
+    widget.refreshTree()
+    const [node] = libraryRoot(widget).children
+    const { container } = render(<>{widget.getCaptionChildren(node, { depth: 1 })}</>)
+
+    expect(container.querySelector('.scholar-tree-library-label')).toHaveAttribute('title', title)
+    expect(container.textContent).toBe(title)
+  })
+
+  it('uses the persisted summary title before the paper detail is opened', () => {
+    const snapshot = emptySnapshot()
+    const title = 'A Persisted Research Title'
+    snapshot.papers = [paper('paper-a', {
+      filename: 'arXiv:2607.02873.tar.gz',
+      title,
+    })]
+    const widget = createWidget(snapshot)
+
+    widget.refreshTree()
+
+    const [node] = libraryRoot(widget).children
+    expect(snapshot.papersById).toEqual({})
+    expect(node.name).toBe(title)
+  })
+
   it('shows the busy status as the node description while a paper is compiling', () => {
     const snapshot = emptySnapshot()
     snapshot.papers = [paper('paper-a')]

@@ -33,6 +33,7 @@ export interface ReaderWorkspaceApi {
   compilePaper?(paperId: string): Promise<Paper>
   deletePaper?(paperId: string): Promise<void>
   buildKnowledgeGraph?(paperId: string): Promise<unknown>
+  cancelKnowledgeGraph?(paperId: string): Promise<unknown>
   createTooltip?(
     paperId: string,
     domNodeId: string,
@@ -248,6 +249,18 @@ export class ReaderWorkspaceStore {
     try {
       await build.call(this.api, paperId)
       this.watchKnowledgeGraph(paperId)
+    } catch (error) {
+      this.setPaperError(paperId, error)
+      this.clearPaperStatus(paperId)
+      throw error
+    }
+  }
+
+  async cancelKnowledgeGraph(paperId: string): Promise<void> {
+    const cancel = this.requireOperation('cancelKnowledgeGraph')
+    this.setPaperStatus(paperId, 'Stopping knowledge graph build…')
+    try {
+      await cancel.call(this.api, paperId)
     } catch (error) {
       this.setPaperError(paperId, error)
       this.clearPaperStatus(paperId)
@@ -474,6 +487,9 @@ export class ReaderWorkspaceStore {
           void Promise.all([this.refreshPaper(paperId), this.loadLibrary()]).catch(error => {
             this.setPaperError(paperId, error)
           })
+        } else if (progress.stage === 'cancelled') {
+          finish()
+          this.clearPaperStatus(paperId)
         } else if (progress.stage === 'error') {
           finish()
           this.setPaperError(paperId, new Error(progress.error || 'Knowledge graph build failed'))

@@ -186,6 +186,24 @@ export function HTMLRenderer({
       <style>{`
         .html-renderer {
           line-height: 1.8;
+          padding-left: 2.5rem;
+          padding-right: 2.5rem;
+          padding-bottom: 5rem;
+        }
+
+        /* Ensure Abstract is not smaller than body text */
+        .html-renderer .ltx_abstract {
+          font-size: 1rem;
+          margin-bottom: 2rem;
+          font-style: italic;
+        }
+
+        .html-renderer .ltx_abstract h6,
+        .html-renderer .ltx_abstract .ltx_title_abstract {
+          font-size: 1.1rem;
+          font-weight: 700;
+          font-style: normal;
+          margin-bottom: 0.5rem;
         }
 
         .html-renderer h1,
@@ -374,6 +392,19 @@ export function HTMLRenderer({
           margin-top: 3em;
           padding-top: 2em;
           border-top: 1px solid #e2e8f0;
+        }
+
+        /* Injected tooltip (KG entity) styles */
+        .html-renderer .kg-entity {
+          border-bottom: 2px solid #818cf8; /* indigo-400 */
+          background-color: #eef2ff; /* indigo-50 */
+          cursor: pointer;
+          transition: all 0.2s ease;
+        }
+
+        .html-renderer .kg-entity:hover {
+          background-color: #e0e7ff; /* indigo-100 */
+          border-bottom-color: #4f46e5; /* indigo-600 */
         }
       `}</style>
 

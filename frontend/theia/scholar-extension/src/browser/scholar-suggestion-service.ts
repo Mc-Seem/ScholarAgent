@@ -345,10 +345,38 @@ export class ScholarSuggestionService {
     if (selected.length === 0) {
       throw new Error('Select at least one suggestion to apply')
     }
-    const finishOperation = this.workspace.startPaperOperation(
+    let finishOperation = this.workspace.startPaperOperation(
       paperId,
       APPLYING_TOOLTIP_DRAFTS_STATUS,
     )
+    let stopProgress = (): void => undefined
+    if (this.api.watchApplyProgress) {
+      stopProgress = this.api.watchApplyProgress(
+        paperId,
+        progress => {
+          if (progress.type === 'connected') {
+            return
+          }
+          if (progress.stage === 'complete' || progress.stage === 'error') {
+            stopProgress()
+            return
+          }
+          finishOperation()
+          const count = progress.total > 0 ? ` ${progress.current}/${progress.total}` : ''
+          finishOperation = this.workspace.startPaperOperation(
+            paperId,
+            `${APPLYING_TOOLTIP_DRAFTS_STATUS}${count}`,
+          )
+        },
+        () => {
+          finishOperation()
+          finishOperation = this.workspace.startPaperOperation(
+            paperId,
+            `${APPLYING_TOOLTIP_DRAFTS_STATUS} progress unavailable`,
+          )
+        },
+      )
+    }
     this.beginMutation(paperId)
     try {
       const result = await this.api.applyTooltipSuggestions(paperId, {
@@ -382,6 +410,7 @@ export class ScholarSuggestionService {
       this.failMutation(paperId, error)
       throw error
     } finally {
+      stopProgress()
       finishOperation()
     }
   }

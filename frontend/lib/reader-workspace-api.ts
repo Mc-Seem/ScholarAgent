@@ -79,6 +79,14 @@ export interface ApplyTooltipSuggestionsResponse {
   errors: string[]
 }
 
+export interface ApplyTooltipProgress {
+  type?: string
+  stage: 'starting' | 'applying' | 'complete' | 'error'
+  current: number
+  total: number
+  error?: string
+}
+
 export interface TooltipSuggestionApi {
   listTooltipSuggestions(paperId: string): Promise<TooltipSuggestion[]>
   generateTooltipSuggestions(
@@ -97,6 +105,11 @@ export interface TooltipSuggestionApi {
     paperId: string,
     request: ApplyTooltipSuggestionsRequest,
   ): Promise<ApplyTooltipSuggestionsResponse>
+  watchApplyProgress?(
+    paperId: string,
+    onProgress: (progress: ApplyTooltipProgress) => void,
+    onConnectionError: () => void,
+  ): () => void
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -232,6 +245,10 @@ export class HttpReaderWorkspaceApi implements ReaderWorkspaceApi, TooltipSugges
     return this.request(`/api/papers/${paperId}/knowledge-graph/build`, { method: 'POST' })
   }
 
+  cancelKnowledgeGraph(paperId: string): Promise<unknown> {
+    return this.request(`/api/papers/${paperId}/knowledge-graph/cancel`, { method: 'POST' })
+  }
+
   createTooltip(
     paperId: string,
     domNodeId: string,
@@ -343,6 +360,27 @@ export class HttpReaderWorkspaceApi implements ReaderWorkspaceApi, TooltipSugges
       },
     )
     return parseApplyTooltipSuggestionsResponse(data)
+  }
+
+  watchApplyProgress(
+    paperId: string,
+    onProgress: (progress: ApplyTooltipProgress) => void,
+    onConnectionError: () => void,
+  ): () => void {
+    const source = new EventSource(
+      this.url(`/api/papers/${encodeURIComponent(paperId)}/tooltips/apply/progress`),
+    )
+
+    source.onmessage = event => {
+      try {
+        onProgress(JSON.parse(event.data) as ApplyTooltipProgress)
+      } catch {
+        // SSE heartbeat comments and malformed progress events are non-fatal.
+      }
+    }
+    source.onerror = () => onConnectionError()
+
+    return () => source.close()
   }
 
   watchCompilation(

@@ -226,7 +226,7 @@ describe('ScholarSuggestionsTreeWidget hierarchy and search data', () => {
     expect(ai.checkState).toBe('unchecked')
   })
 
-  it('puts label, type, and content in searchable name while keeping a concise display label', () => {
+  it('keeps type and content searchable without repeating them in the grouped display label', () => {
     const state = paperState([
       suggestion('manual-1', false, 'theorem', 'Pythagoras $c^2$', 'Right triangle identity'),
     ])
@@ -243,7 +243,7 @@ describe('ScholarSuggestionsTreeWidget hierarchy and search data', () => {
 
     const { container } = render(<>{widget.getCaptionChildren(leaf, { depth: 3 })}</>)
     expect(container.textContent).toContain('Pythagoras \\(c^2\\)')
-    expect(container.textContent).toContain('theorem')
+    expect(container.textContent).not.toContain('theorem')
     expect(container.textContent).not.toContain('Right triangle identity')
   })
 })

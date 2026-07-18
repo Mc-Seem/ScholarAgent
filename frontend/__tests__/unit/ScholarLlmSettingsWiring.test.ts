@@ -8,14 +8,18 @@ function readSource(relativePath: string): string {
 }
 
 describe('native LLM Settings wiring', () => {
-  it('binds one shared adapter, service, widget, and stable restorable factory', () => {
+  it('binds one shared adapter and service, but a transient widget behind a stable restorable factory', () => {
     const source = readSource(
       'theia/scholar-extension/src/browser/scholar-frontend-module.ts',
     )
 
     expect(source).toContain('bind(HttpLlmSettingsApi).toSelf().inSingletonScope()')
     expect(source).toContain('bind(ScholarLlmSettingsService).toSelf().inSingletonScope()')
-    expect(source).toContain('bind(ScholarLlmSettingsWidget).toSelf().inSingletonScope()')
+    // The widget itself must NOT be a singleton: Lumino widgets cannot be
+    // "undisposed", so a singleton binding would keep returning the same
+    // disposed instance after the tab is closed and reopened.
+    expect(source).toContain('bind(ScholarLlmSettingsWidget).toSelf()')
+    expect(source).not.toContain('bind(ScholarLlmSettingsWidget).toSelf().inSingletonScope()')
     expect(source).toMatch(
       /id: SCHOLAR_LLM_SETTINGS_WIDGET_ID,[\s\S]*createWidget: \(\) => context\.container\.get\(ScholarLlmSettingsWidget\)/,
     )

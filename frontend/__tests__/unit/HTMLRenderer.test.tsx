@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { HTMLRenderer } from '@/components/reader/HTMLRenderer'
 
 // Mock the MathJaxNode component
@@ -65,6 +65,21 @@ describe('HTMLRenderer', () => {
     const interactivePara = screen.getByTestId('interactive-p')
     expect(interactivePara).toBeInTheDocument()
     expect(interactivePara).toHaveAttribute('data-id', 'node-123')
+  })
+
+  it('reports the semantic entity id when an injected tooltip is clicked', () => {
+    const onEntityClick = vi.fn()
+    render(
+      <HTMLRenderer
+        {...mockProps}
+        html='<p><span class="kg-entity" data-entity-id="entity-attention">attention</span></p>'
+        onEntityClick={onEntityClick}
+      />,
+    )
+
+    fireEvent.click(screen.getByText('attention'))
+
+    expect(onEntityClick).toHaveBeenCalledWith('entity-attention')
   })
 
   it('forwards context-menu annotation activation to interactive nodes', () => {

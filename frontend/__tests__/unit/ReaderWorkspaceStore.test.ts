@@ -231,6 +231,46 @@ describe('ReaderWorkspaceStore', () => {
     expect(store.getSnapshot().statusByPaperId['paper-a']).toBeUndefined()
   })
 
+  it('records a cancelled knowledge-graph build and immediately clears status so a restart is available', async () => {
+    let publishProgress: ((progress: KnowledgeGraphProgress) => void) | undefined
+    const stopWatching = vi.fn()
+    api.buildKnowledgeGraph = vi.fn().mockResolvedValue({ status: 'started' })
+    api.watchKnowledgeGraph = vi.fn((_paperId, onProgress) => {
+      publishProgress = onProgress
+      return stopWatching
+    })
+    const store = new ReaderWorkspaceStore(api)
+
+    await store.buildKnowledgeGraph('paper-a')
+    publishProgress?.({ stage: 'extracting', progress: { symbols: { current: 1, total: 4 } } })
+    publishProgress?.({ stage: 'cancelled', progress: {} })
+
+    // The "cancelled" stage must stop the stream and clear the status
+    // *immediately* (not after the usual multi-second delay used for a
+    // successful "complete"), so the Build/Stop commands re-enable right
+    // away and the user can restart the build without waiting.
+    expect(stopWatching).toHaveBeenCalledOnce()
+    expect(store.getSnapshot().statusByPaperId['paper-a']).toBeUndefined()
+    expect(store.getSnapshot().paperErrors['paper-a']).toBeUndefined()
+  })
+
+  it('sends a cancel request for a running knowledge-graph build', async () => {
+    api.cancelKnowledgeGraph = vi.fn().mockResolvedValue({ status: 'cancelling' })
+    const store = new ReaderWorkspaceStore(api)
+
+    await store.cancelKnowledgeGraph('paper-a')
+
+    expect(api.cancelKnowledgeGraph).toHaveBeenCalledWith('paper-a')
+  })
+
+  it('surfaces an error when cancelling a knowledge-graph build fails', async () => {
+    api.cancelKnowledgeGraph = vi.fn().mockRejectedValue(new Error('No build in progress'))
+    const store = new ReaderWorkspaceStore(api)
+
+    await expect(store.cancelKnowledgeGraph('paper-a')).rejects.toThrow('No build in progress')
+    expect(store.getSnapshot().paperErrors['paper-a']).toBe('No build in progress')
+  })
+
   it('reports a lost knowledge-graph progress connection', async () => {
     let reportConnectionError: (() => void) | undefined
     const stopWatching = vi.fn()

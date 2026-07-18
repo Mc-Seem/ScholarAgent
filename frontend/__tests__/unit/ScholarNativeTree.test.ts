@@ -49,7 +49,7 @@ function tooltip(overrides: Partial<Tooltip>): Tooltip {
 }
 
 describe('Scholar native tree models', () => {
-  it('builds a plain-text outline while preserving section hierarchy', () => {
+  it('builds a renderable outline while preserving section hierarchy', () => {
     const result = buildOutlineTree(toc)
 
     expect(result).toMatchObject([
@@ -72,6 +72,57 @@ describe('Scholar native tree models', () => {
         sourceId: 'results',
       },
     ])
+  })
+
+  it('converts embedded MathML TeX annotations into delimiters understood by LatexText', () => {
+    const result = buildOutlineTree([{
+      id: 'section-math',
+      title: 'Rates <math alttext="\\alpha"><semantics><mi>α</mi><annotation encoding="application/x-tex">\\alpha</annotation></semantics></math>',
+      level: 1,
+      children: [],
+    }])
+
+    expect(result[0].label).toBe('Rates $\\alpha$')
+  })
+
+  it('keeps a legitimate single top-level section instead of treating it as the paper title', () => {
+    const result = buildOutlineTree([{
+      id: 'section-1',
+      title: 'Introduction',
+      level: 1,
+      children: [{ id: 'section-1.1', title: 'Motivation', level: 2, children: [] }],
+    }])
+
+    expect(result[0].id).toBe('section:section-1')
+  })
+
+  it('unwraps a single paper-title root in the outline tree', () => {
+    const result = buildOutlineTree([{
+      id: 'LTX.title',
+      title: 'The Great Research',
+      level: 1,
+      children: [
+        { id: 'section-1', title: 'Introduction', level: 2, children: [] },
+        { id: 'section-2', title: 'Method', level: 2, children: [] },
+      ],
+    }])
+
+    expect(result.map(entry => entry.id)).toEqual(['section:section-1', 'section:section-2'])
+  })
+
+  it('unwraps the article title by metadata when its generated id has no title marker', () => {
+    const paperTitle = 'Slime Stabilized Likelihood Implicit Margin Enforcement for Preference Optimization'
+    const result = buildOutlineTree([{
+      id: 'ltxid1',
+      title: paperTitle,
+      level: 1,
+      children: [
+        { id: 'ltxid2', title: 'Introduction', level: 2, children: [] },
+        { id: 'ltxid3', title: 'Method', level: 2, children: [] },
+      ],
+    }], paperTitle)
+
+    expect(result.map(entry => entry.id)).toEqual(['section:ltxid2', 'section:ltxid3'])
   })
 
   it('prunes empty sections and keeps pinned comments first', () => {
@@ -103,6 +154,38 @@ describe('Scholar native tree models', () => {
         },
       ],
     })
+  })
+
+  it('unwraps a single paper-title root in the comment tree', () => {
+    const result = buildCommentTree(
+      [tooltip({ dom_node_id: 'paragraph-1' })],
+      [{
+        id: 'LTX.title',
+        title: 'The Great Research',
+        level: 1,
+        children: [{ id: 'section-1', title: 'Introduction', level: 2, children: [] }],
+      }],
+      nodeId => nodeId === 'paragraph-1' ? 'section-1' : undefined,
+    )
+
+    expect(result.map(entry => entry.id)).toEqual(['comment-group:section-1'])
+  })
+
+  it('unwraps the article title from comments by metadata when its id is generated', () => {
+    const paperTitle = 'Slime Stabilized Likelihood Implicit Margin Enforcement for Preference Optimization'
+    const result = buildCommentTree(
+      [tooltip({ dom_node_id: 'paragraph-1' })],
+      [{
+        id: 'ltxid1',
+        title: paperTitle,
+        level: 1,
+        children: [{ id: 'ltxid2', title: 'Introduction', level: 2, children: [] }],
+      }],
+      nodeId => nodeId === 'paragraph-1' ? 'ltxid2' : undefined,
+      paperTitle,
+    )
+
+    expect(result.map(entry => entry.id)).toEqual(['comment-group:ltxid2'])
   })
 
   it('maps nodes to their containing section after a nested subsection ends', () => {
@@ -175,7 +258,7 @@ describe('Scholar native tree models', () => {
 
   it('groups glossary entries by entity type and handles manual entries', () => {
     const entries = [
-      tooltip({ id: 'manual', dom_node_id: null, entity_id: 'manual_note', target_text: 'My term' }),
+      tooltip({ id: 'manual', dom_node_id: null, entity_id: 'manual_note', target_text: '<span>My term $x$</span>' }),
       tooltip({ id: 'definition', dom_node_id: null, entity_id: 'def_entropy', target_text: 'Entropy' }),
       tooltip({ id: 'formula', dom_node_id: null, entity_id: 'formula_loss', target_text: 'Loss' }),
       tooltip({ id: 'comment', entity_id: null }),
@@ -193,6 +276,7 @@ describe('Scholar native tree models', () => {
       'definition',
       'formula',
     ])
+    expect(result[0].children[0].label).toBe('My term $x$')
   })
 
   it('returns empty trees for empty inputs', () => {

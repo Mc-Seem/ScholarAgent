@@ -82,6 +82,13 @@ class GraphState(TypedDict):
     progress_callback: NotRequired[Any]
     llm_profile: NotRequired[Dict[str, Any]]
 
+    # Optional cooperative-cancellation hook: a zero-arg callable returning
+    # True once the caller has requested the build be stopped. Checked at
+    # the single progress-reporting choke point shared by every extraction
+    # stage, so a cancellation request is observed promptly regardless of
+    # which stage is currently running.
+    cancel_check: NotRequired[Any]
+
 
 # =============================================================================
 # Pydantic Models for Structured Output
@@ -636,10 +643,26 @@ def load_paper_data(state: GraphState) -> GraphState:
         db.close()
 
 
+class KnowledgeGraphCancelledError(Exception):
+    """Raised cooperatively when a KG build is cancelled mid-flight."""
+
+
 def _report_progress(state: GraphState, stage: str, current: int, total: int):
-    """Helper to report progress if callback is available."""
+    """Helper to report progress if callback is available.
+
+    Also acts as the single choke point for cooperative cancellation: every
+    extraction stage's `as_completed` loop calls this after each unit of
+    work, so checking `cancel_check` here is enough to observe a cancellation
+    request promptly from any stage.
+    """
     if state.get("progress_callback"):
         state["progress_callback"](stage, current, total)
+    cancel_check = state.get("cancel_check")
+    if cancel_check and cancel_check():
+        raise KnowledgeGraphCancelledError(
+            f"Knowledge graph build for paper {state.get('paper_id')} was cancelled "
+            f"during stage '{stage}' ({current}/{total})."
+        )
 
 
 def _get_worker_count() -> int:
@@ -2500,7 +2523,7 @@ def create_knowledge_graph_workflow() -> StateGraph:
     return workflow
 
 
-def build_kg_for_paper(paper_id: str, progress_callback=None) -> Dict[str, Any]:
+def build_kg_for_paper(paper_id: str, progress_callback=None, cancel_check=None) -> Dict[str, Any]:
     """
     Build knowledge graph for a paper.
 
@@ -2509,6 +2532,9 @@ def build_kg_for_paper(paper_id: str, progress_callback=None) -> Dict[str, Any]:
     Args:
         paper_id: The paper ID to build graph for
         progress_callback: Optional callback function(stage, current, total)
+        cancel_check: Optional zero-arg callable returning True once the
+            caller wants the build stopped cooperatively. Raises
+            KnowledgeGraphCancelledError from within the running stage.
 
     Returns:
         graph_data: Dict with nodes and edges
@@ -2535,6 +2561,7 @@ def build_kg_for_paper(paper_id: str, progress_callback=None) -> Dict[str, Any]:
         "errors": [],
         "progress_callback": progress_callback,
         "llm_profile": {},
+        "cancel_check": cancel_check,
     }
     
     result = app.invoke(initial_state)

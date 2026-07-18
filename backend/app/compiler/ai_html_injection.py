@@ -14,6 +14,10 @@ Pipeline:
 import os
 import re
 from typing import TypedDict, List, Dict, Any, Tuple
+try:
+    from typing import NotRequired
+except ImportError:
+    from typing_extensions import NotRequired
 from pydantic import BaseModel, Field
 from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -67,6 +71,7 @@ class InjectionState(TypedDict):
     modified_html: str
     injection_count: int
     errors: List[str]
+    progress_callback: NotRequired[Any]
 
 
 # =============================================================================
@@ -227,6 +232,8 @@ def process_sections(state: InjectionState) -> InjectionState:
 
     # Filter sections using shared utility
     sections_to_process = filter_processable_sections(state["sections_data"])
+    total_work_items = len(sections_to_process) * num_batches
+    work_items_processed = 0
 
     # Process entities in batches
     for batch_idx in range(num_batches):
@@ -319,7 +326,12 @@ def process_sections(state: InjectionState) -> InjectionState:
             completed = 0
             for future in as_completed(futures):
                 completed += 1
+                work_items_processed += 1
                 section_id, injections, error = future.result()
+
+                progress_callback = state.get("progress_callback")
+                if progress_callback:
+                    progress_callback(work_items_processed, total_work_items)
 
                 # Only count sections_processed once (in the first batch)
                 if batch_idx == 0:
@@ -539,7 +551,8 @@ def create_injection_workflow() -> StateGraph:
 def inject_spans_with_ai(
     html_content: str,
     sections_data: List[Dict[str, Any]],
-    suggestions: List[Dict[str, Any]]
+    suggestions: List[Dict[str, Any]],
+    progress_callback: Any = None,
 ) -> Tuple[str, List[str]]:
     """
     Inject <span class="kg-entity"> tags using AI model.
@@ -574,6 +587,7 @@ def inject_spans_with_ai(
         "modified_html": "",
         "injection_count": 0,
         "errors": [],
+        "progress_callback": progress_callback,
     }
 
     result = app.invoke(initial_state)

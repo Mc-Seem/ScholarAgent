@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import asyncio
 import json
+import xml.etree.ElementTree as ET
 
 from backend.app.database.connection import get_db
 from backend.app.database.models import Paper, Tooltip
@@ -48,6 +49,15 @@ ASSETS_DIR.mkdir(parents=True, exist_ok=True)
 # Format: {paper_id: {stage: str, progress: {stage_name: {current: int, total: int}}}}
 kg_build_progress: Dict[str, Dict[str, Any]] = {}
 
+# Cooperative cancellation flags for in-progress knowledge graph builds.
+# Format: {paper_id: True} once a Stop request has been received; consumed
+# by the background task's cancel_check callback.
+kg_cancel_flags: Dict[str, bool] = {}
+
+# Tooltip-application progress, consumed by the SSE endpoint below.
+# Format: {paper_id: {stage: str, current: int, total: int, error?: str}}
+tooltip_apply_progress: Dict[str, Dict[str, Any]] = {}
+
 # Compilation progress tracking
 # Format: {paper_id: {stage: str, message: str}} or {stage: "error", error: str}
 compile_progress: Dict[str, Dict[str, Any]] = {}
@@ -64,6 +74,7 @@ class PaperResponse(BaseModel):
     id: str
     filename: str
     arxiv_id: Optional[str] = None
+    title: Optional[str] = None
     uploaded_at: datetime
     compiled_at: Optional[datetime] = None
     has_html: bool
@@ -80,6 +91,11 @@ class PaperDetailResponse(PaperResponse):
     citations: Optional[List[Dict[str, Any]]] = None
     paper_metadata: Optional[Dict[str, Any]] = None
     has_knowledge_graph: bool = False
+
+
+class ArxivMetadataResponse(BaseModel):
+    arxiv_id: str
+    title: str
 
 
 class TooltipCreate(BaseModel):
@@ -250,6 +266,31 @@ async def upload_paper(
     return _paper_to_response(paper)
 
 
+@app.get("/api/arxiv/metadata", response_model=ArxivMetadataResponse)
+async def get_arxiv_metadata(url_or_id: str):
+    """Resolve an arXiv URL/ID and return a lightweight title preview."""
+    arxiv_id = _extract_arxiv_id(url_or_id)
+    if not arxiv_id:
+        raise HTTPException(status_code=400, detail="Invalid arXiv URL or ID")
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=10.0) as client:
+            response = await client.get(
+                "https://export.arxiv.org/api/query",
+                params={"id_list": arxiv_id},
+            )
+            response.raise_for_status()
+        root = ET.fromstring(response.text)
+        entry = root.find("{http://www.w3.org/2005/Atom}entry")
+        title = entry.findtext("{http://www.w3.org/2005/Atom}title") if entry is not None else None
+        if not title:
+            raise HTTPException(status_code=404, detail="arXiv paper not found")
+        return ArxivMetadataResponse(arxiv_id=arxiv_id, title=" ".join(title.split()))
+    except HTTPException:
+        raise
+    except (httpx.HTTPError, ET.ParseError) as error:
+        raise HTTPException(status_code=502, detail=f"Could not read arXiv metadata: {error}") from error
+
+
 @app.post("/api/papers/upload/arxiv", response_model=PaperResponse)
 async def upload_arxiv_source(
     background_tasks: BackgroundTasks,
@@ -325,6 +366,7 @@ async def get_paper(paper_id: str, db: Session = Depends(get_db)):
         id=paper.id,
         filename=paper.filename,
         arxiv_id=paper.arxiv_id,
+        title=_paper_title(paper),
         uploaded_at=paper.uploaded_at,
         compiled_at=paper.compiled_at,
         has_html=paper.html_content is not None,
@@ -825,6 +867,7 @@ async def apply_tooltips_endpoint(
 
     # Store original HTML for rollback
     original_html = paper.html_content
+    tooltip_apply_progress[paper_id] = {"stage": "starting", "current": 0, "total": 0}
 
     try:
         # Convert Pydantic models to dicts for injection function
@@ -849,6 +892,7 @@ async def apply_tooltips_endpoint(
             print(f"[Tooltip Apply] Skipped {skipped} entities that already have tooltips")
 
         if not suggestions_dict:
+            tooltip_apply_progress[paper_id] = {"stage": "complete", "current": 0, "total": 0}
             return TooltipApplicationResponse(
                 success=True,
                 spans_injected=0,
@@ -862,10 +906,19 @@ async def apply_tooltips_endpoint(
 
         from backend.app.compiler.ai_html_injection import inject_spans_with_ai
 
-        modified_html, injection_errors = inject_spans_with_ai(
+        def report_progress(current: int, total: int):
+            tooltip_apply_progress[paper_id] = {
+                "stage": "applying",
+                "current": current,
+                "total": total,
+            }
+
+        modified_html, injection_errors = await asyncio.to_thread(
+            inject_spans_with_ai,
             html_content=paper.html_content,
             sections_data=paper.sections_data or [],
-            suggestions=suggestions_dict
+            suggestions=suggestions_dict,
+            progress_callback=report_progress,
         )
 
         if not modified_html:
@@ -904,6 +957,12 @@ async def apply_tooltips_endpoint(
         spans_injected = total_occurrences - len(injection_errors)
 
         print(f"[Tooltip Apply] Complete: {spans_injected} spans injected, {tooltips_created} tooltips created")
+        previous_progress = tooltip_apply_progress.get(paper_id, {})
+        tooltip_apply_progress[paper_id] = {
+            "stage": "complete",
+            "current": previous_progress.get("total", 0),
+            "total": previous_progress.get("total", 0),
+        }
 
         return TooltipApplicationResponse(
             success=True,
@@ -918,11 +977,57 @@ async def apply_tooltips_endpoint(
         print(f"Error applying tooltips: {e}")
         import traceback
         traceback.print_exc()
+        tooltip_apply_progress[paper_id] = {
+            "stage": "error",
+            "current": 0,
+            "total": 0,
+            "error": str(e),
+        }
 
         raise HTTPException(
             status_code=500,
             detail=f"Failed to apply tooltips: {str(e)}"
         )
+
+
+@app.get("/api/papers/{paper_id}/tooltips/apply/progress")
+async def tooltip_apply_progress_sse(paper_id: str):
+    """Stream real section-processing progress for tooltip application."""
+    async def event_generator():
+        try:
+            yield f"data: {json.dumps({'type': 'connected', 'paper_id': paper_id})}\n\n"
+            last_progress = None
+            wait_count = 0
+            while True:
+                current = tooltip_apply_progress.get(paper_id)
+                if current is None:
+                    wait_count += 1
+                    if wait_count > 120:
+                        yield f"data: {json.dumps({'stage': 'error', 'error': 'Tooltip application task not found', 'current': 0, 'total': 0})}\n\n"
+                        break
+                else:
+                    wait_count = 0
+                    if current != last_progress:
+                        yield f"data: {json.dumps(current)}\n\n"
+                        last_progress = current.copy()
+                    if current.get("stage") in ("complete", "error"):
+                        await asyncio.sleep(2)
+                        if tooltip_apply_progress.get(paper_id) == current:
+                            tooltip_apply_progress.pop(paper_id, None)
+                        break
+                await asyncio.sleep(0.25)
+        except asyncio.CancelledError:
+            pass
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 # =============================================================================
@@ -1053,8 +1158,8 @@ async def knowledge_graph_build_progress(paper_id: str):
                         yield f"data: {json.dumps(current_progress)}\n\n"
                         last_progress = current_progress.copy()
 
-                    # Check if complete or error
-                    if current_progress.get('stage') in ['complete', 'error']:
+                    # Check if complete, error, or cancelled
+                    if current_progress.get('stage') in ['complete', 'error', 'cancelled']:
                         # Clean up after a delay
                         await asyncio.sleep(2)
                         if paper_id in kg_build_progress:
@@ -1080,7 +1185,10 @@ async def knowledge_graph_build_progress(paper_id: str):
 def _run_kg_build_task(paper_id: str):
     """Background task to build knowledge graph."""
     from backend.app.database.connection import SessionLocal
-    from backend.app.agents.knowledge_graph import build_kg_for_paper
+    from backend.app.agents.knowledge_graph import (
+        build_kg_for_paper,
+        KnowledgeGraphCancelledError,
+    )
 
     db = SessionLocal()
 
@@ -1095,9 +1203,14 @@ def _run_kg_build_task(paper_id: str):
                 }
             }
 
+    def cancel_check() -> bool:
+        return kg_cancel_flags.get(paper_id, False)
+
     try:
         print(f"[KG Build Task] Starting build for paper {paper_id}")
-        graph_data = build_kg_for_paper(paper_id, progress_callback=progress_callback)
+        graph_data = build_kg_for_paper(
+            paper_id, progress_callback=progress_callback, cancel_check=cancel_check,
+        )
 
         # Store graph data in paper record
         paper = db.query(Paper).filter(Paper.id == paper_id).first()
@@ -1113,11 +1226,15 @@ def _run_kg_build_task(paper_id: str):
             "node_count": graph_data["metadata"]["node_count"],
             "edge_count": graph_data["metadata"]["edge_count"],
         }
+    except KnowledgeGraphCancelledError as e:
+        print(f"[KG Build Task] Build cancelled for paper {paper_id}: {str(e)}")
+        kg_build_progress[paper_id] = {"stage": "cancelled", "progress": {}}
     except Exception as e:
         print(f"[KG Build Task] Build failed for paper {paper_id}: {str(e)}")
         # Mark as error
         kg_build_progress[paper_id] = {"stage": "error", "error": str(e)}
     finally:
+        kg_cancel_flags.pop(paper_id, None)
         db.close()
 
 
@@ -1140,8 +1257,12 @@ async def build_knowledge_graph(paper_id: str, background_tasks: BackgroundTasks
         raise HTTPException(status_code=400, detail="Paper has no extracted sections. Please recompile.")
 
     # Check if already building
-    if paper_id in kg_build_progress and kg_build_progress[paper_id].get("stage") == "extracting":
+    if paper_id in kg_build_progress and kg_build_progress[paper_id].get("stage") in ("starting", "extracting"):
         raise HTTPException(status_code=409, detail="Build already in progress")
+
+    # Clear any stale cancellation flag from a previous (cancelled) run, so a
+    # restart is not immediately cancelled again.
+    kg_cancel_flags[paper_id] = False
 
     # Initialize progress tracking
     kg_build_progress[paper_id] = {"stage": "starting", "progress": {}}
@@ -1150,6 +1271,29 @@ async def build_knowledge_graph(paper_id: str, background_tasks: BackgroundTasks
     background_tasks.add_task(_run_kg_build_task, paper_id)
 
     return {"status": "accepted", "message": "Build started in background"}
+
+
+@app.post("/api/papers/{paper_id}/knowledge-graph/cancel")
+async def cancel_knowledge_graph_build(paper_id: str, db: Session = Depends(get_db)):
+    """
+    Cooperatively cancel an in-progress knowledge graph build.
+
+    Sets a flag that the background task's extraction stages check between
+    units of work (see `cancel_check` in `build_kg_for_paper`). The build
+    stops as soon as the currently running stage observes the flag, and its
+    progress is then reported with stage "cancelled".
+    """
+    paper = db.query(Paper).filter(Paper.id == paper_id).first()
+    if not paper:
+        raise HTTPException(status_code=404, detail="Paper not found")
+
+    current = kg_build_progress.get(paper_id)
+    if not current or current.get("stage") not in ("starting", "extracting"):
+        raise HTTPException(status_code=409, detail="No knowledge graph build is in progress")
+
+    kg_cancel_flags[paper_id] = True
+
+    return {"status": "cancelling"}
 
 
 @app.get("/api/papers/{paper_id}/knowledge-graph", response_model=KnowledgeGraphResponse)
@@ -1191,10 +1335,17 @@ def _paper_to_response(paper: Paper) -> PaperResponse:
         id=paper.id,
         filename=paper.filename,
         arxiv_id=paper.arxiv_id,
+        title=_paper_title(paper),
         uploaded_at=paper.uploaded_at,
         compiled_at=paper.compiled_at,
         has_html=paper.html_content is not None
     )
+
+
+def _paper_title(paper: Paper) -> str | None:
+    metadata = paper.paper_metadata if isinstance(paper.paper_metadata, dict) else {}
+    title = metadata.get("title")
+    return title if isinstance(title, str) and title.strip() else None
 
 
 def _get_archive_type(filename: str) -> str | None:

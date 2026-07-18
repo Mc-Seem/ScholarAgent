@@ -7,6 +7,7 @@ export interface Paper {
   id: string;
   filename: string;
   arxiv_id: string | null;
+  title?: string | null;
   uploaded_at: string;
   compiled_at: string | null;
   has_html: boolean;

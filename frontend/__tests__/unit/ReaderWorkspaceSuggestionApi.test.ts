@@ -149,6 +149,41 @@ describe('HttpReaderWorkspaceApi tooltip suggestions', () => {
     )
   })
 
+  it('watches apply progress through an encoded SSE URL and closes the stream', () => {
+    const sources: Array<{ url: string; onmessage?: (event: MessageEvent) => void; close: ReturnType<typeof vi.fn> }> = []
+    vi.stubGlobal('EventSource', class {
+      onmessage?: (event: MessageEvent) => void
+      onerror?: () => void
+      close = vi.fn()
+
+      constructor(readonly url: string) {
+        sources.push(this)
+      }
+    })
+    const onProgress = vi.fn()
+    const onError = vi.fn()
+    const concreteApi = api as HttpReaderWorkspaceApi & {
+      watchApplyProgress: (
+        paperId: string,
+        progress: (value: unknown) => void,
+        error: () => void,
+      ) => () => void
+    }
+
+    const stop = concreteApi.watchApplyProgress('paper /α', onProgress, onError)
+    expect(sources[0].url).toBe(
+      'http://api.test/api/papers/paper%20%2F%CE%B1/tooltips/apply/progress',
+    )
+
+    sources[0].onmessage?.(new MessageEvent('message', {
+      data: JSON.stringify({ stage: 'applying', current: 2, total: 5 }),
+    }))
+    expect(onProgress).toHaveBeenCalledWith({ stage: 'applying', current: 2, total: 5 })
+
+    stop()
+    expect(sources[0].close).toHaveBeenCalledOnce()
+  })
+
   it('uses backend detail for non-OK suggestion responses', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(
       { detail: 'Knowledge graph is required' },

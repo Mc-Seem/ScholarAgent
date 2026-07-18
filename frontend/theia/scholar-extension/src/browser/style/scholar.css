@@ -340,6 +340,21 @@
   white-space: nowrap;
 }
 
+.scholar-tree-library-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scholar-arxiv-preview {
+  min-height: 2.5rem;
+  margin-top: 0.5rem;
+  color: var(--theia-descriptionForeground);
+  line-height: 1.35;
+}
+
 .scholar-suggestions-tree .theia-TreeNodeCaption {
   gap: 0.25rem;
 }
@@ -474,25 +489,12 @@
   color: var(--theia-charts-yellow, var(--theia-foreground));
 }
 
-.scholar-annotation-target {
-  color: var(--theia-descriptionForeground);
-  font-size: var(--theia-ui-font-size1);
-}
-
-.scholar-annotation-target blockquote {
-  margin: 0.25rem 0 0;
-  padding-left: 0.55rem;
-  border-left: 2px solid var(--theia-widget-border);
-}
-
 .scholar-annotation-content {
-  flex: 1;
   overflow-wrap: anywhere;
   line-height: 1.45;
   white-space: pre-wrap;
 }
 
-.scholar-annotation-target mjx-container,
 .scholar-annotation-content mjx-container {
   max-width: 100%;
   overflow-x: auto;
@@ -500,12 +502,19 @@
 }
 
 .scholar-annotation-detail-actions {
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  margin-top: auto;
+  width: 100%;
 }
 
 .scholar-annotation-detail-actions .theia-button {
   display: inline-flex;
+  flex: 1;
   align-items: center;
+  justify-content: center;
+  min-width: 0;
+  margin: 0;
+  padding-inline: 0.4rem;
   gap: 0.3rem;
 }
 
@@ -539,6 +548,15 @@
   display: flex;
   justify-content: flex-end;
   gap: 0.4rem;
+  flex-wrap: nowrap;
+}
+
+.scholar-annotation-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  margin-bottom: 0.5rem;
+  min-height: 1.25rem;
 }
 
 .scholar-suggestion-editor-empty {

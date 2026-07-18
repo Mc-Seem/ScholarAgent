@@ -77,7 +77,14 @@ export default new ContainerModule(bind => {
   bind(ScholarLlmSettingsService).toSelf().inSingletonScope()
   bindScholarGraphPropertyView(bind)
 
-  bind(ScholarLlmSettingsWidget).toSelf().inSingletonScope()
+  // Intentionally NOT bound in singleton scope: Lumino widgets cannot be
+  // "undisposed", so once the tab is closed the WidgetManager disposes this
+  // instance. A singleton binding would keep returning that disposed
+  // instance on next open. Using the default transient scope means each
+  // `container.get()` call (triggered by the widget factory below) creates
+  // a fresh widget, while `ScholarLlmSettingsService` (which is a singleton)
+  // keeps the underlying state across reopens.
+  bind(ScholarLlmSettingsWidget).toSelf()
   bind(WidgetFactory).toDynamicValue(context => ({
     id: SCHOLAR_LLM_SETTINGS_WIDGET_ID,
     createWidget: () => context.container.get(ScholarLlmSettingsWidget),
@@ -240,6 +247,7 @@ export default new ContainerModule(bind => {
         context.container.get(MessageService),
         context.container.get(ContextMenuRenderer),
         options,
+        context.container.get(ScholarAnnotationService),
       )
     },
   })).inSingletonScope()

@@ -9,6 +9,10 @@ const dialogState = vi.hoisted(() => ({
   confirmOpen: vi.fn<() => Promise<boolean>>(),
   inputOpen: vi.fn<() => Promise<string | undefined>>(),
   inputProps: [] as Array<Record<string, unknown>>,
+  // Generate AI Tooltip Suggestions uses the multiline ScholarTextareaDialog
+  // (not the built-in single-line SingleTextInputDialog).
+  textareaOpen: vi.fn<() => Promise<string | undefined>>(),
+  textareaProps: [] as Array<Record<string, unknown>>,
 }))
 
 vi.mock('@theia/core/lib/browser', async () => {
@@ -28,6 +32,15 @@ vi.mock('@theia/core/lib/browser', async () => {
     }),
   }
 })
+
+vi.mock('@/theia/scholar-extension/src/browser/scholar-textarea-dialog', () => ({
+  ScholarTextareaDialog: vi.fn().mockImplementation(function ScholarTextareaDialog(
+    props: Record<string, unknown>,
+  ) {
+    dialogState.textareaProps.push(props)
+    return { open: dialogState.textareaOpen }
+  }),
+}))
 
 let ScholarContribution: typeof ScholarContributionClass
 let ScholarCommands: typeof import('@/theia/scholar-extension/src/browser/scholar-commands').ScholarCommands
@@ -209,6 +222,8 @@ beforeEach(() => {
   dialogState.confirmOpen.mockReset()
   dialogState.inputOpen.mockReset()
   dialogState.inputProps.length = 0
+  dialogState.textareaOpen.mockReset()
+  dialogState.textareaProps.length = 0
   localStorage.clear()
 })
 
@@ -242,19 +257,22 @@ describe('Scholar suggestion commands', () => {
     expect(apply.isEnabled?.(tree)).toBe(false)
   })
 
-  it('prompts with saved expertise, validates it, persists the confirmed value, and handles cancel', async () => {
+  it('prompts with saved expertise in a multiline dialog, validates it, persists the confirmed value, and handles cancel', async () => {
     const { commands, suggestions, messageService } = createContext()
     const tree = Object.create(ScholarSuggestionsTreeWidget.prototype)
     localStorage.setItem('scholar-agent-expertise', 'Saved expertise')
-    dialogState.inputOpen.mockResolvedValueOnce(undefined)
+    dialogState.textareaOpen.mockResolvedValueOnce(undefined)
 
     await commands.handlerFor(ScholarCommands.GENERATE_SUGGESTIONS).execute(tree)
     expect(suggestions.generateSuggestions).not.toHaveBeenCalled()
-    expect(dialogState.inputProps[0].initialValue).toBe('Saved expertise')
-    expect((dialogState.inputProps[0].validate as (input: string) => unknown)('   '))
+    // Generate AI Tooltip Suggestions must use the multiline textarea dialog,
+    // not the single-line SingleTextInputDialog (too small for a prompt).
+    expect(dialogState.inputProps).toHaveLength(0)
+    expect(dialogState.textareaProps[0].initialValue).toBe('Saved expertise')
+    expect((dialogState.textareaProps[0].validate as (input: string) => unknown)('   '))
       .toBe('Expertise is required.')
 
-    dialogState.inputOpen.mockResolvedValueOnce('  Algebra researcher  ')
+    dialogState.textareaOpen.mockResolvedValueOnce('  Algebra researcher  ')
     await commands.handlerFor(ScholarCommands.GENERATE_SUGGESTIONS).execute(tree)
 
     expect(suggestions.generateSuggestions).toHaveBeenCalledWith('paper-a', 'Algebra researcher')

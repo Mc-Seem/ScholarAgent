@@ -155,7 +155,7 @@ describe('ScholarSuggestionEditorContent', () => {
     )
   })
 
-  it('opens the manual form from the empty state and validates all three fields', async () => {
+  it('opens the manual form with predefined entity types and validates required fields', async () => {
     const service = new FakeSuggestionService('paper-a', paperState())
     const { messageService } = renderEditor(service)
 
@@ -165,7 +165,9 @@ describe('ScholarSuggestionEditorContent', () => {
     expect(create.disabled).toBe(true)
 
     fireEvent.change(screen.getByLabelText('Entity label'), { target: { value: '  Alpha $x$  ' } })
-    fireEvent.change(screen.getByLabelText('Entity type'), { target: { value: ' theorem ' } })
+    const entityType = screen.getByLabelText('Entity type') as HTMLSelectElement
+    expect(Array.from(entityType.options, option => option.value)).toContain('theorem')
+    fireEvent.change(entityType, { target: { value: 'theorem' } })
     fireEvent.change(screen.getByLabelText('Tooltip content'), { target: { value: ' Explanation ' } })
     expect(screen.getByText('Alpha \\(x\\)')).toBeTruthy()
     expect((screen.getByRole('button', { name: 'Create Suggestion' }) as HTMLButtonElement).disabled)

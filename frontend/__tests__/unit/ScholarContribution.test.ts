@@ -41,6 +41,12 @@ vi.mock('@theia/core/lib/browser', async () => {
   }
 })
 
+vi.mock('@/theia/scholar-extension/src/browser/scholar-arxiv-import-dialog', () => ({
+  ScholarArxivImportDialog: vi.fn().mockImplementation(function ScholarArxivImportDialog() {
+    return { open: singleTextInputDialogOpen }
+  }),
+}))
+
 let CommonMenusNs: typeof CommonMenus
 let ScholarCommands: typeof ScholarCommandsNamespace
 let ScholarContribution: typeof ScholarContributionClass
@@ -187,6 +193,7 @@ function createFakeStore(snapshot: ReaderWorkspaceSnapshot) {
     initialize: vi.fn().mockResolvedValue(undefined),
     compilePaper: vi.fn().mockResolvedValue(undefined),
     buildKnowledgeGraph: vi.fn().mockResolvedValue(undefined),
+    cancelKnowledgeGraph: vi.fn().mockResolvedValue(undefined),
     deletePaper: vi.fn().mockResolvedValue(undefined),
     uploadPaper: vi.fn(),
     uploadArxiv: vi.fn(),
@@ -952,6 +959,21 @@ describe('ScholarContribution active-paper commands', () => {
     snapshot.statusByPaperId['paper-a'] = 'Building…'
     expect(commands.handlerFor(ScholarCommands.BUILD_KNOWLEDGE_GRAPH).isEnabled?.(widget))
       .toBe(false)
+    expect(commands.handlerFor(ScholarCommands.STOP_KNOWLEDGE_GRAPH).isEnabled?.(widget))
+      .toBe(false)
+  })
+
+  it('offers Stop only while a knowledge graph build is active', async () => {
+    register()
+    const widget = createFakePaperWidget('paper-a')
+    snapshot.statusByPaperId['paper-a'] = 'Starting knowledge graph build…'
+
+    const stop = commands.handlerFor(ScholarCommands.STOP_KNOWLEDGE_GRAPH)
+    expect(stop.isVisible?.(widget)).toBe(true)
+    expect(stop.isEnabled?.(widget)).toBe(true)
+
+    await stop.execute(widget)
+    expect(store.cancelKnowledgeGraph).toHaveBeenCalledWith('paper-a')
   })
 
   it('enables Open Graph only once a knowledge graph exists', () => {
@@ -973,6 +995,11 @@ describe('ScholarContribution active-paper commands', () => {
     await commands.handlerFor(ScholarCommands.COMPILE_PAPER).execute(widget)
     expect(store.compilePaper).toHaveBeenCalledWith('paper-a')
 
+    confirmDialogOpen.mockResolvedValueOnce(false)
+    await commands.handlerFor(ScholarCommands.BUILD_KNOWLEDGE_GRAPH).execute(widget)
+    expect(store.buildKnowledgeGraph).not.toHaveBeenCalled()
+
+    confirmDialogOpen.mockResolvedValueOnce(true)
     await commands.handlerFor(ScholarCommands.BUILD_KNOWLEDGE_GRAPH).execute(widget)
     expect(store.buildKnowledgeGraph).toHaveBeenCalledWith('paper-a')
 
@@ -1182,6 +1209,7 @@ describe('ScholarContribution active-paper commands', () => {
       SCHOLAR_PAPER_FIND_TOOLBAR_ID,
       ScholarCommands.COMPILE_PAPER.id,
       ScholarCommands.BUILD_KNOWLEDGE_GRAPH.id,
+      ScholarCommands.STOP_KNOWLEDGE_GRAPH.id,
       ScholarCommands.DELETE_PAPER.id,
       ScholarCommands.OPEN_GRAPH.id,
       ScholarCommands.SEARCH_GRAPH.id,
@@ -2112,7 +2140,7 @@ describe('ScholarContribution menus', () => {
     expect(viewViewsIds).not.toContain(ScholarCommands.REFRESH_LIBRARY.id)
   })
 
-  it('registers Open, Open to the Side, Recompile, Build Knowledge Graph and Delete on the library context menu', () => {
+  it('registers Open, Open to the Side, Recompile, Build/Stop Knowledge Graph and Delete on the library context menu', () => {
     const store = createFakeStore(emptySnapshot())
     const { contribution } = createContribution(store)
     const registered: { path: string[], commandId: string }[] = []
@@ -2135,6 +2163,7 @@ describe('ScholarContribution menus', () => {
       ScholarCommands.OPEN_PAPER_TO_SIDE.id,
       ScholarCommands.COMPILE_PAPER.id,
       ScholarCommands.BUILD_KNOWLEDGE_GRAPH.id,
+      ScholarCommands.STOP_KNOWLEDGE_GRAPH.id,
       ScholarCommands.DELETE_PAPER.id,
     ])
   })

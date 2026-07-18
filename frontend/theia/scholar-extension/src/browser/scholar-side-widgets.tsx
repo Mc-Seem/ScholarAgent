@@ -101,7 +101,7 @@ export class ScholarLibraryWidget extends TreeWidget {
     return {
       id,
       paperId: paper.id,
-      name: paperLabel(paper.filename, detail?.paper_metadata?.title),
+      name: paperLabel(paper.filename, detail?.paper_metadata?.title ?? paper.title),
       description,
       compiling: Boolean(status),
       hasError: Boolean(error),
@@ -125,14 +125,15 @@ export class ScholarLibraryWidget extends TreeWidget {
   }
 
   protected override getCaptionChildren(node: TreeNode, props: NodeProps): React.ReactNode {
-    const caption = super.getCaptionChildren(node, props)
-    if (!isScholarLibraryTreeNode(node) || !node.description) {
-      return caption
+    if (!isScholarLibraryTreeNode(node)) {
+      return super.getCaptionChildren(node, props)
     }
     return (
       <>
-        {caption}
-        <span className="scholar-tree-library-description">{node.description}</span>
+        <span className="scholar-tree-library-label" title={node.name}>{node.name}</span>
+        {node.description && (
+          <span className="scholar-tree-library-description">{node.description}</span>
+        )}
       </>
     )
   }

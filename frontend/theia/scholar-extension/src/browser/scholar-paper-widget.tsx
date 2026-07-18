@@ -11,9 +11,10 @@ import {
   type PaperSearchControllerSnapshot,
 } from '../../../../components/reader/paper-search-controller'
 import type { TooltipUpdate } from '../../../../lib/reader-workspace-store'
-import { paperLabel, useScholarSnapshot, useTooltipMaps } from './scholar-react'
+import { paperLabel, truncateLabel, useScholarSnapshot, useTooltipMaps } from './scholar-react'
 import {
   SCHOLAR_PAPER_CONTEXT_MENU,
+  type ScholarAnnotationService,
   type ScholarAnnotationTarget,
 } from './scholar-annotation-service'
 import type { ScholarWorkspaceService } from './scholar-workspace-service'
@@ -49,6 +50,7 @@ export class ScholarPaperWidget extends ReactWidget {
     private readonly messageService: MessageService,
     private readonly contextMenuRenderer: ContextMenuRenderer,
     readonly options: ScholarPaperWidgetOptions,
+    private readonly annotations: ScholarAnnotationService,
   ) {
     super()
     this.searchController = createPaperSearchController({
@@ -160,6 +162,7 @@ export class ScholarPaperWidget extends ReactWidget {
         store={this.store}
         messageService={this.messageService}
         paperId={this.options.paperId}
+        annotations={this.annotations}
         onContentChanged={this.handleContentChanged}
         onAnnotationContextMenu={request => this.openAnnotationMenu(request)}
       />
@@ -173,7 +176,7 @@ export class ScholarPaperWidget extends ReactWidget {
     this.loadStarted = true
     void this.store.openPaper(this.options.paperId).then(paper => {
       const label = paperLabel(paper.filename, paper.paper_metadata?.title)
-      this.title.label = label
+      this.title.label = truncateLabel(label)
       this.title.caption = label
     }).catch(error => {
       void this.messageService.error(`Could not load paper: ${errorMessage(error)}`)
@@ -185,6 +188,7 @@ interface ScholarPaperContentProps {
   store: ScholarWorkspaceService
   messageService: MessageService
   paperId: string
+  annotations: ScholarAnnotationService
   onContentChanged: () => void
   onAnnotationContextMenu: (request: AnnotationContextMenuRequest) => void
 }
@@ -193,6 +197,7 @@ function ScholarPaperContent({
   store,
   messageService,
   paperId,
+  annotations,
   onContentChanged,
   onAnnotationContextMenu,
 }: ScholarPaperContentProps): React.ReactElement {
@@ -262,7 +267,13 @@ function ScholarPaperContent({
               void store.removeTooltipOccurrence(paperId, tooltipId, domNodeId)
                 .catch(reason => reportFailure('Could not remove annotation occurrence', reason))
             }}
-            onEntityClick={entityId => store.setActiveEntity(paperId, entityId)}
+            onEntityClick={entityId => {
+              store.setActiveEntity(paperId, entityId)
+              const tooltip = entityTooltipMap[entityId]
+              if (tooltip) {
+                annotations.select(paperId, tooltip.id)
+              }
+            }}
             annotationActivation="context-menu"
             onAnnotationContextMenu={onAnnotationContextMenu}
           />

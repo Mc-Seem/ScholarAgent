@@ -121,6 +121,11 @@ export const ScholarCommands = {
     label: 'Build Knowledge Graph',
     iconClass: 'codicon codicon-combine',
   } satisfies Command,
+  STOP_KNOWLEDGE_GRAPH: {
+    id: 'scholar-agent.stop-knowledge-graph',
+    label: 'Stop Knowledge Graph Build',
+    iconClass: 'codicon codicon-debug-stop',
+  } satisfies Command,
   DELETE_PAPER: {
     id: 'scholar-agent.delete-paper',
     label: 'Delete Paper',
