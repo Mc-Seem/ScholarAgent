@@ -55,6 +55,7 @@ frontend/
 │   │   ├── GlossaryList.tsx    # Entity glossary list
 │   │   ├── KnowledgeGraphView.tsx  # React Flow graph
 │   │   ├── knowledge-graph-controller.ts # Framework-neutral graph control bridge
+│   │   ├── paper-search-controller.ts # Scoped DOM find engine and controller
 │   │   ├── GraphNode.tsx       # KG node component
 │   │   └── ...
 │   └── ui/                     # Reusable design system components
@@ -106,6 +107,7 @@ frontend/theia/
 └── scholar-extension/
     └── src/browser/
         ├── scholar-paper-widget.tsx    # Dynamic central tab per paper
+        ├── scholar-paper-find-toolbar.tsx # Native expandable find action
         ├── scholar-paper-graph-widget.tsx # Dynamic central knowledge-graph tab per paper
         ├── scholar-graph-selection.ts  # Source-aware Theia graph selection
         ├── scholar-graph-property-view.tsx # Native Property View provider
@@ -133,8 +135,26 @@ Theia persists widget factory options (`paperId` and label), so paper tabs,
 split groups, and side-view layout restore across restarts. The Next.js
 `PaperLoader` remains available as the comparison baseline and fallback.
 
-The paper widget exposes scoped find through its toolbar, the Edit menu, and
-`Ctrl/Cmd+F`; matches are limited to the active paper even in split layouts.
+The paper widget no longer renders an embedded React find strip. Each
+`ScholarPaperWidget` owns one stable `PaperSearchController`, scoped to the
+`.html-renderer` below that widget's own DOM node. The shared DOM engine performs
+case-insensitive literal matching, creates and removes `mark` highlights,
+cycles through matches, and publishes immutable query/count/focus snapshots.
+It clears pending work and highlights on close or disposal and refreshes an
+open query when React replaces the paper content. This keeps restored and split
+paper tabs independent and makes loading or temporarily missing content safe.
+
+`ScholarContribution` exposes Find through the Edit menu, Command Palette,
+`Ctrl/Cmd+F`, and a search icon in the tab toolbar. Opening it replaces the icon
+with `ScholarPaperFindToolbar`, a custom React tab-toolbar action containing the
+input, match count, previous/next, and close controls. Repeating the command
+focuses and selects the current query; `Enter`, `Shift+Enter`, and `Escape`
+navigate or close without delegating to browser find. Closing resets the query
+and returns focus to the paper. The contribution subscribes only to the active
+paper widget for outer toolbar visibility and drops that subscription when the
+active or restored tab changes. The standalone Next.js `SearchBar` uses the
+same controller engine but preserves its existing embedded appearance and API.
+
 The `Navigate` `ViewContainer` holds `Sections`, built on Theia's `TreeWidget`,
 including keyboard navigation, selection, incremental search, and theme
 tokens. The knowledge graph is not part of this side container: `Open

@@ -28,38 +28,75 @@
   overflow: hidden;
 }
 
-.scholar-reader-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  min-height: 34px;
-  padding: 0.25rem 0.5rem;
-  border-bottom: 1px solid var(--theia-editorGroup-border);
-  background: var(--theia-editorGroupHeader-tabsBackground);
-}
-
 .scholar-reader-scroll {
   flex: 1;
   min-height: 0;
   overflow: auto;
 }
 
-.scholar-search-bar {
-  max-width: min(280px, 45%);
-  color: var(--theia-input-foreground);
-  background: var(--theia-input-background);
-  border: 1px solid var(--theia-input-border, var(--theia-widget-border));
-  border-radius: 3px;
+.scholar-paper-find-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  width: min(280px, 42vw);
+  height: 100%;
 }
 
-.scholar-search-input {
-  width: 150px;
-  color: var(--theia-input-foreground);
+.scholar-paper-find-input {
+  flex: 1;
+  min-width: 80px;
+  height: 22px;
+  padding: 1px 6px;
+  font: inherit;
+}
+
+.scholar-paper-find-count {
+  min-width: 34px;
+  color: var(--theia-descriptionForeground);
+  font-size: 11px;
+  line-height: 22px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.scholar-paper-find-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  color: var(--theia-icon-foreground);
   background: transparent;
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
 }
 
-.scholar-search-input::placeholder {
-  color: var(--theia-input-placeholderForeground);
+.scholar-paper-find-action:hover:not(:disabled) {
+  background: var(--theia-toolbar-hoverBackground);
+}
+
+.scholar-paper-find-action:focus-visible {
+  outline: 1px solid var(--theia-focusBorder);
+  outline-offset: -1px;
+}
+
+.scholar-paper-find-action:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.scholar-reader-widget mark.search-highlight {
+  padding: 0;
+  color: inherit;
+  background: var(--theia-editor-findMatchHighlightBackground, #fde68a);
+  border-radius: 2px;
+}
+
+.scholar-reader-widget mark.search-highlight-current {
+  background: var(--theia-editor-findMatchBackground, #fbbf24);
+  outline: 1px solid var(--theia-editor-findMatchBorder, var(--theia-focusBorder));
 }
 
 .scholar-reader-widget [data-annotation-activation="context-menu"] {

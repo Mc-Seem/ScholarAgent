@@ -1,11 +1,15 @@
 import * as React from 'react'
-import { FileText, Search } from 'lucide-react'
-import { MessageService } from '@theia/core'
+import { FileText } from 'lucide-react'
+import { Emitter, Event, MessageService } from '@theia/core'
 import { ContextMenuRenderer, Message, ReactWidget } from '@theia/core/lib/browser'
 
 import { HTMLRenderer } from '../../../../components/reader/HTMLRenderer'
 import type { AnnotationContextMenuRequest } from '../../../../components/reader/InteractiveNode'
-import SearchBar from '../../../../components/reader/SearchBar'
+import {
+  createPaperSearchController,
+  type PaperSearchController,
+  type PaperSearchControllerSnapshot,
+} from '../../../../components/reader/paper-search-controller'
 import type { TooltipUpdate } from '../../../../lib/reader-workspace-store'
 import { paperLabel, useScholarSnapshot, useTooltipMaps } from './scholar-react'
 import {
@@ -33,7 +37,12 @@ export function isScholarPaperWidgetOptions(value: unknown): value is ScholarPap
 
 export class ScholarPaperWidget extends ReactWidget {
   private loadStarted = false
-  private searchOpen = false
+  private readonly searchStateChangedEmitter = new Emitter<void>()
+  private readonly searchController: PaperSearchController
+  private readonly searchControllerUnsubscribe: () => void
+  private searchDisposed = false
+
+  readonly onDidChangeSearchState: Event<void> = this.searchStateChangedEmitter.event
 
   constructor(
     private readonly store: ScholarWorkspaceService,
@@ -42,6 +51,16 @@ export class ScholarPaperWidget extends ReactWidget {
     readonly options: ScholarPaperWidgetOptions,
   ) {
     super()
+    this.searchController = createPaperSearchController({
+      getSearchRoot: () => this.node.querySelector<HTMLElement>(
+        '.scholar-reader-scroll .html-renderer',
+      ),
+    })
+    this.searchControllerUnsubscribe = this.searchController.subscribe(() => {
+      if (!this.searchDisposed) {
+        this.searchStateChangedEmitter.fire()
+      }
+    })
     this.id = `scholar-agent:paper:${encodeURIComponent(options.paperId)}`
     this.title.label = options.label || options.paperId
     this.title.caption = options.label || options.paperId
@@ -68,18 +87,51 @@ export class ScholarPaperWidget extends ReactWidget {
     super.onCloseRequest(message)
   }
 
-  openSearch(): void {
-    if (!this.searchOpen) {
-      this.searchOpen = true
-      this.update()
+  override dispose(): void {
+    if (this.searchDisposed) {
+      return
     }
+    this.searchDisposed = true
+    this.searchControllerUnsubscribe()
+    this.searchController.dispose()
+    super.dispose()
+    this.searchStateChangedEmitter.dispose()
+  }
+
+  getSearchController(): PaperSearchController {
+    return this.searchController
+  }
+
+  getSearchSnapshot(): PaperSearchControllerSnapshot {
+    return this.searchController.getSnapshot()
+  }
+
+  openSearch(): void {
+    this.searchController.open()
   }
 
   closeSearch(): void {
-    if (this.searchOpen) {
-      this.searchOpen = false
-      this.update()
-    }
+    this.searchController.close()
+  }
+
+  setSearchQuery(query: string): void {
+    this.searchController.setQuery(query)
+  }
+
+  nextSearchMatch(): void {
+    this.searchController.next()
+  }
+
+  previousSearchMatch(): void {
+    this.searchController.previous()
+  }
+
+  refreshSearch(): void {
+    this.searchController.refresh()
+  }
+
+  private readonly handleContentChanged = (): void => {
+    this.refreshSearch()
   }
 
   openAnnotationMenu(request: AnnotationContextMenuRequest): void {
@@ -108,9 +160,7 @@ export class ScholarPaperWidget extends ReactWidget {
         store={this.store}
         messageService={this.messageService}
         paperId={this.options.paperId}
-        searchOpen={this.searchOpen}
-        onOpenSearch={() => this.openSearch()}
-        onCloseSearch={() => this.closeSearch()}
+        onContentChanged={this.handleContentChanged}
         onAnnotationContextMenu={request => this.openAnnotationMenu(request)}
       />
     )
@@ -135,9 +185,7 @@ interface ScholarPaperContentProps {
   store: ScholarWorkspaceService
   messageService: MessageService
   paperId: string
-  searchOpen: boolean
-  onOpenSearch: () => void
-  onCloseSearch: () => void
+  onContentChanged: () => void
   onAnnotationContextMenu: (request: AnnotationContextMenuRequest) => void
 }
 
@@ -145,9 +193,7 @@ function ScholarPaperContent({
   store,
   messageService,
   paperId,
-  searchOpen,
-  onOpenSearch,
-  onCloseSearch,
+  onContentChanged,
   onAnnotationContextMenu,
 }: ScholarPaperContentProps): React.ReactElement {
   const snapshot = useScholarSnapshot(store)
@@ -156,7 +202,10 @@ function ScholarPaperContent({
   const { tooltipMap, entityTooltipMap } = useTooltipMaps(tooltips)
   const loading = snapshot.loadingPaperIds.includes(paperId)
   const error = snapshot.paperErrors[paperId]
-  const readerRootRef = React.useRef<HTMLDivElement>(null)
+
+  React.useLayoutEffect(() => {
+    onContentChanged()
+  }, [error, loading, onContentChanged, paper?.html_content, tooltips])
 
   const reportFailure = React.useCallback((action: string, reason: unknown) => {
     void messageService.error(`${action}: ${errorMessage(reason)}`)
@@ -169,27 +218,7 @@ function ScholarPaperContent({
 
   return (
     <div className="scholar-widget scholar-reader-widget" data-scholar-paper-id={paperId}>
-      <div className="scholar-reader-toolbar">
-        {searchOpen ? (
-          <SearchBar
-            isOpen
-            onClose={onCloseSearch}
-            searchRootRef={readerRootRef}
-            placement="inline"
-          />
-        ) : (
-          <button
-            type="button"
-            className="scholar-toolbar-button secondary"
-            onClick={onOpenSearch}
-            title="Find in paper (Ctrl/Cmd+F)"
-          >
-            <Search size={14} />
-          </button>
-        )}
-      </div>
-
-      <div ref={readerRootRef} className="scholar-reader-scroll">
+      <div className="scholar-reader-scroll">
         {loading && !paper && <div className="scholar-loading">Loading paper…</div>}
         {error && !paper && (
           <div className="scholar-error">

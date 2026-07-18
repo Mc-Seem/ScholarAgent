@@ -1,3 +1,5 @@
+import * as React from 'react'
+
 import {
   CommandContribution,
   CommandRegistry,
@@ -70,6 +72,10 @@ import {
   type ScholarPaperWidgetOptions,
 } from './scholar-paper-widget'
 import {
+  SCHOLAR_PAPER_FIND_TOOLBAR_ID,
+  ScholarPaperFindToolbar,
+} from './scholar-paper-find-toolbar'
+import {
   SCHOLAR_PAPER_GRAPH_FACTORY_ID,
   ScholarPaperGraphWidget,
   type ScholarPaperGraphWidgetOptions,
@@ -108,6 +114,8 @@ export class ScholarContribution implements
   TabBarToolbarContribution {
   private readonly toDispose = new DisposableCollection()
   private readonly onToolbarItemsChangedEmitter = new Emitter<void>()
+  private activePaperSearchWidgetSubscription: Disposable = Disposable.create(() => undefined)
+  private boundPaperSearchWidget: ScholarPaperWidget | undefined
   private activeGraphWidgetSubscription: Disposable = Disposable.create(() => undefined)
   private boundGraphWidget: ScholarPaperGraphWidget | undefined
   private pendingUploadInput: HTMLInputElement | undefined
@@ -125,6 +133,7 @@ export class ScholarContribution implements
     @inject(QuickInputService) private readonly quickInputService: QuickInputService,
   ) {
     this.toDispose.push(this.onToolbarItemsChangedEmitter)
+    this.toDispose.push(Disposable.create(() => this.activePaperSearchWidgetSubscription.dispose()))
     this.toDispose.push(Disposable.create(() => this.activeGraphWidgetSubscription.dispose()))
   }
 
@@ -141,6 +150,7 @@ export class ScholarContribution implements
       if (newValue instanceof ScholarPaperWidget) {
         this.store.activatePaper(newValue.options.paperId)
       }
+      this.bindActivePaperSearchWidget(newValue)
       this.bindActiveGraphWidget(newValue)
     }))
     this.toDispose.push(Disposable.create(this.store.subscribe(() => {
@@ -165,6 +175,7 @@ export class ScholarContribution implements
       this.onToolbarItemsChangedEmitter.fire()
     }))
     void this.updateStatusBar()
+    this.bindActivePaperSearchWidget(this.shell.activeWidget)
     this.bindActiveGraphWidget(this.shell.activeWidget)
   }
 
@@ -287,9 +298,9 @@ export class ScholarContribution implements
       isVisible: (argument: unknown) => Boolean(this.paperIdOf(argument)),
     })
     commands.registerCommand(ScholarCommands.FIND_IN_PAPER, {
-      execute: () => this.activePaperWidget?.openSearch(),
-      isEnabled: () => Boolean(this.activePaperWidget),
-      isVisible: () => Boolean(this.activePaperWidget),
+      execute: (argument: unknown) => this.paperWidgetOf(argument)?.openSearch(),
+      isEnabled: (argument: unknown) => Boolean(this.paperWidgetOf(argument)),
+      isVisible: (argument: unknown) => Boolean(this.paperWidgetOf(argument)),
     })
     commands.registerCommand(ScholarCommands.ADD_ANNOTATION, {
       execute: (argument: unknown) => {
@@ -409,6 +420,30 @@ export class ScholarContribution implements
   }
 
   registerToolbarItems(registry: TabBarToolbarRegistry): void {
+    this.toDispose.push(registry.registerItem({
+      id: ScholarCommands.FIND_IN_PAPER.id,
+      command: ScholarCommands.FIND_IN_PAPER.id,
+      group: 'navigation',
+      priority: 5,
+      isVisible: widget => {
+        const paperWidget = this.paperWidgetOf(widget)
+        return Boolean(paperWidget && !paperWidget.getSearchSnapshot().isOpen)
+      },
+      onDidChange: this.onToolbarItemsChangedEmitter.event,
+    }))
+    this.toDispose.push(registry.registerItem({
+      id: SCHOLAR_PAPER_FIND_TOOLBAR_ID,
+      group: 'navigation',
+      priority: 5,
+      isVisible: widget => Boolean(this.paperWidgetOf(widget)?.getSearchSnapshot().isOpen),
+      render: widget => {
+        const paperWidget = this.paperWidgetOf(widget)
+        return paperWidget
+          ? React.createElement(ScholarPaperFindToolbar, { target: paperWidget })
+          : null
+      },
+      onDidChange: this.onToolbarItemsChangedEmitter.event,
+    }))
     this.toDispose.push(registry.registerItem({
       id: ScholarCommands.COMPILE_PAPER.id,
       command: ScholarCommands.COMPILE_PAPER.id,
@@ -661,9 +696,16 @@ export class ScholarContribution implements
   }
 
   private get activePaperWidget(): ScholarPaperWidget | undefined {
-    return this.shell.activeWidget instanceof ScholarPaperWidget
+    return this.shell.activeWidget instanceof ScholarPaperWidget && !this.shell.activeWidget.isDisposed
       ? this.shell.activeWidget
       : undefined
+  }
+
+  private paperWidgetOf(argument: unknown): ScholarPaperWidget | undefined {
+    if (argument === undefined) {
+      return this.activePaperWidget
+    }
+    return argument instanceof ScholarPaperWidget && !argument.isDisposed ? argument : undefined
   }
 
   private get activeGraphWidget(): ScholarPaperGraphWidget | undefined {
@@ -1518,6 +1560,26 @@ export class ScholarContribution implements
       await this.llmSettings.testWorkflow(workflow)
     } catch (reason) {
       await this.messageService.error(`Could not test LLM connection: ${errorMessage(reason)}`)
+    }
+  }
+
+  private bindActivePaperSearchWidget(widget: unknown): void {
+    const paperWidget = widget instanceof ScholarPaperWidget && !widget.isDisposed
+      ? widget
+      : undefined
+    const previousPaperWidget = this.boundPaperSearchWidget
+    this.activePaperSearchWidgetSubscription.dispose()
+    this.boundPaperSearchWidget = paperWidget
+    this.activePaperSearchWidgetSubscription = paperWidget
+      ? paperWidget.onDidChangeSearchState(() => {
+          if (this.boundPaperSearchWidget === paperWidget && !paperWidget.isDisposed) {
+            this.onToolbarItemsChangedEmitter.fire()
+          }
+        })
+      : Disposable.create(() => undefined)
+
+    if (previousPaperWidget !== paperWidget) {
+      this.onToolbarItemsChangedEmitter.fire()
     }
   }
 

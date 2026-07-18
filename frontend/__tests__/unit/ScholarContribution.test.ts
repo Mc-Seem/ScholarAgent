@@ -8,6 +8,10 @@ import type {
   KnowledgeGraphController,
   KnowledgeGraphControllerSnapshot,
 } from '@/components/reader/knowledge-graph-controller'
+import type {
+  PaperSearchController,
+  PaperSearchControllerSnapshot,
+} from '@/components/reader/paper-search-controller'
 import type { ScholarCommands as ScholarCommandsNamespace } from '@/theia/scholar-extension/src/browser/scholar-commands'
 import type { ScholarContribution as ScholarContributionClass } from '@/theia/scholar-extension/src/browser/scholar-contribution'
 import type { ScholarPaperWidget as ScholarPaperWidgetClass } from '@/theia/scholar-extension/src/browser/scholar-paper-widget'
@@ -54,6 +58,7 @@ let SCHOLAR_PAPER_GRAPH_FACTORY_ID: string
 let SCHOLAR_LLM_SETTINGS_WIDGET_ID: string
 let SCHOLAR_SUGGESTIONS_WIDGET_ID: string
 let SCHOLAR_SUGGESTION_EDITOR_WIDGET_ID: string
+let SCHOLAR_PAPER_FIND_TOOLBAR_ID: string
 
 beforeAll(async () => {
   vi.stubGlobal('DragEvent', class DragEvent extends Event {})
@@ -72,6 +77,9 @@ beforeAll(async () => {
   ))
   ;({ ScholarPaperWidget, SCHOLAR_PAPER_FACTORY_ID } = await import(
     '@/theia/scholar-extension/src/browser/scholar-paper-widget'
+  ))
+  ;({ SCHOLAR_PAPER_FIND_TOOLBAR_ID } = await import(
+    '@/theia/scholar-extension/src/browser/scholar-paper-find-toolbar'
   ))
   ;({ ScholarLlmSettingsWidget, SCHOLAR_LLM_SETTINGS_WIDGET_ID } = await import(
     '@/theia/scholar-extension/src/browser/scholar-llm-settings-widget'
@@ -122,6 +130,8 @@ interface FakeToolbarItem {
   command?: string
   group?: string
   priority?: number
+  isVisible?: (widget?: unknown) => boolean
+  render?: (widget?: unknown) => unknown
   onDidChange?: (listener: () => void) => { dispose(): void }
 }
 
@@ -185,8 +195,42 @@ function createFakeStore(snapshot: ReaderWorkspaceSnapshot) {
   }
 }
 
-function createFakePaperWidget(paperId: string, isAttached = true): ScholarPaperWidgetClass {
+type FakePaperWidget = ScholarPaperWidgetClass & {
+  searchSnapshot: PaperSearchControllerSnapshot
+  searchListeners: Set<() => void>
+  openSearch: ReturnType<typeof vi.fn>
+  closeSearch: ReturnType<typeof vi.fn>
+}
+
+function createFakePaperWidget(paperId: string, isAttached = true): FakePaperWidget {
   const widget = Object.create(ScholarPaperWidget.prototype) as ScholarPaperWidgetClass
+  const searchSnapshot: PaperSearchControllerSnapshot = {
+    isOpen: false,
+    query: '',
+    currentMatchIndex: 0,
+    totalMatches: 0,
+    focusRequestId: 0,
+  }
+  const searchListeners = new Set<() => void>()
+  const publishSearch = (): void => {
+    for (const listener of searchListeners) {
+      listener()
+    }
+  }
+  const searchController: PaperSearchController = {
+    getSnapshot: () => searchSnapshot,
+    subscribe: listener => {
+      searchListeners.add(listener)
+      return () => searchListeners.delete(listener)
+    },
+    open: vi.fn(),
+    close: vi.fn(),
+    setQuery: vi.fn(),
+    next: vi.fn(),
+    previous: vi.fn(),
+    refresh: vi.fn(),
+    dispose: vi.fn(),
+  }
   Object.defineProperty(widget, 'options', {
     value: { paperId, label: paperId },
     configurable: true,
@@ -203,7 +247,32 @@ function createFakePaperWidget(paperId: string, isAttached = true): ScholarPaper
     value: vi.fn(),
     configurable: true,
   })
-  return widget
+  Object.defineProperties(widget, {
+    searchSnapshot: { value: searchSnapshot },
+    searchListeners: { value: searchListeners },
+    getSearchSnapshot: { value: vi.fn(() => searchSnapshot) },
+    getSearchController: { value: vi.fn(() => searchController) },
+    onDidChangeSearchState: {
+      value: vi.fn((listener: () => void) => {
+        searchListeners.add(listener)
+        return { dispose: () => searchListeners.delete(listener) }
+      }),
+    },
+    openSearch: {
+      value: vi.fn(() => {
+        searchSnapshot.isOpen = true
+        searchSnapshot.focusRequestId += 1
+        publishSearch()
+      }),
+    },
+    closeSearch: {
+      value: vi.fn(() => {
+        searchSnapshot.isOpen = false
+        publishSearch()
+      }),
+    },
+  })
+  return widget as FakePaperWidget
 }
 
 function graphSnapshot(
@@ -795,6 +864,44 @@ describe('ScholarContribution active-paper commands', () => {
     expect(store.compilePaper).toHaveBeenCalledWith('paper-a')
   })
 
+  it('opens Find for the explicit paper target and refocuses the active paper from the palette', () => {
+    const { shell } = register()
+    const activeWidget = createFakePaperWidget('paper-a')
+    const targetWidget = createFakePaperWidget('paper-b')
+    const foreignWidget = createForeignWidget()
+    shell.activeWidget = activeWidget
+    const handler = commands.handlerFor(ScholarCommands.FIND_IN_PAPER)
+
+    expect(handler.isVisible?.(activeWidget)).toBe(true)
+    expect(handler.isVisible?.(foreignWidget)).toBe(false)
+    expect(handler.isVisible?.(undefined)).toBe(true)
+
+    handler.execute(targetWidget)
+    expect(targetWidget.openSearch).toHaveBeenCalledOnce()
+    expect(activeWidget.openSearch).not.toHaveBeenCalled()
+
+    handler.execute(undefined)
+    handler.execute(undefined)
+    expect(activeWidget.openSearch).toHaveBeenCalledTimes(2)
+    expect(activeWidget.searchSnapshot.focusRequestId).toBe(2)
+  })
+
+  it('binds Ctrl/Cmd+F to the native paper find command', () => {
+    const { contribution } = createContribution(store)
+    const bindings: Array<{ command: string; keybinding: string }> = []
+    contribution.registerKeybindings({
+      registerKeybinding: (binding: { command: string; keybinding: string }) => {
+        bindings.push(binding)
+        return { dispose: () => undefined }
+      },
+    } as unknown as Parameters<ScholarContributionClass['registerKeybindings']>[0])
+
+    expect(bindings).toContainEqual({
+      command: ScholarCommands.FIND_IN_PAPER.id,
+      keybinding: 'ctrlcmd+f',
+    })
+  })
+
   it('does not fall back to the active paper without a widget for an inactive/missing paper', () => {
     register()
 
@@ -1061,7 +1168,7 @@ describe('ScholarContribution active-paper commands', () => {
     expect(widgetManager.getOrCreateWidget).not.toHaveBeenCalled()
   })
 
-  it('registers a tab-bar toolbar item for each active-paper and library command in the navigation group', () => {
+  it('registers paper find icon and field before the existing navigation toolbar actions', () => {
     const { contribution } = createContribution(store)
     const registry = new FakeToolbarRegistry()
 
@@ -1071,6 +1178,8 @@ describe('ScholarContribution active-paper commands', () => {
 
     const ids = registry.items.map(item => item.id)
     expect(ids).toEqual([
+      ScholarCommands.FIND_IN_PAPER.id,
+      SCHOLAR_PAPER_FIND_TOOLBAR_ID,
       ScholarCommands.COMPILE_PAPER.id,
       ScholarCommands.BUILD_KNOWLEDGE_GRAPH.id,
       ScholarCommands.DELETE_PAPER.id,
@@ -1093,11 +1202,89 @@ describe('ScholarContribution active-paper commands', () => {
       ScholarCommands.TEST_LLM_HTML_INJECTION.id,
       ScholarCommands.TEST_LLM_TOOLTIP_SUGGESTION.id,
     ])
-    registry.items.forEach(item => {
+    const findField = registry.items.find(item => item.id === SCHOLAR_PAPER_FIND_TOOLBAR_ID)!
+    expect(findField.command).toBeUndefined()
+    expect(findField.render).toBeInstanceOf(Function)
+    expect(findField.onDidChange).toBeInstanceOf(Function)
+
+    registry.items.filter(item => item !== findField).forEach(item => {
       expect(item.group).toBe('navigation')
       expect(item.command).toBe(item.id)
       expect(item.onDidChange).toBeInstanceOf(Function)
     })
+  })
+
+  it('switches the paper find toolbar between its icon and expanded field', () => {
+    const { contribution } = createContribution(store)
+    const registry = new FakeToolbarRegistry()
+    contribution.registerToolbarItems(registry as unknown as Parameters<
+      ScholarContributionClass['registerToolbarItems']
+    >[0])
+    const paperWidget = createFakePaperWidget('paper-a')
+    const foreignWidget = createForeignWidget()
+    const findIcon = registry.items.find(item => item.id === ScholarCommands.FIND_IN_PAPER.id)!
+    const findField = registry.items.find(item => item.id === SCHOLAR_PAPER_FIND_TOOLBAR_ID)!
+
+    expect(findIcon.isVisible?.(paperWidget)).toBe(true)
+    expect(findField.isVisible?.(paperWidget)).toBe(false)
+    expect(findIcon.isVisible?.(foreignWidget)).toBe(false)
+    expect(findField.isVisible?.(foreignWidget)).toBe(false)
+
+    paperWidget.openSearch()
+
+    expect(findIcon.isVisible?.(paperWidget)).toBe(false)
+    expect(findField.isVisible?.(paperWidget)).toBe(true)
+    expect(findField.render?.(paperWidget)).toBeTruthy()
+  })
+
+  it('refreshes the paper find toolbar when its click temporarily moves shell focus', () => {
+    const { contribution, shell } = register()
+    const registry = new FakeToolbarRegistry()
+    contribution.registerToolbarItems(registry as unknown as Parameters<
+      ScholarContributionClass['registerToolbarItems']
+    >[0])
+    const paperWidget = createFakePaperWidget('paper-a')
+    const findField = registry.items.find(item => item.id === SCHOLAR_PAPER_FIND_TOOLBAR_ID)!
+    const toolbarChanged = vi.fn()
+    findField.onDidChange?.(toolbarChanged)
+    shell.activeWidget = paperWidget
+    contribution.onStart()
+    toolbarChanged.mockClear()
+
+    shell.activeWidget = createForeignWidget()
+    commands.handlerFor(ScholarCommands.FIND_IN_PAPER).execute(paperWidget)
+
+    expect(paperWidget.searchSnapshot.isOpen).toBe(true)
+    expect(toolbarChanged).toHaveBeenCalledOnce()
+    expect(findField.isVisible?.(paperWidget)).toBe(true)
+    contribution.onStop()
+  })
+
+  it('tracks search state only for the current restored paper widget', () => {
+    const { contribution, shell, fireCurrentWidgetChanged } = createContribution(store)
+    const registry = new FakeToolbarRegistry()
+    contribution.registerToolbarItems(registry as unknown as Parameters<
+      ScholarContributionClass['registerToolbarItems']
+    >[0])
+    const toolbarListener = vi.fn()
+    registry.items.forEach(item => item.onDidChange?.(toolbarListener))
+    const paperA = createFakePaperWidget('paper-a')
+    const paperB = createFakePaperWidget('paper-b')
+    shell.activeWidget = paperA
+
+    contribution.onStart()
+    expect(paperA.searchListeners.size).toBe(1)
+    const callsAfterStart = toolbarListener.mock.calls.length
+    paperA.openSearch()
+    expect(toolbarListener.mock.calls.length).toBeGreaterThan(callsAfterStart)
+
+    shell.activeWidget = paperB
+    fireCurrentWidgetChanged()
+    expect(paperA.searchListeners.size).toBe(0)
+    expect(paperB.searchListeners.size).toBe(1)
+
+    contribution.onStop()
+    expect(paperB.searchListeners.size).toBe(0)
   })
 
   it('fires onDidChange for every toolbar item whenever the underlying store updates', () => {

@@ -1,14 +1,16 @@
 "use client";
 
 import {
-  useState,
-  useEffect,
   useCallback,
+  useEffect,
+  useMemo,
   useRef,
+  useSyncExternalStore,
   type KeyboardEvent as ReactKeyboardEvent,
   type RefObject,
 } from "react";
 import { Search, X, ChevronUp, ChevronDown } from "lucide-react";
+import { createPaperSearchController } from "./paper-search-controller";
 
 interface SearchBarProps {
   isOpen: boolean;
@@ -31,19 +33,7 @@ export default function SearchBar({
   searchRootRef,
   placement = "floating",
 }: SearchBarProps) {
-  const [searchQuery, setSearchQuery] = useState("");
-  const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
-  const [totalMatches, setTotalMatches] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
-  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-
-  // Focus input when opened
-  useEffect(() => {
-    if (isOpen) {
-      inputRef.current?.focus();
-      inputRef.current?.select();
-    }
-  }, [isOpen]);
 
   const getSearchContainer = useCallback((): HTMLElement | null => {
     const root = searchRootRef?.current;
@@ -55,203 +45,46 @@ export default function SearchBar({
     return document.querySelector<HTMLElement>(".html-renderer");
   }, [searchRootRef]);
 
-  // Clear all search highlights
-  const clearHighlights = useCallback(() => {
-    const container = getSearchContainer();
-    if (!container) return;
+  const controller = useMemo(() => createPaperSearchController({
+    getSearchRoot: getSearchContainer,
+  }), [getSearchContainer]);
+  const snapshot = useSyncExternalStore(
+    controller.subscribe,
+    controller.getSnapshot,
+    controller.getSnapshot,
+  );
+  const { query: searchQuery, currentMatchIndex, totalMatches } = snapshot;
 
-    // Remove all mark elements and restore original text
-    container.querySelectorAll("mark.search-highlight, mark.search-highlight-current").forEach((mark) => {
-      const parent = mark.parentNode;
-      if (parent) {
-        const textNode = document.createTextNode(mark.textContent || "");
-        parent.replaceChild(textNode, mark);
-      }
-    });
-
-    // Normalize text nodes to merge adjacent text nodes
-    container.normalize();
-  }, [getSearchContainer]);
-
-  // Perform search and highlight matches
-  const performSearch = useCallback((query: string, matchIndex: number = 0) => {
-    const container = getSearchContainer();
-    if (!container || !query.trim()) {
-      clearHighlights();
-      setTotalMatches(0);
-      setCurrentMatchIndex(0);
-      return;
-    }
-
-    // Clear previous highlights
-    clearHighlights();
-
-    const lowerQuery = query.toLowerCase();
-    const matches: { node: Node; offset: number; length: number }[] = [];
-
-    // Find all text nodes and search for matches
-    const walker = document.createTreeWalker(
-      container,
-      NodeFilter.SHOW_TEXT,
-      {
-        acceptNode: (node) => {
-          // Skip empty text nodes
-          if (!node.textContent?.trim()) return NodeFilter.FILTER_REJECT;
-          return NodeFilter.FILTER_ACCEPT;
-        }
-      }
-    );
-
-    const textNodes: Text[] = [];
-    let node: Text | null;
-    while ((node = walker.nextNode() as Text | null)) {
-      textNodes.push(node);
-    }
-
-    // Search in each text node
-    textNodes.forEach((textNode) => {
-      const text = textNode.textContent || "";
-      const lowerText = text.toLowerCase();
-      let offset = 0;
-
-      while ((offset = lowerText.indexOf(lowerQuery, offset)) !== -1) {
-        matches.push({
-          node: textNode,
-          offset,
-          length: query.length
-        });
-        offset += query.length;
-      }
-    });
-
-    setTotalMatches(matches.length);
-
-    if (matches.length === 0) {
-      setCurrentMatchIndex(0);
-      return;
-    }
-
-    // Ensure matchIndex is valid
-    const validIndex = Math.max(0, Math.min(matchIndex, matches.length - 1));
-    setCurrentMatchIndex(validIndex);
-
-    // Group matches by their parent text node for efficient highlighting
-    const nodeMap = new Map<Node, { offset: number; length: number; index: number }[]>();
-    matches.forEach((match, idx) => {
-      if (!nodeMap.has(match.node)) {
-        nodeMap.set(match.node, []);
-      }
-      nodeMap.get(match.node)!.push({
-        offset: match.offset,
-        length: match.length,
-        index: idx
-      });
-    });
-
-    // Highlight matches in each text node (process in reverse to maintain offsets)
-    nodeMap.forEach((matchesInNode, textNode) => {
-      const text = textNode.textContent || "";
-      const parent = textNode.parentNode;
-      if (!parent) return;
-
-      // Sort by offset descending to process from end to start
-      matchesInNode.sort((a, b) => b.offset - a.offset);
-
-      const fragment = document.createDocumentFragment();
-      let lastOffset = text.length;
-
-      // Build fragments in reverse order
-      for (const match of matchesInNode) {
-        // Add text after this match
-        if (match.offset + match.length < lastOffset) {
-          fragment.insertBefore(
-            document.createTextNode(text.slice(match.offset + match.length, lastOffset)),
-            fragment.firstChild
-          );
-        }
-
-        // Add highlighted match
-        const mark = document.createElement("mark");
-        mark.className = match.index === validIndex
-          ? "search-highlight search-highlight-current"
-          : "search-highlight";
-        mark.textContent = text.slice(match.offset, match.offset + match.length);
-        fragment.insertBefore(mark, fragment.firstChild);
-
-        lastOffset = match.offset;
-      }
-
-      // Add text before first match
-      if (lastOffset > 0) {
-        fragment.insertBefore(
-          document.createTextNode(text.slice(0, lastOffset)),
-          fragment.firstChild
-        );
-      }
-
-      // Replace the text node with the fragment
-      parent.replaceChild(fragment, textNode);
-    });
-
-    // Scroll to current match
-    requestAnimationFrame(() => {
-      const currentMark = container.querySelector("mark.search-highlight-current");
-      if (currentMark instanceof HTMLElement && typeof currentMark.scrollIntoView === "function") {
-        currentMark.scrollIntoView({ behavior: "smooth", block: "center" });
-      }
-    });
-  }, [clearHighlights, getSearchContainer]);
-
-  // Handle search query changes with debouncing
   useEffect(() => {
-    if (!isOpen) return;
-
-    // Clear existing timeout
-    if (searchTimeoutRef.current) {
-      clearTimeout(searchTimeoutRef.current);
+    if (isOpen) {
+      controller.open();
+    } else {
+      controller.close();
     }
+  }, [controller, isOpen]);
 
-    if (!searchQuery.trim()) {
-      clearHighlights();
-      setTotalMatches(0);
-      setCurrentMatchIndex(0);
-      return;
+  // Focus input when opened or explicitly requested again.
+  useEffect(() => {
+    if (isOpen) {
+      inputRef.current?.focus();
+      inputRef.current?.select();
     }
-
-    // Debounce search
-    searchTimeoutRef.current = setTimeout(() => {
-      performSearch(searchQuery, 0);
-    }, 100);
-
-    return () => {
-      if (searchTimeoutRef.current) {
-        clearTimeout(searchTimeoutRef.current);
-      }
-    };
-  }, [searchQuery, isOpen, performSearch, clearHighlights]);
+  }, [isOpen, snapshot.focusRequestId]);
 
   // Navigate to next/previous match
   const navigate = useCallback((forward: boolean) => {
-    if (totalMatches === 0 || !searchQuery.trim()) return;
-
-    let newIndex: number;
     if (forward) {
-      newIndex = (currentMatchIndex + 1) % totalMatches;
+      controller.next();
     } else {
-      newIndex = (currentMatchIndex - 1 + totalMatches) % totalMatches;
+      controller.previous();
     }
-
-    performSearch(searchQuery, newIndex);
-  }, [totalMatches, currentMatchIndex, searchQuery, performSearch]);
+  }, [controller]);
 
   // Handle close
   const handleClose = useCallback(() => {
-    clearHighlights();
-    setSearchQuery("");
-    setTotalMatches(0);
-    setCurrentMatchIndex(0);
+    controller.close();
     onClose();
-  }, [clearHighlights, onClose]);
+  }, [controller, onClose]);
 
   const handleKeyDown = useCallback((e: ReactKeyboardEvent<HTMLDivElement>) => {
     const fromInput = e.target === inputRef.current;
@@ -267,14 +100,7 @@ export default function SearchBar({
     }
   }, [handleClose, navigate]);
 
-  // Clean up on unmount or close
-  useEffect(() => {
-    if (!isOpen) {
-      clearHighlights();
-    }
-  }, [isOpen, clearHighlights]);
-
-  useEffect(() => () => clearHighlights(), [clearHighlights]);
+  useEffect(() => () => controller.dispose(), [controller]);
 
   if (!isOpen) return null;
 
@@ -302,7 +128,7 @@ export default function SearchBar({
           ref={inputRef}
           type="text"
           value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
+          onChange={(e) => controller.setQuery(e.target.value)}
           placeholder="Find in paper..."
           aria-label="Find in paper"
           className={placement === "inline"
