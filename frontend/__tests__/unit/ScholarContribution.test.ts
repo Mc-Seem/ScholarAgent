@@ -335,6 +335,9 @@ function createFakeGraphWidget(
     clearFocus: vi.fn(),
     resetLayout: vi.fn(),
     revealSelectionInPaper: vi.fn(),
+    expandNode: vi.fn().mockResolvedValue(undefined),
+    focusSource: vi.fn().mockResolvedValue(undefined),
+    search: vi.fn(async () => snapshot.searchItems),
   }
   Object.defineProperty(widget, 'options', {
     value: { paperId },
@@ -533,6 +536,7 @@ function createContribution(store: ReturnType<typeof createFakeStore>) {
   const quickInputService = {
     pick: vi.fn(),
     createQuickPick: vi.fn(),
+    input: vi.fn().mockResolvedValue(''),
   }
   const annotations = new ScholarAnnotationService()
   const suggestions = {
@@ -1476,6 +1480,26 @@ describe('ScholarContribution graph search and filters', () => {
       }),
     )
     expect(graphWidget.revealNode).toHaveBeenCalledWith('node-2')
+  })
+
+  it('queries the bounded controller before presenting canonical search results', async () => {
+    const { commands, quickInputService } = register()
+    const graphWidget = createFakeGraphWidget('paper-a')
+    const controller = graphWidget.getGraphController()!
+    quickInputService.input.mockResolvedValueOnce('remote concept')
+    vi.mocked(controller.search).mockResolvedValueOnce([
+      { id: 'remote-1', label: 'Remote Concept', nodeType: 'concept', detail: 'Server result' },
+    ])
+    quickInputService.pick.mockImplementation(async (items: FakeQuickPickItem[]) => items[0])
+
+    await commands.handlerFor(ScholarCommands.SEARCH_GRAPH).execute(graphWidget)
+
+    expect(controller.search).toHaveBeenCalledWith('remote concept')
+    expect(quickInputService.pick).toHaveBeenCalledWith(
+      [expect.objectContaining({ id: 'remote-1', label: 'Remote Concept' })],
+      expect.any(Object),
+    )
+    expect(graphWidget.revealNode).toHaveBeenCalledWith('remote-1')
   })
 
   it('does not reveal a search result after cancellation or controller replacement', async () => {

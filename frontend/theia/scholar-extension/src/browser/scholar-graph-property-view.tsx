@@ -35,11 +35,18 @@ export function buildScholarGraphPropertyRows(selection: unknown): ScholarGraphP
       ?? payload.summary
       ?? payload.context
       ?? '—'
+    const evidence = payload.evidence?.map(item => {
+      const location = item.source.section_title ?? item.source.section_id ?? 'Source'
+      return `${location}: ${item.source.quote}`
+    }).join('\n') || '—'
     return [
       { key: 'paper', label: 'Paper', value: selection.paperId },
       { key: 'label', label: 'Label', value: payload.label },
       { key: 'type', label: 'Type', value: payload.nodeType },
       { key: 'description', label: 'Definition / Description', value: description },
+      { key: 'aliases', label: 'Aliases', value: payload.aliases?.join(', ') || '—' },
+      { key: 'rank', label: 'View Rank', value: payload.rank === undefined ? '—' : payload.rank.toFixed(3) },
+      { key: 'evidence', label: 'Evidence', value: evidence },
       { key: 'connections', label: 'Connections', value: connections.join('\n') || '—' },
     ]
   }
@@ -51,7 +58,11 @@ export function buildScholarGraphPropertyRows(selection: unknown): ScholarGraphP
       label: 'Relation',
       value: `${payload.sourceLabel} → ${payload.targetLabel} (${payload.relationshipType})`,
     },
-    { key: 'evidence', label: 'Evidence', value: payload.evidence || '—' },
+    {
+      key: 'evidence',
+      label: 'Evidence',
+      value: payload.evidenceItems?.map(item => item.source.quote).join('\n') || payload.evidence || '—',
+    },
   ]
 }
 

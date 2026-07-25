@@ -1,0 +1,80 @@
+{
+  "name": "variational-inference-baseline",
+  "description": "Synthetic legacy graph covering duplicate concepts and formulas, scoped symbols, unsupported entities, and relation evidence.",
+  "graph": {
+    "nodes": [
+      {"id": "def_elbo", "type": "definition", "label": "Evidence lower bound", "definition": "A lower bound on the log evidence.", "section_id": "sec-method", "dom_node_id": "p-elbo-definition"},
+      {"id": "def_evidence_lower_bound", "type": "definition", "label": "ELBO", "definition": "The variational lower bound optimized by the method.", "section_id": "sec-method", "dom_node_id": "p-elbo-repeat"},
+      {"id": "formula_elbo_named", "type": "formula", "label": "ELBO", "latex": "\\mathcal{L}(q)=\\mathbb{E}_q[\\log p(x,z)-\\log q(z)]", "summary": "Defines the optimization objective.", "section_id": "sec-method", "dom_node_id": "eq-elbo"},
+      {"id": "formula_elbo_repeat", "type": "formula", "label": "Variational objective", "latex": "\\mathcal L(q) = \\mathbb E_q [\\log p(x,z) - \\log q(z)]", "summary": "Restates the ELBO objective.", "section_id": "sec-results", "dom_node_id": "eq-elbo-repeat"},
+      {"id": "symbol_q_elbo", "type": "symbol", "label": "q", "latex": "q", "context": "Variational posterior in the ELBO.", "section_id": "sec-method", "dom_node_id": "eq-elbo"},
+      {"id": "symbol_q_proposal", "type": "symbol", "label": "q", "latex": "q", "context": "Proposal distribution used by importance sampling.", "section_id": "sec-evaluation", "dom_node_id": "eq-importance"},
+      {"id": "def_kl", "type": "definition", "label": "KL divergence", "definition": "A divergence between the variational posterior and model posterior.", "section_id": "sec-background", "dom_node_id": "p-kl"},
+      {"id": "thm_convergence", "type": "theorem", "label": "Convergence theorem", "statement": "The coordinate updates converge to a stationary point.", "section_id": "sec-theory", "dom_node_id": "thm-convergence"},
+      {"id": "symbol_i", "type": "symbol", "label": "i", "latex": "i", "context": "A local summation index.", "section_id": "sec-method", "dom_node_id": "eq-sum"},
+      {"id": "def_optimizer", "type": "definition", "label": "Optimizer", "definition": "An entity inferred from generic prose without a definition.", "section_id": "sec-method", "dom_node_id": "p-generic"}
+    ],
+    "edges": [
+      {"id": "edge-defines-elbo", "source": "def_elbo", "target": "formula_elbo_named", "type": "defines", "evidence": "We define the evidence lower bound as Eq. (3)."},
+      {"id": "edge-elbo-q", "source": "formula_elbo_named", "target": "symbol_q_elbo", "type": "has_symbol", "evidence": "Here q denotes the variational posterior."},
+      {"id": "edge-elbo-kl", "source": "formula_elbo_named", "target": "def_kl", "type": "depends_on", "evidence": "Maximizing the ELBO minimizes the KL divergence."},
+      {"id": "edge-theorem-elbo", "source": "thm_convergence", "target": "formula_elbo_named", "type": "uses", "evidence": "The proof applies coordinate updates to the ELBO."},
+      {"id": "edge-unsupported", "source": "def_optimizer", "target": "formula_elbo_named", "type": "mentions"}
+    ],
+    "metadata": {"node_count": 10, "edge_count": 5}
+  },
+  "rebuild_graph": {
+    "nodes": [
+      {"id": "def_elbo_rebuild", "type": "definition", "label": "Evidence lower bound"},
+      {"id": "def_evidence_lower_bound_rebuild", "type": "definition", "label": "ELBO"},
+      {"id": "formula_elbo_named_2", "type": "formula", "label": "ELBO"},
+      {"id": "formula_elbo_repeat_2", "type": "formula", "label": "Variational objective"},
+      {"id": "symbol_q_elbo_2", "type": "symbol", "label": "q"},
+      {"id": "symbol_q_proposal_2", "type": "symbol", "label": "q"},
+      {"id": "def_kl", "type": "definition", "label": "KL divergence"},
+      {"id": "thm_convergence", "type": "theorem", "label": "Convergence theorem"},
+      {"id": "symbol_i_2", "type": "symbol", "label": "i"},
+      {"id": "def_optimizer", "type": "definition", "label": "Optimizer"}
+    ],
+    "edges": []
+  },
+  "annotations": {
+    "duplicate_groups": [
+      ["def_elbo", "def_evidence_lower_bound"],
+      ["formula_elbo_named", "formula_elbo_repeat"]
+    ],
+    "unsupported_node_ids": ["symbol_i", "def_optimizer"],
+    "distinct_scope_groups": [["symbol_q_elbo", "symbol_q_proposal"]],
+    "relations_requiring_evidence": ["edge-defines-elbo", "edge-elbo-q", "edge-elbo-kl", "edge-theorem-elbo", "edge-unsupported"]
+  },
+  "retrieval_questions": [
+    {"id": "direct-definition", "class": "direct_definition", "question": "What is the ELBO?", "expected_source_ids": ["p-elbo-definition", "eq-elbo"]},
+    {"id": "quotation", "class": "quotation", "question": "How does the paper define q?", "expected_source_ids": ["eq-elbo"]},
+    {"id": "summary", "class": "summary", "question": "Summarize the optimization method.", "expected_source_ids": ["p-elbo-definition", "eq-elbo"]},
+    {"id": "dependency", "class": "dependency", "question": "What does the ELBO depend on?", "expected_source_ids": ["eq-elbo", "p-kl"]},
+    {"id": "equation-use", "class": "equation_use", "question": "How is the ELBO equation used by the convergence result?", "expected_source_ids": ["eq-elbo", "thm-convergence"]},
+    {"id": "multi-step", "class": "multi_step", "question": "Trace q through the objective to the convergence result.", "expected_source_ids": ["eq-elbo", "p-kl", "thm-convergence"]}
+  ],
+  "retrieval_corpus": [
+    {"id": "p-elbo-definition", "kind": "passage", "section_id": "sec-method", "text": "The evidence lower bound, abbreviated ELBO, is the variational objective optimized by coordinate ascent."},
+    {"id": "eq-elbo", "kind": "equation", "section_id": "sec-method", "text": "The ELBO objective is L(q) = E_q[log p(x,z) - log q(z)], where q is the variational posterior."},
+    {"id": "p-kl", "kind": "passage", "section_id": "sec-background", "text": "KL divergence measures the discrepancy between the variational posterior and the model posterior."},
+    {"id": "thm-convergence", "kind": "passage", "section_id": "sec-theory", "text": "The coordinate updates converge to a stationary point under the stated regularity assumptions."},
+    {"id": "eq-importance", "kind": "equation", "section_id": "sec-evaluation", "text": "Importance weights use a proposal distribution r and normalized weights w."}
+  ],
+  "retrieval_graph": {
+    "entities": [
+      {"id": "concept:elbo", "type": "concept", "label": "Evidence lower bound", "aliases": ["ELBO", "variational objective"], "source_ids": ["p-elbo-definition"]},
+      {"id": "formula:elbo", "type": "formula", "label": "ELBO objective", "aliases": ["objective", "L(q)"], "source_ids": ["eq-elbo"]},
+      {"id": "concept:kl", "type": "concept", "label": "KL divergence", "aliases": ["KL"], "source_ids": ["p-kl"]},
+      {"id": "claim:convergence", "type": "claim", "label": "Convergence result", "aliases": ["convergence theorem", "stationary point"], "source_ids": ["thm-convergence"]},
+      {"id": "symbol:q", "type": "symbol", "label": "q", "aliases": ["variational posterior"], "source_ids": ["eq-elbo"]}
+    ],
+    "relations": [
+      {"id": "relation:has-formula", "type": "has_formula", "source_id": "concept:elbo", "target_id": "formula:elbo", "evidence_source_ids": ["p-elbo-definition", "eq-elbo"]},
+      {"id": "relation:depends-kl", "type": "depends_on", "source_id": "formula:elbo", "target_id": "concept:kl", "evidence_source_ids": ["eq-elbo", "p-kl"]},
+      {"id": "relation:claim-uses", "type": "uses", "source_id": "claim:convergence", "target_id": "formula:elbo", "evidence_source_ids": ["thm-convergence", "eq-elbo"]},
+      {"id": "relation:formula-uses-q", "type": "uses", "source_id": "formula:elbo", "target_id": "symbol:q", "evidence_source_ids": ["eq-elbo"]}
+    ]
+  }
+}

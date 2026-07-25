@@ -44,6 +44,23 @@ function nodeSelection(overrides: Partial<{
   statement: string
   summary: string
   context: string
+  aliases: string[]
+  rank: number
+  evidence: Array<{
+    observation_id: string
+    kind: string
+    label: string
+    source: {
+      paper_id: string
+      section_id: string | null
+      section_title: string | null
+      dom_node_id: string | null
+      equation_id: string | null
+      quote: string
+      char_start: number | null
+      char_end: number | null
+    }
+  }>
   incomingConnections: { nodeId: string; nodeLabel: string; nodeType: string; relationshipType: string }[]
   outgoingConnections: { nodeId: string; nodeLabel: string; nodeType: string; relationshipType: string }[]
 }> = {}) {
@@ -147,6 +164,32 @@ describe('buildScholarGraphPropertyRows (node)', () => {
     const connectionsRow = rows.find(row => row.label === 'Connections')
     expect(connectionsRow?.value).toContain('Lemma 2')
     expect(connectionsRow?.value).toContain('depends_on')
+  })
+
+  it('includes canonical aliases, rank, and inspectable evidence', () => {
+    const rows = buildScholarGraphPropertyRows(nodeSelection({
+      aliases: ['ELBO'],
+      rank: 0.875,
+      evidence: [{
+        observation_id: 'obs-1',
+        kind: 'concept',
+        label: 'Evidence lower bound',
+        source: {
+          paper_id: 'paper-a',
+          section_id: 'sec-1',
+          section_title: 'Method',
+          dom_node_id: 'p-1',
+          equation_id: null,
+          quote: 'We define the evidence lower bound.',
+          char_start: 0,
+          char_end: 35,
+        },
+      }],
+    }))
+
+    expect(rows.find(row => row.label === 'Aliases')?.value).toBe('ELBO')
+    expect(rows.find(row => row.label === 'View Rank')?.value).toBe('0.875')
+    expect(rows.find(row => row.label === 'Evidence')?.value).toContain('Method: We define')
   })
 })
 

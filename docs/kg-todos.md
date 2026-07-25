@@ -1,8 +1,19 @@
 # Knowledge Graph Backlog
 
-> **Status**: Branch `kg-enhancements`. Formula entity type and 3-stage dedup pipeline are implemented. Items below reflect the current state of the code.
+> **Status**: The canonical evidence rework is implemented. Older three-stage deduplication helpers remain inactive migration/reference code.
 
-## Completed ✅
+## Canonical Rework Completed ✅
+
+- [x] Versioned `KnowledgeGraphDocument` with observations, source evidence, canonical entities, facets, signals, relations, and diagnostics
+- [x] One coordinated concept/claim/method section extraction plus deterministic compiler equation anchoring
+- [x] Stable semantic/math IDs, alias and observation retention, strict endpoint/evidence validation before persistence
+- [x] Formula-local symbols as facets with explicit/recurrent/independently-discussed promotion rules
+- [x] Ranked overview, one-hop/source-focused subgraph, canonical search, and legacy rebuild detection APIs
+- [x] Progressive web and Theia views with server search, stable-ID merge, evidence inspection, expertise controls, and visible-node budgets
+- [x] Tooltip suggestions through the bounded canonical projection
+- [x] Passage-only versus hybrid retrieval evaluation; no query class currently passes promotion gates
+
+## Legacy Milestones (Inactive Reference)
 
 ### Core Pipeline
 - [x] **Multi-agent extraction pipeline** — Parallel extraction of symbols, definitions, theorems, formulas
@@ -40,16 +51,15 @@
 
 ---
 
-## In Progress / High Priority
+## Remaining High Priority
 
-### Deduplication Refinement
-- [ ] **LLM adjudication for ambiguous dedup buckets** — Stage 3 is currently deterministic only. The design plan calls for sending small ambiguous candidate clusters to the LLM for resolution (`attach` vs `absorb` vs `keep_separate` decisions)
-- [ ] **Shared deduplication profiles** — The plan describes a shared intermediate profile (`surface_name`, `aliases`, `semantic_summary`, `math_signatures`, `text_signature`, `scope_signature`, `evidence_spans`) for cross-type matching. Not yet fully implemented as a standalone structure.
-- [ ] **Dedup provenance in graph output** — `canonical_entity_id`, `absorbed_entity_ids`, `dedup_notes` / `resolution_reason` fields in the final graph. Currently partial (formula attachment provenance exists, but general provenance tracking is incomplete).
+### Canonicalization Refinement
+- [ ] **Ambiguous-cluster adjudication** — Add optional LLM adjudication only for small canonical candidate blocks that deterministic aliases/signatures cannot resolve.
+- [ ] **Over-merge evaluation** — Expand annotated fixtures before introducing semantic near-duplicate merging.
+- [ ] **Incremental rebuild research** — Define observation/entity replacement semantics before relational normalization.
 
 ### Extraction Quality
-- [ ] **Source text quotes** — Store direct quotes from LaTeX source to locate entities in original text
-  - Add `source_quote` field to entity models
+- [x] **Source text quotes** — Exact evidence quotes, source DOM/equation IDs, and available offsets live in immutable observations
 - [ ] **Sub-paragraph entity spans** — Inject `<span>` tags around entity mentions within paragraphs
   - Currently the finest granularity is paragraph-level (`data-id` on `<p>`)
   - Goal: wrap individual mentions (e.g., "Theorem 3.2", "α_t") in hoverable spans linked to KG nodes
@@ -60,10 +70,9 @@
 ## Medium Priority
 
 ### Frontend UX
-- [ ] **Relationship evidence display** — Show `evidence_text` from relationship metadata
-  - Options: hover tooltip on edges, edge click panel, or info panel when edge selected
+- [x] **Relationship evidence display** — Edge and Theia property panels expose persisted source observations
 - [ ] **Auto-generate tooltip drafts** — For important terms, pre-populate tooltip content from KG data
-- [ ] **Presentation-layer concept aggregation** — The dedup plan describes a UI concept node that aggregates definitions + attached formulas + attached symbols as collapsible facets, instead of showing them as equal peers
+- [x] **Presentation-layer concept aggregation** — Concept cards render aliases, formulas, scoped symbols, signals, and evidence as facets
 
 ### User Interaction
 - [ ] **User-added definitions** — Allow users to manually add entities to the knowledge graph
@@ -71,8 +80,7 @@
   - Triggers incremental extraction for that selection
 
 ### Extraction Improvements
-- [ ] **Symbol scoping** — Track symbol scope to handle reused notation
-  - Same symbol may mean different things in different sections
+- [x] **Symbol scoping** — Formula-local notation remains scoped facet data unless promotion criteria pass
 - [ ] **Deduplication improvements** — Current within-type dedup uses normalized keys
   - Consider semantic similarity for near-duplicates
   - Handle LaTeX variations (e.g., `\alpha` vs `α`)
@@ -91,7 +99,7 @@
 ---
 
 ## Technical Debt
-- [ ] Edge validation in `build_graph` only skips when *both* nodes missing — should skip if *either* is missing
-- [ ] Consider migrating from JSONB to dedicated `kg_nodes`/`kg_edges` tables for better querying
+- [x] Canonical relations reject either missing endpoint and missing evidence during document validation
+- [ ] Migrate from JSONB only when triggers in `docs/kg-relational-migration.md` are measured
 - [ ] Add caching for LLM calls to avoid re-extraction on rebuild
-- [ ] `has_symbol` edge generation — verify formula-scoped symbols are properly linked to their parent formulas in the final graph
+- [ ] Improve hybrid evidence reranking, then rerun the gates in `docs/kg-retrieval-evaluation.md`

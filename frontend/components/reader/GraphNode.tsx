@@ -2,7 +2,7 @@
 
 import { memo } from 'react';
 import { Handle, Position, NodeProps } from 'reactflow';
-import { Variable, BookOpen, Lightbulb, FunctionSquare } from 'lucide-react';
+import { Variable, BookOpen, Lightbulb, FunctionSquare, Network, Wrench, BadgeCheck } from 'lucide-react';
 import { LatexText } from './LatexText';
 
 interface GraphNodeData {
@@ -16,10 +16,36 @@ interface GraphNodeData {
   domNodeId: string;
   onNavigate: () => void;
   isFocused?: boolean;
+  rank?: number;
+  aliases?: string[];
 }
 
 // Colors and icons for different node types
 const nodeConfig = {
+  concept: {
+    bgColor: 'bg-emerald-50',
+    borderColor: 'border-emerald-300',
+    hoverBorderColor: 'hover:border-emerald-400',
+    textColor: 'text-emerald-700',
+    icon: Network,
+    iconColor: 'text-emerald-500',
+  },
+  claim: {
+    bgColor: 'bg-violet-50',
+    borderColor: 'border-violet-300',
+    hoverBorderColor: 'hover:border-violet-400',
+    textColor: 'text-violet-700',
+    icon: BadgeCheck,
+    iconColor: 'text-violet-500',
+  },
+  method: {
+    bgColor: 'bg-indigo-50',
+    borderColor: 'border-indigo-300',
+    hoverBorderColor: 'hover:border-indigo-400',
+    textColor: 'text-indigo-700',
+    icon: Wrench,
+    iconColor: 'text-indigo-500',
+  },
   formula: {
     bgColor: 'bg-amber-50',
     borderColor: 'border-amber-300',
@@ -101,6 +127,11 @@ function GraphNodeComponent({ data }: NodeProps<GraphNodeData>) {
         <span className="text-[10px] font-medium text-slate-500 uppercase tracking-wide">
           {data.nodeType}
         </span>
+        {typeof data.rank === 'number' && (
+          <span className="ml-auto text-[9px] text-slate-400" title="Projection rank">
+            {Math.round(data.rank * 100)}
+          </span>
+        )}
       </div>
 
       {/* Label */}

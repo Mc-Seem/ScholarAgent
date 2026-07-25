@@ -5,6 +5,13 @@ export interface KnowledgeGraphSearchItem {
   label: string;
   nodeType: string;
   detail?: string;
+  sectionId?: string;
+}
+
+export interface KnowledgeGraphSourceFocus {
+  section?: string;
+  domNodeId?: string;
+  equationId?: string;
 }
 
 export interface KnowledgeGraphFilterOption {
@@ -46,4 +53,7 @@ export interface KnowledgeGraphController {
   clearFocus(): void;
   resetLayout(): void;
   revealSelectionInPaper(): void;
+  expandNode(nodeId: string): Promise<void>;
+  focusSource(source: KnowledgeGraphSourceFocus): Promise<void>;
+  search(query: string): Promise<readonly KnowledgeGraphSearchItem[]>;
 }

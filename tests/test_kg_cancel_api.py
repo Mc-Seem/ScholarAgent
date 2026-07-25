@@ -85,6 +85,74 @@ def _seed_compiled_paper(session_factory, paper_id: str = "paper-kg-1") -> str:
     return paper_id
 
 
+def _empty_canonical_graph():
+    return {
+        "schema_version": "1.0",
+        "build": {
+            "pipeline_version": "2.0",
+            "prompt_versions": {"section_observations": "1.0"},
+            "models": {"section_observations": "test"},
+            "created_at": "2026-07-25T00:00:00Z",
+        },
+        "observations": [],
+        "entities": [],
+        "relations": [],
+        "metrics": {
+            "observation_count": 0,
+            "entity_count": 0,
+            "relation_count": 0,
+            "diagnostics": {},
+        },
+    }
+
+
+def _canonical_graph(entity_count: int = 40):
+    from backend.app.agents.knowledge_graph_canonical import canonicalize_observations
+    from backend.app.agents.knowledge_graph_models import SourceObservation, SourceReference
+
+    observations = []
+    for index in range(entity_count):
+        observations.append(SourceObservation(
+            id=f"obs-{index}",
+            kind="concept",
+            label=f"Concept {index}",
+            payload={
+                "summary": f"Evidence for concept {index}.",
+                "aliases": [f"C{index}"],
+                "contribution": index / entity_count,
+            },
+            confidence=0.9,
+            source=SourceReference(
+                paper_id="paper-kg-1",
+                section_id=f"sec-{index % 3}",
+                dom_node_id=f"p-{index}",
+                quote=f"Evidence for concept {index}.",
+            ),
+        ))
+    for index in range(1, min(12, entity_count)):
+        observations.append(SourceObservation(
+            id=f"obs-relation-{index}",
+            kind="relation",
+            label=f"Concept 0 depends on Concept {index}",
+            payload={"type": "depends_on", "source": "Concept 0", "target": f"Concept {index}"},
+            confidence=0.8,
+            source=SourceReference(
+                paper_id="paper-kg-1",
+                section_id="sec-0",
+                dom_node_id=f"relation-{index}",
+                quote=f"Concept 0 depends on Concept {index}.",
+            ),
+        ))
+    return canonicalize_observations("paper-kg-1", observations).model_dump(mode="json")
+
+
+def _store_graph(session_factory, paper_id: str, graph):
+    with session_factory() as db:
+        paper = db.query(Paper).filter(Paper.id == paper_id).one()
+        paper.knowledge_graph = graph
+        db.commit()
+
+
 class TestKnowledgeGraphCancelEndpoint:
     def test_cancel_returns_404_for_unknown_paper(self, kg_client):
         client, _ = kg_client
@@ -174,11 +242,7 @@ class TestKnowledgeGraphCancelEndpoint:
 
         def completing_build(pid, progress_callback=None, cancel_check=None):
             observed_cancel_checks.append(cancel_check())
-            return {
-                "nodes": [],
-                "edges": [],
-                "metadata": {"node_count": 0, "edge_count": 0},
-            }
+            return _empty_canonical_graph()
 
         monkeypatch.setattr(kg_module, "build_kg_for_paper", completing_build)
         second = client.post(f"/api/papers/{paper_id}/knowledge-graph/build")
@@ -186,6 +250,90 @@ class TestKnowledgeGraphCancelEndpoint:
 
         assert observed_cancel_checks == [False]
         assert main_module.kg_build_progress[paper_id]["stage"] == "complete"
+
+    def test_malformed_build_output_is_not_persisted(self, kg_client, monkeypatch):
+        client, session_factory = kg_client
+        paper_id = _seed_compiled_paper(session_factory)
+
+        from backend.app.agents import knowledge_graph as kg_module
+        from backend.app.api import main as main_module
+
+        monkeypatch.setattr(
+            kg_module,
+            "build_kg_for_paper",
+            lambda _pid, progress_callback=None, cancel_check=None: {
+                "nodes": [], "edges": [], "metadata": {}
+            },
+        )
+
+        response = client.post(f"/api/papers/{paper_id}/knowledge-graph/build")
+
+        assert response.status_code == 200
+        assert main_module.kg_build_progress[paper_id]["stage"] == "error"
+        with session_factory() as db:
+            assert db.query(Paper).filter(Paper.id == paper_id).one().knowledge_graph is None
+
+
+class TestKnowledgeGraphProjectionEndpoints:
+    def test_overview_is_capped_and_relations_have_returned_endpoints(self, kg_client):
+        client, session_factory = kg_client
+        paper_id = _seed_compiled_paper(session_factory)
+        _store_graph(session_factory, paper_id, _canonical_graph())
+
+        response = client.get(f"/api/papers/{paper_id}/knowledge-graph/overview?limit=999")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == "ready"
+        assert len(body["nodes"]) == 30
+        node_ids = {node["stable_id"] for node in body["nodes"]}
+        assert all(
+            relation["source_id"] in node_ids and relation["target_id"] in node_ids
+            for relation in body["relations"]
+        )
+        assert all(relation["evidence"] for relation in body["relations"])
+
+    def test_subgraph_and_search_are_bounded_server_side(self, kg_client):
+        client, session_factory = kg_client
+        paper_id = _seed_compiled_paper(session_factory)
+        graph = _canonical_graph()
+        _store_graph(session_factory, paper_id, graph)
+        seed_id = next(entity["stable_id"] for entity in graph["entities"] if entity["label"] == "Concept 0")
+
+        subgraph = client.get(
+            f"/api/papers/{paper_id}/knowledge-graph/subgraph",
+            params={"seed_ids": seed_id, "node_budget": 5, "edge_budget": 3},
+        )
+        search = client.get(
+            f"/api/papers/{paper_id}/knowledge-graph/search",
+            params={"query": "C17", "limit": 5},
+        )
+
+        assert subgraph.status_code == 200
+        assert len(subgraph.json()["nodes"]) == 5
+        assert len(subgraph.json()["relations"]) == 3
+        assert search.status_code == 200
+        assert [result["label"] for result in search.json()["results"]] == ["Concept 17"]
+
+    def test_legacy_graph_returns_rebuild_required_state(self, kg_client):
+        client, session_factory = kg_client
+        paper_id = _seed_compiled_paper(session_factory)
+        _store_graph(session_factory, paper_id, {"nodes": [], "edges": []})
+
+        response = client.get(f"/api/papers/{paper_id}/knowledge-graph/overview")
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "rebuild_required"
+
+    def test_malformed_canonical_graph_returns_server_error(self, kg_client):
+        client, session_factory = kg_client
+        paper_id = _seed_compiled_paper(session_factory)
+        _store_graph(session_factory, paper_id, {"schema_version": "1.0"})
+
+        response = client.get(f"/api/papers/{paper_id}/knowledge-graph/overview")
+
+        assert response.status_code == 500
+        assert response.json()["detail"]["code"] == "malformed_knowledge_graph"
 
 
 class TestKnowledgeGraphBuildProgressStream:

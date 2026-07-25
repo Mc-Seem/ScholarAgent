@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as React from 'react'
+import dagre from 'dagre'
 
 const reactFlowSpies = vi.hoisted(() => ({
   fitView: vi.fn(),
@@ -98,41 +99,80 @@ import { KnowledgeGraphView } from '@/components/reader/KnowledgeGraphView'
 import type { KnowledgeGraphController } from '@/components/reader/knowledge-graph-controller'
 
 function graphFixture() {
+  const signals = {
+    contribution: 0.9,
+    prominence: 0.8,
+    recurrence: 0.5,
+    confidence: 0.9,
+    familiarity: 0.2,
+  }
+  const evidence = (id: string, label: string, domNodeId: string) => [{
+    observation_id: `obs-${id}`,
+    kind: 'concept',
+    label,
+    source: {
+      paper_id: 'paper-a',
+      section_id: 'sec-1',
+      section_title: 'Section 1',
+      dom_node_id: domNodeId,
+      equation_id: null,
+      quote: label === 'Theorem 1' ? 'A well-known theorem.' : 'A basic definition.',
+      char_start: 0,
+      char_end: 10,
+    },
+  }]
   return {
+    status: 'ready',
+    schema_version: '1.0',
     nodes: [
       {
-        id: 'n1',
+        stable_id: 'n1',
         type: 'theorem',
         label: 'Theorem 1',
-        definition: 'A well-known theorem.',
-        dom_node_id: 'dom-n1',
-        section_id: 'sec-1',
+        aliases: [],
+        facets: [{ kind: 'theorem', payload: { text: 'A well-known theorem.' }, evidence_ids: ['obs-n1'] }],
+        signals,
+        rank: 0.9,
+        evidence: evidence('n1', 'Theorem 1', 'dom-n1'),
       },
       {
-        id: 'n2',
+        stable_id: 'n2',
         type: 'definition',
         label: 'Definition 2',
-        definition: 'A basic definition.',
-        dom_node_id: 'dom-n2',
-        section_id: 'sec-1',
+        aliases: [],
+        facets: [{ kind: 'definition', payload: { text: 'A basic definition.' }, evidence_ids: ['obs-n2'] }],
+        signals,
+        rank: 0.8,
+        evidence: evidence('n2', 'Definition 2', 'dom-n2'),
       },
     ],
-    edges: [
+    relations: [
       {
-        id: 'e1',
-        source: 'n1',
-        target: 'n2',
+        stable_id: 'e1',
+        source_id: 'n1',
+        target_id: 'n2',
         type: 'depends_on',
-        evidence: 'See proof in Section 2.',
+        confidence: 0.9,
+        evidence: [{
+          observation_id: 'obs-e1',
+          kind: 'relation',
+          label: 'Theorem 1 depends on Definition 2',
+          source: {
+            paper_id: 'paper-a',
+            section_id: 'sec-1',
+            section_title: 'Section 1',
+            dom_node_id: 'dom-e1',
+            equation_id: null,
+            quote: 'See proof in Section 2.',
+            char_start: 0,
+            char_end: 23,
+          },
+        }],
       },
     ],
-    metadata: {
-      node_count: 2,
-      edge_count: 1,
-      symbol_count: 0,
-      definition_count: 1,
-      theorem_count: 1,
-    },
+    total_entity_count: 2,
+    total_relation_count: 1,
+    truncated: false,
   }
 }
 
@@ -190,7 +230,7 @@ describe('KnowledgeGraphView selection callback', () => {
 
     await waitFor(() => expect(onSelectionChange).toHaveBeenCalled())
     const lastCall = onSelectionChange.mock.calls.at(-1)?.[0]
-    expect(lastCall).toEqual({
+    expect(lastCall).toEqual(expect.objectContaining({
       kind: 'edge',
       sourceId: 'n1',
       targetId: 'n2',
@@ -198,7 +238,8 @@ describe('KnowledgeGraphView selection callback', () => {
       targetLabel: 'Definition 2',
       relationshipType: 'depends_on',
       evidence: 'See proof in Section 2.',
-    })
+    }))
+    expect(lastCall.evidenceItems).toHaveLength(1)
   })
 
   it('calls onSelectionChange with null when the pane is clicked after a selection', async () => {
@@ -257,6 +298,152 @@ describe('KnowledgeGraphView selection callback', () => {
     fireEvent.click(screen.getByTestId('build-complete'))
 
     await waitFor(() => expect(onSelectionChange).toHaveBeenCalledWith(null))
+  })
+})
+
+describe('KnowledgeGraphView progressive loading', () => {
+  afterEach(() => {
+    cleanup()
+    vi.unstubAllGlobals()
+  })
+
+  it('loads the bounded overview endpoint instead of the full export', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: () => Promise.resolve(graphFixture()),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await renderGraph()
+
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/knowledge-graph/overview?')
+    expect(String(fetchMock.mock.calls[0][0])).not.toMatch(/\/knowledge-graph$/)
+  })
+
+  it('merges an expanded one-hop neighborhood by stable ID', async () => {
+    const expanded = graphFixture()
+    expanded.nodes.push({
+      ...expanded.nodes[0],
+      stable_id: 'n3',
+      label: 'Expanded concept',
+      evidence: [{
+        ...expanded.nodes[0].evidence[0],
+        observation_id: 'obs-n3',
+        label: 'Expanded concept',
+      }],
+    })
+    const fetchMock = vi.fn().mockImplementation((url: string) => Promise.resolve({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: () => Promise.resolve(url.includes('/subgraph?') ? expanded : graphFixture()),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    let controller: KnowledgeGraphController | null = null
+    await renderGraph({ onControllerChange: value => { controller = value } })
+
+    await act(async () => controller!.expandNode('n1'))
+
+    await waitFor(() => expect(screen.getByTestId('node-n3')).toBeInTheDocument())
+    expect(screen.getAllByTestId('node-n1')).toHaveLength(1)
+    expect(String(fetchMock.mock.calls.at(-1)?.[0])).toContain('/knowledge-graph/subgraph?')
+  })
+
+  it('keeps remote search results outside the layout until explicitly revealed', async () => {
+    const graph = graphFixture()
+    const { rank, ...remoteNode } = {
+      ...graph.nodes[0], stable_id: 'remote', label: 'Remote result', rank: 0.7,
+    }
+    const fetchMock = vi.fn().mockImplementation((url: string) => Promise.resolve({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: () => Promise.resolve(url.includes('/search?')
+        ? { status: 'ready', schema_version: '1.0', results: [{ ...remoteNode, score: 1 }] }
+        : graph),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    let controller: KnowledgeGraphController | null = null
+    await renderGraph({ onControllerChange: value => { controller = value } })
+
+    let results: readonly { id: string }[] = []
+    await act(async () => {
+      results = await controller!.search('Remote')
+    })
+
+    expect(results).toEqual([expect.objectContaining({ id: 'remote' })])
+    expect(screen.queryByTestId('node-remote')).not.toBeInTheDocument()
+  })
+
+  it('presents legacy graphs as requiring a rebuild', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: () => Promise.resolve({ status: 'rebuild_required', reason: 'Legacy graph' }),
+    }))
+
+    render(<KnowledgeGraphView paperId="paper-a" />)
+
+    await waitFor(() => expect(screen.getByText(/requires a rebuild/i)).toBeInTheDocument())
+  })
+
+  it('enforces the 50-node visible cap when a large neighborhood is returned', async () => {
+    const graph = graphFixture()
+    const expanded = {
+      ...graph,
+      nodes: Array.from({ length: 60 }, (_, index) => ({
+        ...graph.nodes[0],
+        stable_id: `large-${index}`,
+        label: `Large ${index}`,
+        evidence: [{
+          ...graph.nodes[0].evidence[0],
+          observation_id: `large-obs-${index}`,
+          label: `Large ${index}`,
+        }],
+      })),
+      relations: [],
+      total_entity_count: 60,
+      total_relation_count: 0,
+    }
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((url: string) => Promise.resolve({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: () => Promise.resolve(url.includes('/subgraph?') ? expanded : graph),
+    })))
+    let controller: KnowledgeGraphController | null = null
+    await renderGraph({ onControllerChange: value => { controller = value } })
+
+    await act(async () => controller!.expandNode('n1'))
+
+    await waitFor(() => expect(controller!.getSnapshot().visibleNodeCount).toBe(50))
+    expect(screen.getAllByTestId(/^node-/)).toHaveLength(50)
+  })
+
+  it('does not rerun Dagre when server search changes without topology changes', async () => {
+    const graph = graphFixture()
+    const { rank, ...searchNode } = graph.nodes[0]
+    const fetchMock = vi.fn().mockImplementation((url: string) => Promise.resolve({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: () => Promise.resolve(url.includes('/search?')
+        ? { status: 'ready', schema_version: '1.0', results: [{ ...searchNode, score: 1 }] }
+        : graph),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const layoutSpy = vi.spyOn(dagre, 'layout')
+    let controller: KnowledgeGraphController | null = null
+    await renderGraph({ onControllerChange: value => { controller = value } })
+    const layoutCalls = layoutSpy.mock.calls.length
+
+    await act(async () => { await controller!.search('Theorem') })
+
+    expect(layoutSpy).toHaveBeenCalledTimes(layoutCalls)
+    layoutSpy.mockRestore()
   })
 })
 
@@ -352,12 +539,12 @@ describe('KnowledgeGraphView controller bridge', () => {
       canFocusSelection: false,
       canRevealSelectionInPaper: false,
     }))
-    expect(snapshot.searchItems).toContainEqual({
+    expect(snapshot.searchItems).toContainEqual(expect.objectContaining({
       id: 'n1',
       label: 'Theorem 1',
       nodeType: 'theorem',
       detail: 'A well-known theorem.',
-    })
+    }))
     expect(snapshot.nodeTypeFilters).toContainEqual({
       type: 'theorem',
       label: 'Theorems',

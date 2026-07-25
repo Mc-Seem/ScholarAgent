@@ -8,8 +8,12 @@ backend/
 │   ├── api/main.py           # FastAPI endpoints
 │   ├── api/settings_routes.py # Draft-aware LLM settings endpoints
 │   ├── agents/               # LangGraph pipelines
-│   │   ├── knowledge_graph.py    # KG extraction (symbols, defs, theorems)
-│   │   ├── tooltip_suggestion.py # Expertise-based filtering
+│   │   ├── knowledge_graph.py    # Coordinated section extraction workflow
+│   │   ├── knowledge_graph_models.py # Versioned canonical contracts
+│   │   ├── knowledge_graph_canonical.py # Equation anchoring and stable canonicalization
+│   │   ├── knowledge_graph_projection.py # Bounded ranking/search/subgraphs
+│   │   ├── knowledge_graph_retrieval.py # Offline passage/hybrid evaluation
+│   │   ├── tooltip_suggestion.py # Bounded canonical expertise filtering
 │   │   └── utils.py              # Shared utilities (retry, strip_html)
 │   ├── compiler/
 │   │   ├── latexml_compiler.py   # LaTeX → HTML via Docker
@@ -72,31 +76,35 @@ no explicit or compatible legacy model fail clearly.
 ```
 LangGraph StateGraph:
 
-data_loader → symbol_extraction ─┐
-           → definition_extraction ─┼→ dependency_extraction → build_graph
-           → theorem_extraction ─┘
-
-Each extraction runs in parallel (ThreadPoolExecutor)
+load_paper_data → extract_section_observations ─┐
+                → anchor_equations ─────────────┼→ build_canonical_document
 ```
 
-### Entity Types
+The semantic branch makes one coordinated concept/claim/method extraction per section. The equation branch anchors significant display formulas to compiler `equations_data`; formula-local symbols remain facets unless promotion criteria pass. `_run_kg_build_task()` validates the complete `KnowledgeGraphDocument` before replacing `Paper.knowledge_graph`.
 
-| Type | ID Pattern | Example |
-|------|------------|---------|
-| Symbol | `symbol_{name}_{hash}` | `symbol_alpha_t_a1b2` |
-| Definition | `definition_{name}_{hash}` | `definition_ELBO_c3d4` |
-| Theorem | `theorem_{name}_{hash}` | `theorem_3.2_e5f6` |
+### Canonical Document
+
+```text
+KnowledgeGraphDocument
+  schema_version
+  build { pipeline_version, prompt_versions, models, created_at }
+  observations[] { id, kind, label, payload, confidence, source }
+  entities[] { stable_id, type, label, aliases, observation_ids, facets, signals }
+  relations[] { stable_id, type, source_id, target_id, evidence_ids, confidence }
+  metrics
+```
 
 ### Occurrence Tracking
 
-Each entity includes occurrence positions:
+Evidence locations are immutable source observations rather than fields duplicated onto every entity:
 ```python
 {
     "section_id": "sec_3_2",
     "dom_node_id": "p_456",
-    "char_offset": 45,      # Offset in stripped text
-    "length": 3,
-    "snippet": "...where α_t represents..."
+    "equation_id": None,
+    "char_start": 45,
+    "char_end": 48,
+    "quote": "α_t"
 }
 ```
 
@@ -113,9 +121,14 @@ Each entity includes occurrence positions:
 ### Knowledge Graph
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/papers/{id}/build-knowledge-graph` | Start build (SSE) |
-| GET | `/api/papers/{id}/build-knowledge-graph/progress` | SSE stream |
-| GET | `/api/papers/{id}/knowledge-graph` | Get graph data |
+| POST | `/api/papers/{id}/knowledge-graph/build` | Start asynchronous canonical build |
+| GET | `/api/papers/{id}/knowledge-graph/build/progress` | Build progress SSE |
+| POST | `/api/papers/{id}/knowledge-graph/cancel` | Cooperatively cancel a build |
+| GET | `/api/papers/{id}/knowledge-graph/overview` | Ranked bounded overview (hard cap 30) |
+| GET | `/api/papers/{id}/knowledge-graph/subgraph` | One-hop or source-focused bounded projection |
+| GET | `/api/papers/{id}/knowledge-graph/search` | Canonical entity search without layout expansion |
+| GET | `/api/papers/{id}/knowledge-graph` | Complete versioned export/debug document |
+| DELETE | `/api/papers/{id}/knowledge-graph` | Delete for rebuilding |
 
 ### Tooltips
 | Method | Path | Description |

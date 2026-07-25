@@ -2,6 +2,7 @@
 
 import { X } from 'lucide-react';
 import { LatexText } from './LatexText';
+import type { KnowledgeGraphEvidence } from '../../lib/knowledge-graph-api';
 
 interface EdgeInfoPanelProps {
   sourceLabel: string;
@@ -11,6 +12,8 @@ interface EdgeInfoPanelProps {
   onClose: () => void;
   onClickSource?: () => void;
   onClickTarget?: () => void;
+  evidenceItems?: KnowledgeGraphEvidence[];
+  onNavigateEvidence?: (evidence: KnowledgeGraphEvidence) => void;
 }
 
 // Edge colors matching KnowledgeGraphView
@@ -30,6 +33,8 @@ export function EdgeInfoPanel({
   onClose,
   onClickSource,
   onClickTarget,
+  evidenceItems = [],
+  onNavigateEvidence,
 }: EdgeInfoPanelProps) {
   const color = edgeColors[relationshipType] || '#94a3b8';
 
@@ -91,6 +96,19 @@ export function EdgeInfoPanel({
         ) : (
           <div className="text-sm text-slate-400 italic">
             No evidence text available for this relationship.
+          </div>
+        )}
+        {evidenceItems.length > 0 && (
+          <div className="mt-3 pt-3 border-t border-slate-100 space-y-2">
+            {evidenceItems.map(item => (
+              <button
+                key={item.observation_id}
+                onClick={() => onNavigateEvidence?.(item)}
+                className="block w-full text-left text-xs text-slate-600 hover:text-indigo-600"
+              >
+                {item.source.section_title || item.source.section_id || 'Source'}: {item.source.quote}
+              </button>
+            ))}
           </div>
         )}
       </div>

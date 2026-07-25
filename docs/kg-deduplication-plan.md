@@ -1,5 +1,7 @@
 # Knowledge Graph Deduplication Plan
 
+> **Superseded (2026-07-25):** This document describes the legacy four-extractor/three-stage design retained as inactive helper code. The active implementation separates immutable observations from canonical entities in `knowledge_graph_models.py` and `knowledge_graph_canonical.py`; aliases, evidence, and observation IDs are preserved, while stable IDs derive from semantic/math signatures. See `docs/kg-pipeline.md`.
+
 This note captures the intended direction for deduplication in the paper knowledge graph after formulas were introduced as a first-class entity type.
 
 The current implementation already extracts `definitions`, `theorems`, `formulas`, and symbol observations, but deduplication is still shallow and mostly type-local. The remaining work is to make deduplication robust enough to reconcile repeated mentions within a type and overlaps across types without collapsing distinct concepts.

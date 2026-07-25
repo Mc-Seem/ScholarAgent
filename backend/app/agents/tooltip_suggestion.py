@@ -10,6 +10,7 @@ from typing import List, Dict, Any, Optional, Callable
 from pydantic import BaseModel, Field
 from langchain_core.prompts import ChatPromptTemplate
 from backend.app.utils.llm_factory import get_llm, get_structured_llm
+from backend.app.agents.knowledge_graph_projection import overview_projection, parse_document
 
 # Debug mode controlled by environment variable
 DEBUG = os.getenv("TOOLTIP_AGENT_DEBUG", "false").lower() == "true"
@@ -56,19 +57,8 @@ Important:
 FILTER_USER_PROMPT = """Reader's background and expertise:
 {expertise_level}
 
-Knowledge graph entities from the paper:
-
-FORMULAS:
-{formulas_list}
-
-SYMBOLS:
-{symbols_list}
-
-DEFINITIONS:
-{definitions_list}
-
-THEOREMS:
-{theorems_list}
+Ranked, evidence-backed knowledge graph entities from the paper:
+{entities_list}
 
 Based on the reader's background, select which entities should have tooltips.
 Select terms that would help this specific reader understand the paper better.
@@ -94,7 +84,7 @@ def filter_entities_by_expertise(
     Use LLM to filter entities based on user expertise.
 
     Args:
-        entities: List of all KG nodes (symbols, definitions, theorems)
+        entities: Bounded canonical projection entities with evidence
         expertise_level: Free-form text describing the reader's background and expertise
         progress_callback: Optional callback for progress updates
 
@@ -111,46 +101,11 @@ def filter_entities_by_expertise(
     if progress_callback:
         progress_callback("Analyzing knowledge graph entities...")
 
-    # Group entities by type for better prompt formatting
-    formulas = [e for e in entities if e.get('type') == 'formula']
-    symbols = [e for e in entities if e.get('type') == 'symbol']
-    definitions = [e for e in entities if e.get('type') == 'definition']
-    theorems = [e for e in entities if e.get('type') == 'theorem']
-
-    debug_print(
-        f"Entity breakdown: {len(formulas)} formulas, {len(symbols)} symbols, "
-        f"{len(definitions)} definitions, {len(theorems)} theorems"
-    )
-
-    # Format entity lists for prompt
-    def format_formulas(formula_list):
-        return "\n".join([
-            f"- {f['id']}: {f.get('label', '')} - {f.get('summary', f.get('latex', ''))[:100]}"
-            for f in formula_list[:50]
-        ]) or "(none)"
-
-    def format_symbols(symbols_list):
-        return "\n".join([
-            f"- {s['id']}: {s.get('symbol', s.get('label', ''))} - {s.get('context', '')[:100]}"
-            for s in symbols_list[:50]  # Limit to avoid token overflow
-        ]) or "(none)"
-
-    def format_definitions(defs_list):
-        return "\n".join([
-            f"- {d['id']}: {d.get('term', d.get('label', ''))} - {d.get('summary', d.get('definition_text', ''))[:100]}"
-            for d in defs_list[:50]
-        ]) or "(none)"
-
-    def format_theorems(thms_list):
-        return "\n".join([
-            f"- {t['id']}: {t.get('label', '')} - {t.get('summary', t.get('statement', ''))[:100]}"
-            for t in thms_list[:50]
-        ]) or "(none)"
-
-    formulas_text = format_formulas(formulas)
-    symbols_text = format_symbols(symbols)
-    definitions_text = format_definitions(definitions)
-    theorems_text = format_theorems(theorems)
+    entities_text = "\n".join(
+        f"- {entity['id']} [{entity.get('type', 'unknown')}]: {entity.get('label', '')} - "
+        f"{generate_tooltip_content(entity)[:160]}"
+        for entity in entities
+    ) or "(none)"
 
     debug_print("Formatted entity lists for LLM prompt")
 
@@ -173,10 +128,7 @@ def filter_entities_by_expertise(
     try:
         response = chain.invoke({
             "expertise_level": expertise_level,
-            "formulas_list": formulas_text,
-            "symbols_list": symbols_text,
-            "definitions_list": definitions_text,
-            "theorems_list": theorems_text
+            "entities_list": entities_text,
         })
 
         # Filter entities by selected IDs
@@ -218,6 +170,34 @@ def generate_tooltip_content(entity: Dict[str, Any]) -> str:
         Tooltip content string (plain text or markdown)
     """
     entity_type = entity.get('type', '')
+    facets = entity.get('facets', [])
+    facet_payloads = {
+        facet.get('kind'): facet.get('payload', {})
+        for facet in facets
+        if isinstance(facet, dict)
+    }
+
+    if facets:
+        if entity_type == 'formula':
+            formula = facet_payloads.get('formula', {})
+            summary = formula.get('summary', '')
+            latex = formula.get('latex', '')
+            if summary and latex:
+                return f"{entity.get('label', 'Formula')}: {summary}\n\nFormula: {latex}"
+            return summary or latex or entity.get('label', 'Formula')
+        if entity_type == 'symbol':
+            roles = facet_payloads.get('symbol_scope', {}).get('roles', [])
+            return "; ".join(roles) or f"Mathematical symbol: {entity.get('label', '')}"
+        text = next(
+            (
+                str(facet.get('payload', {}).get('text'))
+                for facet in facets
+                if facet.get('payload', {}).get('text')
+            ),
+            "",
+        )
+        if text:
+            return text
 
     if entity_type == 'symbol':
         # For symbols: use context field
@@ -307,7 +287,7 @@ def suggest_tooltips(
     if progress_callback:
         progress_callback("Loading knowledge graph...")
 
-    if not knowledge_graph or 'nodes' not in knowledge_graph:
+    if not knowledge_graph:
         debug_print("No knowledge graph available")
         return {
             "suggestions": [],
@@ -315,19 +295,26 @@ def suggest_tooltips(
             "suggested_count": 0
         }
 
-    all_entities = knowledge_graph['nodes']
-    total_count = len(all_entities)
+    document = parse_document(knowledge_graph)
+    total_count = len(document.entities)
     debug_print(f"Knowledge graph loaded: {total_count} total entities")
 
-    # Apply type filter if specified
-    if entity_type_filter:
-        entities_to_consider = [
-            e for e in all_entities
-            if e.get('type') in entity_type_filter
+    projection = overview_projection(
+        document,
+        types=set(entity_type_filter) if entity_type_filter else {
+            "concept", "claim", "method", "formula", "symbol"
+        },
+        show_familiar=True,
+        limit=30,
+    )
+    entities_to_consider = []
+    for node in projection.nodes:
+        entity = node.model_dump(mode="json")
+        entity["id"] = entity.pop("stable_id")
+        entity["occurrences"] = [
+            evidence["source"] for evidence in entity.get("evidence", [])
         ]
-        debug_print(f"Type filter applied: {len(entities_to_consider)} entities match types {entity_type_filter}")
-    else:
-        entities_to_consider = all_entities
+        entities_to_consider.append(entity)
 
     # Filter by expertise
     if progress_callback:

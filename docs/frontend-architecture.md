@@ -53,8 +53,9 @@ frontend/
 │   │   ├── TooltipPanel.tsx    # Right sidebar (Comments/Glossary)
 │   │   ├── TooltipList.tsx     # Paragraph comments list
 │   │   ├── GlossaryList.tsx    # Entity glossary list
-│   │   ├── KnowledgeGraphView.tsx  # React Flow graph
-│   │   ├── knowledge-graph-controller.ts # Framework-neutral graph control bridge
+│   │   ├── KnowledgeGraphView.tsx  # Stable wrapper and public selection contracts
+│   │   ├── ProgressiveKnowledgeGraphView.tsx # Bounded overview, expansion, search, evidence
+│   │   ├── knowledge-graph-controller.ts # Framework-neutral bounded graph control bridge
 │   │   ├── paper-search-controller.ts # Scoped DOM find engine and controller
 │   │   ├── GraphNode.tsx       # KG node component
 │   │   └── ...
@@ -262,12 +263,9 @@ npm run dev:theia:desktop     # Electron + backend
 
 ### Knowledge Graph Node Types
 
-```typescript
-// From lib/design-system.ts
-colors.entity.symbol.hex      // '#3b82f6' (blue)
-colors.entity.definition.hex  // '#10b981' (emerald)
-colors.entity.theorem.hex     // '#8b5cf6' (violet)
-```
+The canonical presentation uses `concept`, `claim`, `method`, significant `formula`, and promoted `symbol` nodes. Formula-local symbols render inside collapsed formula facets rather than as peer nodes. Concept cards include aliases, decomposed ranking signals, scoped formula/symbol facets, and source evidence.
+
+The initial request is a 20-node overview and the server hard cap is 30. One-hop/source-focused responses merge by stable ID up to a client-visible cap of 50. Search results remain outside React Flow until explicitly revealed; Dagre runs only when topology changes, and the minimap is disabled above 30 visible nodes.
 
 ### In-Paper Entity Spans
 
@@ -283,6 +281,19 @@ colors.entity.theorem.hex     // '#8b5cf6' (violet)
 ```
 
 ## API Integration
+
+### Knowledge Graph Endpoints
+
+`lib/knowledge-graph-api.ts` validates the wire contract before graph state is updated. Both the Next.js reader and Theia widget use the same controller and bounded data:
+
+```text
+GET /api/papers/{paperId}/knowledge-graph/overview
+GET /api/papers/{paperId}/knowledge-graph/subgraph
+GET /api/papers/{paperId}/knowledge-graph/search
+GET /api/papers/{paperId}/knowledge-graph            # export/debug only
+```
+
+The controller exposes server search, one-hop expansion, source focus, dynamic filters, selection evidence, and bounded snapshots. `NavigationPanel` passes the current section as a source focus. Legacy unversioned graphs render a rebuild-required state.
 
 ### Tooltip Endpoints
 

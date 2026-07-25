@@ -30,6 +30,7 @@ import type {
   KnowledgeGraphControllerSnapshot,
   KnowledgeGraphLifecycleStatus,
 } from './knowledge-graph-controller';
+import { ProgressiveKnowledgeGraphView } from './ProgressiveKnowledgeGraphView';
 
 // Custom node types
 const nodeTypes = {
@@ -97,6 +98,11 @@ export interface KnowledgeGraphNodeSelection {
   summary?: string;
   latex?: string;
   domNodeId?: string;
+  aliases?: string[];
+  facets?: import('../../lib/knowledge-graph-api').KnowledgeGraphFacet[];
+  signals?: import('../../lib/knowledge-graph-api').KnowledgeGraphSignals;
+  evidence?: import('../../lib/knowledge-graph-api').KnowledgeGraphEvidence[];
+  rank?: number;
   incomingConnections: ConnectionInfo[];
   outgoingConnections: ConnectionInfo[];
 }
@@ -109,6 +115,7 @@ export interface KnowledgeGraphEdgeSelection {
   targetLabel: string;
   relationshipType: string;
   evidence?: string;
+  evidenceItems?: import('../../lib/knowledge-graph-api').KnowledgeGraphEvidence[];
 }
 
 export type KnowledgeGraphSelection = KnowledgeGraphNodeSelection | KnowledgeGraphEdgeSelection;
@@ -121,6 +128,7 @@ export interface KnowledgeGraphViewProps {
   onControllerChange?: (controller: KnowledgeGraphController | null) => void;
   showEmbeddedControls?: boolean;
   showSelectionDetails?: boolean;
+  currentSectionId?: string | null;
 }
 
 interface ApiNode {
@@ -283,6 +291,9 @@ function KnowledgeGraphViewInner({
     clearFocus: () => undefined,
     resetLayout: () => undefined,
     revealSelectionInPaper: () => undefined,
+    expandNode: async (_nodeId: string) => undefined,
+    focusSource: async (_source) => undefined,
+    search: async (_query: string) => [],
   });
   const controller = useMemo<KnowledgeGraphController>(() => ({
     getSnapshot: () => controllerSnapshotRef.current,
@@ -298,6 +309,9 @@ function KnowledgeGraphViewInner({
     clearFocus: () => controllerActionsRef.current.clearFocus(),
     resetLayout: () => controllerActionsRef.current.resetLayout(),
     revealSelectionInPaper: () => controllerActionsRef.current.revealSelectionInPaper(),
+    expandNode: nodeId => controllerActionsRef.current.expandNode(nodeId),
+    focusSource: source => controllerActionsRef.current.focusSource(source),
+    search: query => controllerActionsRef.current.search(query),
   }), []);
 
   useEffect(() => {
@@ -838,6 +852,11 @@ function KnowledgeGraphViewInner({
     clearFocus,
     resetLayout,
     revealSelectionInPaper,
+    expandNode: async nodeId => revealNode(nodeId),
+    focusSource: async () => undefined,
+    search: async query => controllerSnapshotRef.current.searchItems.filter(item => (
+      `${item.label} ${item.detail ?? ''}`.toLowerCase().includes(query.toLowerCase())
+    )),
   };
 
   const searchItems = useMemo(() => allNodes.map(node => ({
@@ -1292,7 +1311,7 @@ function KnowledgeGraphViewInner({
 export function KnowledgeGraphView(props: KnowledgeGraphViewProps) {
   return (
     <ReactFlowProvider>
-      <KnowledgeGraphViewInner {...props} />
+      <ProgressiveKnowledgeGraphView {...props} />
     </ReactFlowProvider>
   );
 }

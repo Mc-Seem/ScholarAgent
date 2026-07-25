@@ -113,6 +113,7 @@ export default function NavigationPanel({
           <KnowledgeGraphView
             paperId={paperId}
             onNavigate={onNavigate}
+            currentSectionId={currentSectionId}
             onRegisterFocusHandler={(handler) => { focusNodeRef.current = handler; }}
           />
         </div>

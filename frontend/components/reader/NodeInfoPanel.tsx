@@ -1,10 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import { X, Variable, BookOpen, Lightbulb, Focus, ChevronRight, ChevronDown, FunctionSquare } from 'lucide-react';
+import { X, Variable, BookOpen, Lightbulb, Focus, ChevronRight, ChevronDown, FunctionSquare, Network, Wrench, BadgeCheck, Plus } from 'lucide-react';
 import { LatexText } from './LatexText';
 import { Button, IconButton, CollapsibleSection } from '../ui';
 import { colors, textStyles } from '../../lib/design-system';
+import type { KnowledgeGraphEvidence, KnowledgeGraphFacet, KnowledgeGraphSignals } from '../../lib/knowledge-graph-api';
 
 export interface ConnectionInfo {
   nodeId: string;
@@ -28,10 +29,40 @@ interface NodeInfoPanelProps {
   incomingConnections?: ConnectionInfo[];
   outgoingConnections?: ConnectionInfo[];
   onConnectionClick?: (nodeId: string) => void;
+  aliases?: string[];
+  facets?: KnowledgeGraphFacet[];
+  signals?: KnowledgeGraphSignals;
+  evidence?: KnowledgeGraphEvidence[];
+  rank?: number;
+  onExpand?: () => void;
 }
 
 // Node styling config matching GraphNode - using design system colors
 const nodeConfig = {
+  concept: {
+    bgColor: colors.entity.definition.bg,
+    borderColor: colors.entity.definition.border,
+    textColor: colors.entity.definition.text,
+    icon: Network,
+    iconColor: colors.entity.definition.icon,
+    label: 'Concept',
+  },
+  claim: {
+    bgColor: colors.entity.theorem.bg,
+    borderColor: colors.entity.theorem.border,
+    textColor: colors.entity.theorem.text,
+    icon: BadgeCheck,
+    iconColor: colors.entity.theorem.icon,
+    label: 'Claim',
+  },
+  method: {
+    bgColor: colors.entity.symbol.bg,
+    borderColor: colors.entity.symbol.border,
+    textColor: colors.entity.symbol.text,
+    icon: Wrench,
+    iconColor: colors.entity.symbol.icon,
+    label: 'Method',
+  },
   formula: {
     bgColor: colors.entity.formula.bg,
     borderColor: colors.entity.formula.border,
@@ -109,6 +140,12 @@ export function NodeInfoPanel({
   incomingConnections = [],
   outgoingConnections = [],
   onConnectionClick,
+  aliases = [],
+  facets = [],
+  signals,
+  evidence = [],
+  rank,
+  onExpand,
 }: NodeInfoPanelProps) {
   const config = nodeConfig[nodeType as keyof typeof nodeConfig] || nodeConfig.symbol;
   const Icon = config.icon;
@@ -170,6 +207,49 @@ export function NodeInfoPanel({
               <LatexText text={mainContent} />
             </div>
           </div>
+        )}
+
+        {aliases.length > 0 && (
+          <div>
+            <div className={textStyles.sectionHeader + ' mb-1'}>Aliases</div>
+            <div className="text-xs text-slate-600">{aliases.join(', ')}</div>
+          </div>
+        )}
+
+        {(typeof rank === 'number' || signals) && (
+          <div className="grid grid-cols-2 gap-1 text-[10px] text-slate-500 border-t border-slate-100 pt-3">
+            {typeof rank === 'number' && <span>View rank: {Math.round(rank * 100)}</span>}
+            {signals && <>
+              <span>Contribution: {Math.round(signals.contribution * 100)}</span>
+              <span>Prominence: {Math.round(signals.prominence * 100)}</span>
+              <span>Confidence: {Math.round(signals.confidence * 100)}</span>
+            </>}
+          </div>
+        )}
+
+        {facets.some(facet => facet.kind === 'symbols') && (
+          <CollapsibleSection title="Scoped symbols" defaultExpanded={false}>
+            <div className="space-y-1 text-xs text-slate-600">
+              {facets.filter(facet => facet.kind === 'symbols').flatMap(facet => (
+                Array.isArray(facet.payload.items) ? facet.payload.items : []
+              )).map((symbol, index) => (
+                <div key={index}>{String((symbol as Record<string, unknown>).symbol ?? '')}: {String((symbol as Record<string, unknown>).role ?? '')}</div>
+              ))}
+            </div>
+          </CollapsibleSection>
+        )}
+
+        {evidence.length > 0 && (
+          <CollapsibleSection title={`Evidence (${evidence.length})`} defaultExpanded={false}>
+            <div className="space-y-2">
+              {evidence.map(item => (
+                <button key={item.observation_id} onClick={onNavigate} className="block text-left text-xs text-slate-600 hover:text-indigo-600">
+                  “{item.source.quote}”
+                  {item.source.section_title && <span className="block text-[10px] text-slate-400">{item.source.section_title}</span>}
+                </button>
+              ))}
+            </div>
+          </CollapsibleSection>
         )}
 
         {/* Additional context for symbols */}
@@ -283,6 +363,11 @@ export function NodeInfoPanel({
             >
               <Focus size={14} />
               <span>{isFocused ? 'Focused' : 'Focus'}</span>
+            </button>
+          )}
+          {onExpand && (
+            <button onClick={onExpand} className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-lg text-indigo-700 bg-indigo-50 hover:bg-indigo-100">
+              <Plus size={14} /> Expand
             </button>
           )}
         </div>

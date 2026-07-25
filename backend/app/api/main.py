@@ -4,10 +4,10 @@ import re
 import uuid
 from datetime import datetime, UTC
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Literal
 
 import httpx
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Depends, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Depends, BackgroundTasks, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
@@ -21,6 +21,17 @@ from backend.app.database.models import Paper, Tooltip
 from backend.app.database.models import TooltipSuggestion as TooltipSuggestionModel
 from backend.app.compiler.latexml_compiler import compile_latex_to_html, CompilationResult
 from backend.app.api.settings_routes import router as settings_router
+from backend.app.agents.knowledge_graph_models import KnowledgeGraphDocument
+from backend.app.agents.knowledge_graph_projection import (
+    KnowledgeGraphProjection,
+    LegacyKnowledgeGraphError,
+    MalformedKnowledgeGraphError,
+    SearchResult,
+    focus_projection,
+    overview_projection,
+    parse_document,
+    search_entities,
+)
 
 app = FastAPI(title="Scholar Agent API")
 app.add_middleware(
@@ -1047,6 +1058,36 @@ class KnowledgeGraphBuildResponse(BaseModel):
     errors: Optional[List[str]] = None
 
 
+class KnowledgeGraphRebuildRequired(BaseModel):
+    status: Literal["rebuild_required"] = "rebuild_required"
+    reason: str = "This knowledge graph uses a legacy schema and must be rebuilt."
+
+
+class KnowledgeGraphSearchResponse(BaseModel):
+    status: Literal["ready"] = "ready"
+    schema_version: str
+    results: List[SearchResult]
+
+
+def _parse_persisted_knowledge_graph(
+    paper: Paper,
+) -> tuple[Optional[KnowledgeGraphDocument], Optional[KnowledgeGraphRebuildRequired]]:
+    if not paper.knowledge_graph:
+        raise HTTPException(
+            status_code=404,
+            detail="Knowledge graph not built yet. POST to /knowledge-graph/build first.",
+        )
+    try:
+        return parse_document(paper.knowledge_graph), None
+    except LegacyKnowledgeGraphError:
+        return None, KnowledgeGraphRebuildRequired()
+    except MalformedKnowledgeGraphError as error:
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "malformed_knowledge_graph", "message": str(error)},
+        ) from error
+
+
 def _run_compile_task(paper_id: str, source_path: str):
     """Background task to compile a LaTeX paper via Docker."""
     from backend.app.database.connection import SessionLocal
@@ -1189,6 +1230,7 @@ def _run_kg_build_task(paper_id: str):
         build_kg_for_paper,
         KnowledgeGraphCancelledError,
     )
+    from backend.app.agents.knowledge_graph_models import validate_knowledge_graph_document
 
     db = SessionLocal()
 
@@ -1211,11 +1253,12 @@ def _run_kg_build_task(paper_id: str):
         graph_data = build_kg_for_paper(
             paper_id, progress_callback=progress_callback, cancel_check=cancel_check,
         )
+        document = validate_knowledge_graph_document(graph_data)
 
         # Store graph data in paper record
         paper = db.query(Paper).filter(Paper.id == paper_id).first()
         if paper:
-            paper.knowledge_graph = graph_data
+            paper.knowledge_graph = document.model_dump(mode="json")
             db.commit()
             print(f"[KG Build Task] Build complete for paper {paper_id}")
 
@@ -1223,8 +1266,8 @@ def _run_kg_build_task(paper_id: str):
         kg_build_progress[paper_id] = {
             "stage": "complete",
             "progress": {},
-            "node_count": graph_data["metadata"]["node_count"],
-            "edge_count": graph_data["metadata"]["edge_count"],
+            "node_count": document.metrics.entity_count,
+            "edge_count": document.metrics.relation_count,
         }
     except KnowledgeGraphCancelledError as e:
         print(f"[KG Build Task] Build cancelled for paper {paper_id}: {str(e)}")
@@ -1296,20 +1339,109 @@ async def cancel_knowledge_graph_build(paper_id: str, db: Session = Depends(get_
     return {"status": "cancelling"}
 
 
-@app.get("/api/papers/{paper_id}/knowledge-graph", response_model=KnowledgeGraphResponse)
+@app.get("/api/papers/{paper_id}/knowledge-graph", response_model=KnowledgeGraphDocument)
 async def get_knowledge_graph(paper_id: str, db: Session = Depends(get_db)):
-    """Get the knowledge graph for a paper."""
+    """Export the complete versioned canonical graph for debugging and tooling."""
     paper = db.query(Paper).filter(Paper.id == paper_id).first()
     if not paper:
         raise HTTPException(status_code=404, detail="Paper not found")
 
-    if not paper.knowledge_graph:
-        raise HTTPException(status_code=404, detail="Knowledge graph not built yet. POST to /knowledge-graph/build first.")
+    document, rebuild = _parse_persisted_knowledge_graph(paper)
+    if rebuild:
+        raise HTTPException(status_code=409, detail=rebuild.model_dump())
+    return document
 
-    return KnowledgeGraphResponse(
-        nodes=paper.knowledge_graph.get("nodes", []),
-        edges=paper.knowledge_graph.get("edges", []),
-        metadata=paper.knowledge_graph.get("metadata"),
+
+@app.get(
+    "/api/papers/{paper_id}/knowledge-graph/overview",
+    response_model=KnowledgeGraphProjection | KnowledgeGraphRebuildRequired,
+)
+async def get_knowledge_graph_overview(
+    paper_id: str,
+    types: Optional[List[str]] = Query(default=None),
+    section: Optional[str] = None,
+    min_importance: float = Query(default=0.0, ge=0.0, le=1.0),
+    expertise: Literal["novice", "intermediate", "expert"] = "intermediate",
+    show_familiar: bool = False,
+    limit: int = Query(default=20, ge=1),
+    db: Session = Depends(get_db),
+):
+    paper = db.query(Paper).filter(Paper.id == paper_id).first()
+    if not paper:
+        raise HTTPException(status_code=404, detail="Paper not found")
+    document, rebuild = _parse_persisted_knowledge_graph(paper)
+    if rebuild:
+        return rebuild
+    return overview_projection(
+        document,
+        types=set(types) if types else None,
+        section=section,
+        min_importance=min_importance,
+        expertise=expertise,
+        show_familiar=show_familiar,
+        limit=limit,
+    )
+
+
+@app.get(
+    "/api/papers/{paper_id}/knowledge-graph/subgraph",
+    response_model=KnowledgeGraphProjection | KnowledgeGraphRebuildRequired,
+)
+async def get_knowledge_graph_subgraph(
+    paper_id: str,
+    seed_ids: Optional[List[str]] = Query(default=None),
+    section: Optional[str] = None,
+    dom_node_id: Optional[str] = None,
+    equation_id: Optional[str] = None,
+    depth: Literal[1] = 1,
+    types: Optional[List[str]] = Query(default=None),
+    expertise: Literal["novice", "intermediate", "expert"] = "intermediate",
+    node_budget: int = Query(default=30, ge=1),
+    edge_budget: int = Query(default=60, ge=0),
+    db: Session = Depends(get_db),
+):
+    del depth
+    if not (seed_ids or section or dom_node_id or equation_id):
+        raise HTTPException(status_code=422, detail="A seed ID or source location is required")
+    paper = db.query(Paper).filter(Paper.id == paper_id).first()
+    if not paper:
+        raise HTTPException(status_code=404, detail="Paper not found")
+    document, rebuild = _parse_persisted_knowledge_graph(paper)
+    if rebuild:
+        return rebuild
+    return focus_projection(
+        document,
+        seed_ids=set(seed_ids or []),
+        section=section,
+        dom_node_id=dom_node_id,
+        equation_id=equation_id,
+        types=set(types) if types else None,
+        expertise=expertise,
+        node_budget=node_budget,
+        edge_budget=edge_budget,
+    )
+
+
+@app.get(
+    "/api/papers/{paper_id}/knowledge-graph/search",
+    response_model=KnowledgeGraphSearchResponse | KnowledgeGraphRebuildRequired,
+)
+async def search_knowledge_graph(
+    paper_id: str,
+    query: str = Query(min_length=1),
+    types: Optional[List[str]] = Query(default=None),
+    limit: int = Query(default=10, ge=1, le=50),
+    db: Session = Depends(get_db),
+):
+    paper = db.query(Paper).filter(Paper.id == paper_id).first()
+    if not paper:
+        raise HTTPException(status_code=404, detail="Paper not found")
+    document, rebuild = _parse_persisted_knowledge_graph(paper)
+    if rebuild:
+        return rebuild
+    return KnowledgeGraphSearchResponse(
+        schema_version=document.schema_version,
+        results=search_entities(document, query, types=set(types) if types else None, limit=limit),
     )
 
 

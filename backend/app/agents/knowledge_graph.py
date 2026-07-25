@@ -1,22 +1,12 @@
-"""
-Knowledge Graph Agent Pipeline
+"""Knowledge graph extraction and legacy canonicalization helpers.
 
-Multi-agent workflow using LangGraph to extract semantic structure from papers
-and build a navigable knowledge graph.
-
-Pipeline:
-1. Data Loader - Fetches pre-extracted metadata from database
-2. Stray Symbol Extraction Agent - Identifies notation introduced outside formula contexts
-3. Definition Extraction Agent - Finds formal and informal definitions
-4. Theorem Extraction Agent - Extracts theorems, lemmas, corollaries
-5. Formula Extraction Agent - Extracts explicit formulas and local symbol meanings
-6. Deduplication Agent - Normalizes observations into paper-level entities
-7. Dependency Extraction Agent - Maps relationships between entities
-8. Graph Builder - Assembles final graph structure
+The active workflow performs one coordinated semantic extraction per section,
+anchors formulas to compiler equation records, and persists a validated
+canonical document. Legacy helper functions remain covered during migration.
 """
 
 import os
-from typing import TypedDict, List, Dict, Any, Optional, Annotated
+from typing import TypedDict, List, Dict, Any, Optional, Annotated, Literal
 try:
     from typing import NotRequired
 except ImportError:
@@ -38,6 +28,12 @@ from backend.app.agents.utils import (
     get_debug_flag,
 )
 from backend.app.utils.llm_factory import get_llm, get_structured_llm
+from backend.app.agents.knowledge_graph_canonical import (
+    anchor_equation_observations,
+    canonicalize_observations,
+    stable_identifier,
+)
+from backend.app.agents.knowledge_graph_models import SourceObservation, SourceReference
 
 # Load environment variables
 load_dotenv()
@@ -62,6 +58,7 @@ class GraphState(TypedDict):
     formula_observations: Annotated[List[Dict[str, Any]], operator.add]
     definition_observations: Annotated[List[Dict[str, Any]], operator.add]
     theorem_observations: Annotated[List[Dict[str, Any]], operator.add]
+    source_observations: Annotated[List[Dict[str, Any]], operator.add]
 
     # Deduplicated entities
     symbols: List[Dict[str, Any]]
@@ -165,6 +162,32 @@ class Formula(BaseModel):
 class FormulaExtractionOutput(BaseModel):
     """Output from formula extraction agent"""
     formulas: List[Formula]
+
+
+class CanonicalRelationCandidate(BaseModel):
+    type: Literal[
+        "defines", "uses", "depends_on", "supports", "derives_from", "evaluated_by"
+    ]
+    target: str = Field(description="Exact label or alias of the target candidate")
+    evidence: str = Field(description="Exact source quote supporting this relation")
+    confidence: float = Field(default=0.8, ge=0.0, le=1.0)
+
+
+class SectionEntityCandidate(BaseModel):
+    kind: Literal["concept", "claim", "method"]
+    label: str
+    summary: str
+    aliases: List[str] = Field(default_factory=list)
+    source_quote: str = Field(description="Exact, non-empty quote from the section")
+    confidence: float = Field(default=0.8, ge=0.0, le=1.0)
+    contribution: float = Field(default=0.5, ge=0.0, le=1.0)
+    prominence: float = Field(default=0.5, ge=0.0, le=1.0)
+    familiarity: float = Field(default=0.0, ge=0.0, le=1.0)
+    relations: List[CanonicalRelationCandidate] = Field(default_factory=list)
+
+
+class SectionKnowledgeExtractionOutput(BaseModel):
+    entities: List[SectionEntityCandidate] = Field(default_factory=list)
 
 
 class Relationship(BaseModel):
@@ -383,6 +406,28 @@ Content:
 {content_text}
 
 Extract the important formulas explicitly present in this section."""
+
+
+SECTION_KNOWLEDGE_SYSTEM_PROMPT = """You extract a compact, evidence-backed semantic map from one academic-paper section.
+
+Return only important concepts, claims, and methods. Prefer the paper's central contributions and prerequisites that are needed to understand them. Do not extract notation, local variables, generic nouns, citations, headings, or unsupported inferred entities. Formula extraction is handled separately from compiler data.
+
+For every entity:
+- use a concise canonical label and list only aliases explicitly used in the section;
+- include an exact non-empty source quote copied from the supplied text;
+- classify it as concept, claim, or method;
+- score contribution relevance, structural prominence, confidence, and likely reader familiarity independently;
+- include only relations in the allowed set: defines, uses, depends_on, supports, derives_from, evaluated_by;
+- name relation targets by an exact candidate label or alias and provide an exact supporting quote.
+
+Do not invent relations or merge backend entity kinds."""
+
+SECTION_KNOWLEDGE_USER_PROMPT = """Section: {section_title}
+
+Content:
+{content_text}
+
+Extract the small set of evidence-backed semantic candidates from this section."""
 
 
 DEPENDENCY_SYSTEM_PROMPT = """You are analyzing dependencies in an academic paper.
@@ -1395,6 +1440,178 @@ def _adjudicate_ambiguous_symbols(
         clusters = active_resolver(bucket)
         merged_symbols = _merge_symbol_clusters(merged_symbols, clusters)
     return merged_symbols
+
+
+def _locate_source_quote(
+    section: Dict[str, Any], source_quote: str
+) -> tuple[str, Optional[int], Optional[int]]:
+    """Locate an exact evidence quote in the nearest data-id DOM block."""
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(section.get("content_html", ""), "html.parser")
+    for element in soup.find_all(attrs={"data-id": True}):
+        text = element.get_text(" ", strip=True)
+        offset = text.find(source_quote)
+        if offset >= 0:
+            return str(element.get("data-id")), offset, offset + len(source_quote)
+    return str(section.get("id", "unknown")), None, None
+
+
+def extract_section_observations(state: GraphState) -> GraphState:
+    """Extract concept, claim, and method observations in one pass per section."""
+    sections = [
+        section for section in state["sections"]
+        if len(strip_html_tags(section.get("content_html", ""))) >= 50
+    ]
+    worker_count = _get_worker_count()
+    llm = get_llm("kg_extraction")
+    structured_llm = get_structured_llm(llm, SectionKnowledgeExtractionOutput)
+    chain = ChatPromptTemplate.from_messages([
+        ("system", SECTION_KNOWLEDGE_SYSTEM_PROMPT),
+        ("user", SECTION_KNOWLEDGE_USER_PROMPT),
+    ]) | structured_llm
+    llm_profile = state.setdefault("llm_profile", {})
+
+    _report_progress(state, "semantic_observations", 0, len(sections))
+
+    def process_section(indexed_section):
+        index, section = indexed_section
+        section_id = str(section.get("id", "unknown"))
+        section_title = str(section.get("title", "Untitled"))
+        content_text = strip_html_tags(section.get("content_html", ""))
+        try:
+            response = run_with_retry(
+                func=chain.invoke,
+                max_retries=3,
+                base_delay=2.0,
+                timeout_seconds=120,
+                func_args=({
+                    "section_title": section_title,
+                    "content_text": content_text[:12000],
+                },),
+                profile=llm_profile,
+                profile_stage="kg.extract_section_observations",
+            )
+        except Exception as error:
+            return [], [
+                f"Semantic extraction failed for section {section_id} ({section_title}): "
+                f"{type(error).__name__}: {error}"
+            ]
+
+        observations = []
+        errors = []
+        for candidate in response.entities:
+            quote = candidate.source_quote.strip()
+            if not quote or quote not in content_text:
+                errors.append(
+                    f"Discarded unsupported {candidate.kind} '{candidate.label}' in section {section_id}"
+                )
+                continue
+            dom_node_id, char_start, char_end = _locate_source_quote(section, quote)
+            source = SourceReference(
+                paper_id=state["paper_id"],
+                section_id=section_id,
+                section_title=section_title,
+                dom_node_id=dom_node_id,
+                quote=quote,
+                char_start=char_start,
+                char_end=char_end,
+            )
+            payload = {
+                "summary": candidate.summary,
+                "aliases": candidate.aliases,
+                "contribution": candidate.contribution,
+                "prominence": candidate.prominence,
+                "familiarity": candidate.familiarity,
+                "relations": [],
+            }
+            observation_id = stable_identifier(
+                f"observation-{candidate.kind}",
+                candidate.label,
+                scope=f"{state['paper_id']}|{section_id}|{quote}",
+            )
+            observations.append(SourceObservation(
+                id=observation_id,
+                kind=candidate.kind,
+                label=candidate.label,
+                payload=payload,
+                confidence=candidate.confidence,
+                source=source,
+            ).model_dump(mode="json"))
+            for relation in candidate.relations:
+                relation_quote = relation.evidence.strip()
+                if not relation_quote or relation_quote not in content_text:
+                    errors.append(
+                        f"Discarded unsupported {relation.type} relation from "
+                        f"'{candidate.label}' in section {section_id}"
+                    )
+                    continue
+                relation_dom_id, relation_start, relation_end = _locate_source_quote(
+                    section, relation_quote
+                )
+                relation_source = SourceReference(
+                    paper_id=state["paper_id"],
+                    section_id=section_id,
+                    section_title=section_title,
+                    dom_node_id=relation_dom_id,
+                    quote=relation_quote,
+                    char_start=relation_start,
+                    char_end=relation_end,
+                )
+                relation_observation_id = stable_identifier(
+                    "observation-relation",
+                    f"{relation.type}|{candidate.label}|{relation.target}",
+                    scope=f"{state['paper_id']}|{section_id}|{relation_quote}",
+                )
+                observations.append(SourceObservation(
+                    id=relation_observation_id,
+                    kind="relation",
+                    label=f"{candidate.label} {relation.type} {relation.target}",
+                    payload={
+                        "type": relation.type,
+                        "source": candidate.label,
+                        "target": relation.target,
+                    },
+                    confidence=relation.confidence,
+                    source=relation_source,
+                ).model_dump(mode="json"))
+        return observations, errors
+
+    observations = []
+    errors = []
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = [
+            executor.submit(process_section, item)
+            for item in enumerate(sections, 1)
+        ]
+        for completed, future in enumerate(as_completed(futures), 1):
+            section_observations, section_errors = future.result()
+            observations.extend(section_observations)
+            errors.extend(section_errors)
+            _report_progress(state, "semantic_observations", completed, len(sections))
+    return {"source_observations": observations, "errors": errors}
+
+
+def anchor_equations(state: GraphState) -> GraphState:
+    """Anchor significant formula observations to deterministic compiler equation IDs."""
+    observations = anchor_equation_observations(
+        state["paper_id"], state["sections"], state["equations"]
+    )
+    _report_progress(state, "equations", len(state["equations"]), len(state["equations"]))
+    return {
+        "source_observations": [observation.model_dump(mode="json") for observation in observations],
+        "errors": [],
+    }
+
+
+def build_canonical_document(state: GraphState) -> GraphState:
+    """Canonicalize all source observations and emit the persisted document contract."""
+    document = canonicalize_observations(
+        state["paper_id"],
+        state["source_observations"],
+        models={"section_observations": "kg_extraction"},
+    )
+    return {"graph_data": document.model_dump(mode="json")}
 
 
 def extract_stray_symbols(state: GraphState) -> GraphState:
@@ -2484,41 +2701,20 @@ def _print_llm_profile_summary(llm_profile: Dict[str, Any]) -> None:
 # =============================================================================
 
 def create_knowledge_graph_workflow() -> StateGraph:
-    """Create the LangGraph workflow for knowledge graph extraction."""
+    """Create the coordinated canonical knowledge graph workflow."""
     workflow = StateGraph(GraphState)
 
-    # Add nodes
     workflow.add_node("load_data", load_paper_data)
-    workflow.add_node("extract_stray_symbols", extract_stray_symbols)
-    workflow.add_node("extract_definitions", extract_definitions)
-    workflow.add_node("extract_theorems", extract_theorems)
-    workflow.add_node("extract_formulas", extract_formulas)
-    workflow.add_node("deduplicate_entities", deduplicate_entities)
-    workflow.add_node("extract_dependencies", extract_dependencies)
-    workflow.add_node("build_graph", build_graph)
+    workflow.add_node("extract_section_observations", extract_section_observations)
+    workflow.add_node("anchor_equations", anchor_equations)
+    workflow.add_node("build_canonical_document", build_canonical_document)
 
-    # Define edges
     workflow.set_entry_point("load_data")
-
-    # After loading data, run extractions in parallel
-    # These are independent and can run concurrently
-    workflow.add_edge("load_data", "extract_stray_symbols")
-    workflow.add_edge("load_data", "extract_definitions")
-    workflow.add_edge("load_data", "extract_theorems")
-    workflow.add_edge("load_data", "extract_formulas")
-
-    # Deduplication needs all extraction stages to complete
-    workflow.add_edge("extract_stray_symbols", "deduplicate_entities")
-    workflow.add_edge("extract_definitions", "deduplicate_entities")
-    workflow.add_edge("extract_theorems", "deduplicate_entities")
-    workflow.add_edge("extract_formulas", "deduplicate_entities")
-
-    # Dependencies operate on the deduplicated entity set
-    workflow.add_edge("deduplicate_entities", "extract_dependencies")
-
-    # Build graph after dependencies extracted
-    workflow.add_edge("extract_dependencies", "build_graph")
-    workflow.add_edge("build_graph", END)
+    workflow.add_edge("load_data", "extract_section_observations")
+    workflow.add_edge("load_data", "anchor_equations")
+    workflow.add_edge("extract_section_observations", "build_canonical_document")
+    workflow.add_edge("anchor_equations", "build_canonical_document")
+    workflow.add_edge("build_canonical_document", END)
 
     return workflow
 
@@ -2552,6 +2748,7 @@ def build_kg_for_paper(paper_id: str, progress_callback=None, cancel_check=None)
         "formula_observations": [],
         "definition_observations": [],
         "theorem_observations": [],
+        "source_observations": [],
         "formulas": [],
         "symbols": [],
         "definitions": [],

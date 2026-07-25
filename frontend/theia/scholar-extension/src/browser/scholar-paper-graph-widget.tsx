@@ -9,6 +9,8 @@ import {
 import type {
   KnowledgeGraphController,
   KnowledgeGraphControllerSnapshot,
+  KnowledgeGraphSearchItem,
+  KnowledgeGraphSourceFocus,
 } from '../../../../components/reader/knowledge-graph-controller'
 import {
   SCHOLAR_GRAPH_SELECTION_KIND,
@@ -124,6 +126,18 @@ export class ScholarPaperGraphWidget extends ReactWidget {
 
   revealSelectionInPaper(): void {
     this.graphController?.revealSelectionInPaper()
+  }
+
+  expandNode(nodeId: string): Promise<void> {
+    return this.graphController?.expandNode(nodeId) ?? Promise.resolve()
+  }
+
+  focusSource(source: KnowledgeGraphSourceFocus): Promise<void> {
+    return this.graphController?.focusSource(source) ?? Promise.resolve()
+  }
+
+  search(query: string): Promise<readonly KnowledgeGraphSearchItem[]> {
+    return this.graphController?.search(query) ?? Promise.resolve([])
   }
 
   private publishSelection(selection: KnowledgeGraphSelection | null): void {

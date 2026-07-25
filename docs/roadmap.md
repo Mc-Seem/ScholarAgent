@@ -6,7 +6,7 @@ This roadmap addresses stakeholder feedback focused on: (1) making the knowledge
 ---
 
 ## Phase 1: Knowledge Graph Refinement
->**Timeline**: 2-3 weeks
+>**Status**: Implemented (canonical evidence pipeline and progressive graph)
 >
 >**Goal**: Make KG actionable and less overwhelming for papers with 100+ entities
 
@@ -14,31 +14,31 @@ This roadmap addresses stakeholder feedback focused on: (1) making the knowledge
 >**Problem**: Dense graphs with 300+ relationships are hard to parse
 
 **Solution**:
-- Visual tiers with color gradients (core concepts → supporting definitions → mentioned-once terms)
-- Clear layer boundaries (horizontal lines or background shading)
-- Importance-based node sizing (larger = more central to paper)
+- Bounded 15–25 node concept/claim/method overview with a server hard cap of 30
+- One-hop and current-source expansion with a client-visible cap of 50
+- Separate contribution, prominence, recurrence, confidence, familiarity, and connectivity signals
 
 ### 1.2 Expertise-Based Filtering
 >**Problem**: Users see entities below their knowledge level
 
 **Solution**:
-- Extend existing `user_expertise` filtering (currently only in tooltips) to graph view
-- Filter entities by user-defined expertise level in "Personalize" tab
-- Hide entities the user already knows, surface unfamiliar concepts
+- Novice/intermediate/expert projection ranking
+- Hide familiar background while preserving core contributions
+- Explicit “show familiar” override in the graph toolbar
 
 ### 1.3 Entity Type Refinement
 >**Current Issue**: Standalone symbols clutter the graph
 
 **Changes**:
-- **Remove**: Standalone symbol nodes (integrate into parent formulas/theorems)
-- **Add**: `Formula` entity type for named equations (e.g., "ELBO", "KTO loss")
-- **Add**: `Algorithm` entity type (e.g., "Algorithm 1: Gradient Descent")
+- **Canonical types**: `concept`, `claim`, `method`, and significant `formula`
+- **Symbols**: formula-local facet data by default; promote only when explicitly defined, recurrent, or independently discussed
+- **Concept cards**: aggregate aliases, definitions, formula/symbol facets, ranking context, and source evidence
 - **Future**: User-defined entity types per research field
 
 ### 1.4 Backend: Importance Scoring & Filtering API
-- Compute `importance_score` per entity (frequency $\times$ relationship count $\times$ definition presence)
-- API: `GET /api/papers/{id}/knowledge-graph?min_importance=0.5&entity_types=definition,theorem,formula`
-- Store importance in JSONB graph structure
+- Store decomposed signals instead of one opaque importance score
+- Serve `/overview`, `/subgraph`, and `/search` projections without returning the canonical corpus
+- Persist a validated schema-versioned JSON document until relational migration triggers are measured
 
 ---
 
@@ -91,7 +91,8 @@ This roadmap addresses stakeholder feedback focused on: (1) making the knowledge
 
 ### 3.1 RAG-Based Chat
 **Features**:
-- Query paper content + knowledge graph
+- Query paper passages/equations by default
+- Keep graph expansion experimental: the 2026-07-25 evaluation promoted no query class because recall gains did not meet latency/token gates
 - Inline entity citations (hoverable footnotes)
 - Context window: current section + relevant KG subgraph
 - Example queries:
@@ -171,14 +172,14 @@ This roadmap addresses stakeholder feedback focused on: (1) making the knowledge
 ## Implementation Priorities
 
 ### Start Immediately
-1. **Phase 1.1-1.3** (KG visual hierarchy + entity refinement) → addresses core "too many entities" problem
+1. **Phase 2.1** (Multi-tab) → critical UX blocker
 2. **Phase 4.2** (Logical flow map) → low complexity, high impact
-3. **Phase 2.1** (Multi-tab) → critical UX blocker
+3. **Hybrid reranking experiment** → reduce graph-added context before reconsidering any query-class promotion
 
 ### Medium Term (After Phase 1 Complete)
-4. **Phase 3.1** (RAG chat) → builds on refined KG
+4. **Phase 3.1** (RAG chat) → passage/equation retrieval first; graph expansion remains gated
 5. **Phase 4.1** (Reference peeking) → straightforward API integration
-6. **Phase 1.4** (Filtering API) → requires importance scoring architecture
+6. **Relational KG review** → only after triggers in `docs/kg-relational-migration.md`
 
 ### Long Term (3+ months out)
 7. **Phase 2.2-2.4** (Cross-paper features) → needs user validation with multi-paper usage
@@ -191,10 +192,10 @@ This roadmap addresses stakeholder feedback focused on: (1) making the knowledge
 ### From Existing Backlog (KNOWLEDGE_GRAPH_TODOS.md)
 These items block roadmap features and should be completed first:
 
-1. **Formula entity type** (blocks Phase 1.3)
-2. **Source text quotes** (blocks Phase 3.2 - needed for `add_entity_to_kg`)
-3. **Sub-paragraph entity spans** (blocks Phase 1.2 filtering - need fine-grained occurrence tracking)
-4. **Importance scoring** (blocks Phase 1.4)
+1. ~~Formula entity type~~ — complete as significant formula entities/facets
+2. ~~Source text quotes~~ — complete in canonical observations and relation evidence
+3. **Sub-paragraph entity spans** — still needed for precise in-paper highlighting
+4. ~~Importance scoring~~ — complete as decomposed projection signals
 
 ### New Technical Requirements
 
@@ -204,7 +205,7 @@ These items block roadmap features and should be completed first:
 - Compiled HTML caching layer (Redis or in-memory LRU cache)
 
 #### Phase 3 (Chat)
-- RAG retrieval pipeline (reuse KG + sections as corpus)
+- Passage/equation retrieval baseline; do not enable graph expansion until a query class passes recorded gates
 - Agent tool framework (LangGraph with human-in-loop for destructive actions)
 - Streaming response UI (SSE or WebSocket)
 
@@ -248,5 +249,5 @@ These items block roadmap features and should be completed first:
 
 ---
 
-**Last Updated**: 2026-03-08
-**Status**: Planning phase, pending stakeholder approval
+**Last Updated**: 2026-07-25
+**Status**: Canonical KG refinement complete; passage-first retrieval decision recorded

@@ -52,16 +52,14 @@ colors.neutral.hover.bg[50]     // hover:bg-slate-50
 Used for knowledge graph nodes and entity-specific styling.
 
 ```typescript
-colors.entity.symbol.bg         // bg-blue-50
-colors.entity.symbol.text       // text-blue-700
-colors.entity.symbol.hex        // '#3b82f6' (for canvas/ReactFlow)
-
-colors.entity.definition.bg     // bg-emerald-50
-colors.entity.definition.hex    // '#10b981'
-
-colors.entity.theorem.bg        // bg-violet-50
-colors.entity.theorem.hex       // '#8b5cf6'
+concept  // emerald; canonical technical objects and concept cards
+claim    // violet; theorems, propositions, and central results
+method   // indigo; algorithms, procedures, and architectures
+formula  // amber; significant equations and objectives
+symbol   // blue; only promoted paper-level notation
 ```
+
+`GraphNode.tsx` and `NodeInfoPanel.tsx` map canonical types onto the existing entity tokens while dedicated canonical tokens are pending. Formula-local symbols use collapsed facet styling and are not peer graph nodes.
 
 ### Relationship Colors
 
@@ -71,8 +69,10 @@ Used for edge colors in knowledge graphs.
 colors.relationship.uses.hex          // '#6366f1' (indigo)
 colors.relationship.depends_on.hex    // '#f59e0b' (amber)
 colors.relationship.defines.hex       // '#10b981' (emerald)
-colors.relationship.extends.hex       // '#8b5cf6' (violet)
-colors.relationship.mentions.hex      // '#94a3b8' (slate)
+supports                              // violet
+derives_from                          // sky
+evaluated_by                          // pink
+has_formula                           // teal
 ```
 
 ### Destructive/Error Colors (Red)

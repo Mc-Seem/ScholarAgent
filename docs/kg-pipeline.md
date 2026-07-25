@@ -2,9 +2,37 @@
 
 Reference for the LangGraph-based knowledge graph extraction pipeline.
 
-> **Status**: The formula entity type and three-stage deduplication pipeline are implemented but still being refined. See `docs/kg-formula-entity-plan.md` and `docs/kg-deduplication-plan.md` for the design plans. See `docs/kg-todos.md` for the current backlog.
+> **Status**: The versioned canonical evidence pipeline is active. The older four-extractor and three-stage reconciliation implementation remains in `knowledge_graph.py` only as migration/reference code and is not connected to `create_knowledge_graph_workflow()`.
 
-## Architecture Overview
+## Current Canonical Pipeline
+
+```text
+load_paper_data
+  ├─ extract_section_observations  (one concept/claim/method LLM pass per section)
+  └─ anchor_equations              (deterministic compiler equation IDs and LaTeX)
+             ↓
+build_canonical_document           (stable IDs, facets, signals, validated relations)
+             ↓
+Paper.knowledge_graph              (schema-versioned JSON document)
+```
+
+`KnowledgeGraphDocument` is defined in `backend/app/agents/knowledge_graph_models.py` and contains build metadata, immutable source observations, canonical entities, evidence-backed relations, and diagnostics. Persistence reparses the document before committing it.
+
+Visible semantic types are `concept`, `claim`, `method`, and significant `formula`. Formula-local symbols are stored in formula facets; a `symbol` entity is promoted only when explicitly defined, independently discussed, or recurrent across significant formulas. Allowed relation types are `defines`, `uses`, `depends_on`, `supports`, `derives_from`, `evaluated_by`, and `has_formula`.
+
+Stable IDs derive from normalized semantic/math signatures and paper scope rather than extraction order. Every relation requires canonical endpoints and source-observation evidence. Documents without `schema_version` are legacy and return a rebuild-required state from projection endpoints.
+
+### Projection Consumers
+
+- `knowledge_graph_projection.py` provides ranked overviews (default 20, hard cap 30), one-hop/source-focused subgraphs (hard cap 50 nodes/100 edges), and server search.
+- Overview ranking keeps contribution, prominence, recurrence, confidence, and full-graph connectivity as separate signals. Selection reserves 25% of the visible budget for the highest-ranked core contributions, then preferentially fills the remainder from their evidence-backed neighborhood. This preserves central seeds while avoiding a top-20 collection of otherwise disconnected cards; the scalar rank weights remain unchanged.
+- The web and Theia clients use `frontend/lib/knowledge-graph-api.ts`; neither downloads the canonical export for rendering.
+- `tooltip_suggestion.py` consumes the same bounded canonical overview.
+- `knowledge_graph_retrieval.py` is an offline experiment only. The measured decision in `docs/kg-retrieval-evaluation.md` keeps passage-only retrieval as the runtime default.
+
+Canonicalization records same-name cross-type collisions such as a `concept` and `method` both named `SLIME` as diagnostics. It deliberately does not merge them automatically: the shared label is evidence for review, not proof that their semantic roles are interchangeable.
+
+## Legacy Pipeline Reference (Inactive)
 
 ```
 ┌─────────────────────┐

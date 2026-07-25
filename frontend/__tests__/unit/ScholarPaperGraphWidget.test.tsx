@@ -105,6 +105,9 @@ function createControllerHarness(snapshot = readySnapshot()) {
     clearFocus: vi.fn(),
     resetLayout: vi.fn(),
     revealSelectionInPaper: vi.fn(),
+    expandNode: vi.fn().mockResolvedValue(undefined),
+    focusSource: vi.fn().mockResolvedValue(undefined),
+    search: vi.fn().mockResolvedValue([]),
   }
   return {
     controller,
@@ -207,7 +210,7 @@ describe('ScholarPaperGraphWidget', () => {
 })
 
 describe('ScholarPaperGraphWidget controller bridge', () => {
-  it('publishes controller state changes and proxies every graph action', () => {
+  it('publishes controller state changes and proxies every graph action', async () => {
     const widget = createWidget(new SelectionService(), { paperId: 'paper-a' })
     const harness = createControllerHarness()
     const onDidChange = vi.fn()
@@ -229,6 +232,9 @@ describe('ScholarPaperGraphWidget controller bridge', () => {
     widget.clearFocus()
     widget.resetLayout()
     widget.revealSelectionInPaper()
+    await widget.expandNode('node-1')
+    await widget.focusSource({ section: 'sec-1' })
+    await widget.search('theorem')
 
     expect(harness.controller.revealNode).toHaveBeenCalledWith('node-1')
     expect(harness.controller.setVisibleTypes).toHaveBeenCalledWith(['theorem'], ['depends_on'])
@@ -236,6 +242,9 @@ describe('ScholarPaperGraphWidget controller bridge', () => {
     expect(harness.controller.clearFocus).toHaveBeenCalledOnce()
     expect(harness.controller.resetLayout).toHaveBeenCalledOnce()
     expect(harness.controller.revealSelectionInPaper).toHaveBeenCalledOnce()
+    expect(harness.controller.expandNode).toHaveBeenCalledWith('node-1')
+    expect(harness.controller.focusSource).toHaveBeenCalledWith({ section: 'sec-1' })
+    expect(harness.controller.search).toHaveBeenCalledWith('theorem')
   })
 
   it('unsubscribes replaced controllers and clears the current bridge on React unmount', () => {

@@ -798,7 +798,24 @@ export class ScholarContribution implements
       return
     }
 
-    const items: GraphSearchQuickPickItem[] = snapshot.searchItems.map(item => ({
+    const query = await this.quickInputService.input({
+      title: 'Search Knowledge Graph',
+      placeHolder: 'Search canonical entities by label, alias, or evidence',
+      prompt: 'Search runs on the server and does not add results to the layout.',
+    })
+    if (query === undefined
+      || widget.getGraphController() !== controller
+      || widget.getGraphSnapshot()?.status !== 'ready') {
+      return
+    }
+    const searchItems = query.trim()
+      ? await controller.search(query.trim())
+      : snapshot.searchItems
+    if (widget.getGraphController() !== controller
+      || widget.getGraphSnapshot()?.status !== 'ready') {
+      return
+    }
+    const items: GraphSearchQuickPickItem[] = searchItems.map(item => ({
       id: item.id,
       label: item.label,
       description: item.nodeType,
@@ -806,7 +823,7 @@ export class ScholarContribution implements
     }))
     const selected = await this.quickInputService.pick(items, {
       title: 'Search Knowledge Graph',
-      placeHolder: 'Search nodes by label, type, or detail',
+      placeHolder: 'Choose a server-ranked entity',
       canPickMany: false,
       matchOnDescription: true,
       matchOnDetail: true,
