@@ -9,6 +9,7 @@ import {
   MenuContribution,
   MenuModelRegistry,
   MessageService,
+  SelectionService,
 } from '@theia/core'
 import {
   ApplicationShell,
@@ -45,6 +46,7 @@ import {
   SCHOLAR_LLM_SETTINGS_WIDGET_ID,
   ScholarLlmSettingsWidget,
 } from './scholar-llm-settings-widget'
+import { ScholarGraphSelection } from './scholar-graph-selection'
 import { navigateToPaperElement, paperLabel } from './scholar-react'
 import { ScholarTextareaDialog } from './scholar-textarea-dialog'
 import {
@@ -80,6 +82,7 @@ import {
   ScholarPaperGraphWidget,
   type ScholarPaperGraphWidgetOptions,
 } from './scholar-paper-graph-widget'
+import { SCHOLAR_SEMANTIC_LENS_WIDGET_ID } from './scholar-semantic-lens-widget'
 import { ScholarSuggestionService } from './scholar-suggestion-service'
 import {
   SCHOLAR_SUGGESTION_EDITOR_WIDGET_ID,
@@ -96,6 +99,8 @@ import { ScholarArxivImportDialog } from './scholar-arxiv-import-dialog'
 const STATUS_BAR_ID = 'scholar-agent.active-paper'
 const GRAPH_STATUS_BAR_ID = 'scholar-agent.graph-status'
 const UPLOAD_ACCEPT = '.tar.gz,.tgz,.zip,.tex'
+// Keeps the reading lens above the authoring views in the right side bar.
+const SEMANTIC_LENS_RANK = 90
 
 interface GraphSearchQuickPickItem extends QuickPickItem {
   id: string
@@ -121,6 +126,7 @@ export class ScholarContribution implements
   private boundGraphWidget: ScholarPaperGraphWidget | undefined
   private pendingUploadInput: HTMLInputElement | undefined
   private pendingUploadCleanup: (() => void) | undefined
+  private semanticLensReveal: Promise<void> = Promise.resolve()
 
   constructor(
     @inject(ScholarWorkspaceService) private readonly store: ScholarWorkspaceService,
@@ -132,6 +138,7 @@ export class ScholarContribution implements
     @inject(StatusBar) private readonly statusBar: StatusBar,
     @inject(MessageService) private readonly messageService: MessageService,
     @inject(QuickInputService) private readonly quickInputService: QuickInputService,
+    @inject(SelectionService) private readonly selectionService: SelectionService,
   ) {
     this.toDispose.push(this.onToolbarItemsChangedEmitter)
     this.toDispose.push(Disposable.create(() => this.activePaperSearchWidgetSubscription.dispose()))
@@ -175,15 +182,21 @@ export class ScholarContribution implements
     this.toDispose.push(this.llmSettings.onDidChange(() => {
       this.onToolbarItemsChangedEmitter.fire()
     }))
+    this.toDispose.push(this.selectionService.onSelectionChanged(selection => {
+      if (ScholarGraphSelection.is(selection)) {
+        void this.revealSemanticLens()
+      }
+    }))
     void this.updateStatusBar()
     this.bindActivePaperSearchWidget(this.shell.activeWidget)
     this.bindActiveGraphWidget(this.shell.activeWidget)
   }
 
   async initializeLayout(app: FrontendApplication): Promise<void> {
-    const [library, navigation, annotations, tooltipDrafts] = await Promise.all([
+    const [library, navigation, semanticLens, annotations, tooltipDrafts] = await Promise.all([
       this.widgetManager.getOrCreateWidget(SCHOLAR_LIBRARY_WIDGET_ID),
       this.widgetManager.getOrCreateWidget(SCHOLAR_NAVIGATION_WIDGET_ID),
+      this.widgetManager.getOrCreateWidget(SCHOLAR_SEMANTIC_LENS_WIDGET_ID),
       this.widgetManager.getOrCreateWidget(SCHOLAR_ANNOTATIONS_WIDGET_ID),
       this.widgetManager.getOrCreateWidget(SCHOLAR_TOOLTIP_DRAFTS_WIDGET_ID),
     ])
@@ -194,6 +207,7 @@ export class ScholarContribution implements
       mode: 'tab-after',
       ref: library,
     })
+    await app.shell.addWidget(semanticLens, { area: 'right', rank: SEMANTIC_LENS_RANK })
     await app.shell.addWidget(annotations, { area: 'right', rank: 100 })
     await app.shell.addWidget(tooltipDrafts, {
       area: 'right',
@@ -230,6 +244,9 @@ export class ScholarContribution implements
     })
     commands.registerCommand(ScholarCommands.SHOW_NAVIGATION, {
       execute: () => this.showView(SCHOLAR_NAVIGATION_WIDGET_ID, 'left'),
+    })
+    commands.registerCommand(ScholarCommands.SHOW_SEMANTIC_LENS, {
+      execute: () => this.showView(SCHOLAR_SEMANTIC_LENS_WIDGET_ID, 'right'),
     })
     commands.registerCommand(ScholarCommands.SHOW_ANNOTATIONS, {
       execute: () => this.showView(SCHOLAR_ANNOTATIONS_WIDGET_ID, 'right'),
@@ -624,6 +641,10 @@ export class ScholarContribution implements
       order: 'a20',
     })
     menus.registerMenuAction(CommonMenus.VIEW_VIEWS, {
+      commandId: ScholarCommands.SHOW_SEMANTIC_LENS.id,
+      order: 'a25',
+    })
+    menus.registerMenuAction(CommonMenus.VIEW_VIEWS, {
       commandId: ScholarCommands.SHOW_ANNOTATIONS.id,
       order: 'a30',
     })
@@ -701,6 +722,10 @@ export class ScholarContribution implements
     keybindings.registerKeybinding({
       command: ScholarCommands.SHOW_NAVIGATION.id,
       keybinding: 'alt+shift+n',
+    })
+    keybindings.registerKeybinding({
+      command: ScholarCommands.SHOW_SEMANTIC_LENS.id,
+      keybinding: 'alt+shift+l',
     })
     keybindings.registerKeybinding({
       command: ScholarCommands.SHOW_ANNOTATIONS.id,
@@ -1551,6 +1576,27 @@ export class ScholarContribution implements
         }
       }
       throw reason
+    }
+  }
+
+  private revealSemanticLens(): Promise<void> {
+    this.semanticLensReveal = this.semanticLensReveal
+      .catch(() => undefined)
+      .then(() => this.doRevealSemanticLens())
+    return this.semanticLensReveal
+  }
+
+  private async doRevealSemanticLens(): Promise<void> {
+    try {
+      const widget = await this.widgetManager.getOrCreateWidget(SCHOLAR_SEMANTIC_LENS_WIDGET_ID)
+      if (!widget.isAttached) {
+        await this.shell.addWidget(widget, { area: 'right', rank: SEMANTIC_LENS_RANK })
+      }
+      // Reveal instead of activate: the lens becomes visible while the caret and
+      // keyboard focus stay in the paper the reader is working through.
+      await this.shell.revealWidget(widget.id)
+    } catch (reason) {
+      await this.messageService.warn(`Could not open the Semantic Lens: ${errorMessage(reason)}`)
     }
   }
 

@@ -69,7 +69,6 @@ export interface EquationRecord {
   equation_id: string
   latex: string
   summary: string
-  paper_role: string
   notation_ids: string[]
   object_ids: string[]
   evidence_ids: string[]

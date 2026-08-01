@@ -9,6 +9,10 @@ export const ScholarCommands = {
     id: 'scholar-agent.show-navigation',
     label: 'Scholar Agent: Show Navigation',
   } satisfies Command,
+  SHOW_SEMANTIC_LENS: {
+    id: 'scholar-agent.show-semantic-lens',
+    label: 'Scholar Agent: Show Semantic Lens',
+  } satisfies Command,
   SHOW_ANNOTATIONS: {
     id: 'scholar-agent.show-annotations',
     label: 'Scholar Agent: Show Annotations',

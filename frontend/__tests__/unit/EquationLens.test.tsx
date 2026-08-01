@@ -1,4 +1,5 @@
 import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { EquationLens } from '@/components/reader/EquationLens'
@@ -14,7 +15,6 @@ const details: EquationDetails = {
     equation_id: 'eq-kto',
     latex: 'L_{KTO}=\\mathbb{E}_{(x,y)\\sim D}[w(y)]',
     summary: 'KTO loss function',
-    paper_role: 'objective',
     notation_ids: ['notation:loss', 'notation:weight'],
     object_ids: [],
     evidence_ids: ['obs-1'],
@@ -83,11 +83,64 @@ describe('EquationLens', () => {
     await waitFor(() => expect(typesetPromise).toHaveBeenCalledTimes(3))
   })
 
-  it('uses compact notation rows and keeps source evidence collapsed', () => {
+  it('heads the lens with the equation name and nothing above it', () => {
+    const { container } = render(<EquationLens details={details} />)
+
+    const header = container.querySelector('.equation-lens-header')
+    expect(header?.children).toHaveLength(1)
+    expect(header).toHaveTextContent('KTO loss function')
+  })
+
+  it('uses compact notation rows', () => {
     render(<EquationLens details={details} />)
 
     expect(screen.getByTestId('equation-notation')).toHaveClass('equation-lens-notation')
     expect(screen.getAllByTestId('equation-notation-item')).toHaveLength(2)
-    expect(screen.getByText('Sources (1)').closest('details')).not.toHaveAttribute('open')
+  })
+
+  it('names the place of each occurrence instead of listing bare quotes', () => {
+    render(<EquationLens details={details} />)
+
+    const location = screen.getByTestId('evidence-location')
+    expect(location).toHaveTextContent('Losses')
+    expect(location).toHaveTextContent('We define the KTO loss as follows.')
+  })
+
+  it('drops the self-quote that only repeats the equation itself', () => {
+    const selfQuoted: EquationDetails = {
+      ...details,
+      evidence: [{
+        ...details.evidence[0],
+        source: { ...details.evidence[0].source, quote: details.equation.latex },
+      }],
+    }
+    render(<EquationLens details={selfQuoted} />)
+
+    const location = screen.getByTestId('evidence-location')
+    expect(location).toHaveTextContent('Losses')
+    expect(location).not.toHaveTextContent('\\mathbb')
+  })
+
+  it('typesets bare math inside a notation meaning', async () => {
+    const bareMath: EquationDetails = {
+      ...details,
+      notation: [{ ...details.notation[0], meaning: 'token in the rejected sequence y_l' }],
+    }
+    render(<EquationLens details={bareMath} />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('equation-notation-item')).toHaveTextContent(
+        'token in the rejected sequence \\(y_l\\)',
+      )
+    })
+  })
+
+  it('navigates to the anchored node when a location is activated', async () => {
+    const onNavigate = vi.fn()
+    render(<EquationLens details={details} onNavigate={onNavigate} />)
+
+    await userEvent.click(screen.getByTestId('evidence-location'))
+
+    expect(onNavigate).toHaveBeenCalledWith('p-1')
   })
 })

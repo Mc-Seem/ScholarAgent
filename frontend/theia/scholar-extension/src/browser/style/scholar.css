@@ -417,6 +417,18 @@
   background: var(--theia-editor-background);
 }
 
+.scholar-semantic-lens {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.scholar-semantic-lens-empty {
+  padding: 0.75rem;
+  color: var(--theia-descriptionForeground);
+  line-height: 1.45;
+}
+
 .scholar-graph-properties {
   box-sizing: border-box;
   height: 100%;

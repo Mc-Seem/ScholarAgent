@@ -202,7 +202,7 @@ describe('ReaderWorkspaceStore', () => {
       schema_version: '3.0',
       equation: {
         stable_id: 'equation:1', equation_id: 'eq-1', latex: 'x=1', summary: 'Defines x.',
-        paper_role: 'definition', notation_ids: [], object_ids: [], evidence_ids: ['obs-1'],
+        notation_ids: [], object_ids: [], evidence_ids: ['obs-1'],
       },
       notation: [], objects: [], evidence: [],
     }

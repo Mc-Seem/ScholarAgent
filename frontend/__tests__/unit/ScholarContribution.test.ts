@@ -65,6 +65,11 @@ let SCHOLAR_LLM_SETTINGS_WIDGET_ID: string
 let SCHOLAR_SUGGESTIONS_WIDGET_ID: string
 let SCHOLAR_SUGGESTION_EDITOR_WIDGET_ID: string
 let SCHOLAR_PAPER_FIND_TOOLBAR_ID: string
+let SCHOLAR_SEMANTIC_LENS_WIDGET_ID: string
+let ScholarGraphSelectionNs: typeof import(
+  '@/theia/scholar-extension/src/browser/scholar-graph-selection'
+).ScholarGraphSelection
+let SCHOLAR_GRAPH_SELECTION_KIND: string
 
 beforeAll(async () => {
   vi.stubGlobal('DragEvent', class DragEvent extends Event {})
@@ -106,6 +111,15 @@ beforeAll(async () => {
   ))
   ;({ ScholarPaperGraphWidget, SCHOLAR_PAPER_GRAPH_FACTORY_ID } = await import(
     '@/theia/scholar-extension/src/browser/scholar-paper-graph-widget'
+  ))
+  ;({ SCHOLAR_SEMANTIC_LENS_WIDGET_ID } = await import(
+    '@/theia/scholar-extension/src/browser/scholar-semantic-lens-widget'
+  ))
+  ;({
+    ScholarGraphSelection: ScholarGraphSelectionNs,
+    SCHOLAR_GRAPH_SELECTION_KIND,
+  } = await import(
+    '@/theia/scholar-extension/src/browser/scholar-graph-selection'
   ))
 })
 
@@ -505,6 +519,7 @@ function createContribution(store: ReturnType<typeof createFakeStore>) {
     onDidChangeCurrentWidget: ReturnType<typeof vi.fn>
     addWidget: ReturnType<typeof vi.fn>
     activateWidget: ReturnType<typeof vi.fn>
+    revealWidget: ReturnType<typeof vi.fn>
     getCurrentWidget: ReturnType<typeof vi.fn>
     getAreaFor: ReturnType<typeof vi.fn>
   } = {
@@ -521,6 +536,7 @@ function createContribution(store: ReturnType<typeof createFakeStore>) {
     }),
     addWidget: vi.fn().mockResolvedValue(undefined),
     activateWidget: vi.fn().mockResolvedValue(undefined),
+    revealWidget: vi.fn().mockResolvedValue(undefined),
     getCurrentWidget: vi.fn(() => undefined),
     getAreaFor: vi.fn(() => undefined),
   }
@@ -577,6 +593,20 @@ function createContribution(store: ReturnType<typeof createFakeStore>) {
     listModels: vi.fn().mockResolvedValue(undefined),
     testWorkflow: vi.fn().mockResolvedValue(undefined),
   }
+  let selectionListener: ((selection: unknown) => void) | undefined
+  const selectionService = {
+    selection: undefined as unknown,
+    onSelectionChanged: vi.fn((listener: (selection: unknown) => void) => {
+      selectionListener = listener
+      return {
+        dispose: () => {
+          if (selectionListener === listener) {
+            selectionListener = undefined
+          }
+        },
+      }
+    }),
+  }
 
   const ContributionCtor = ScholarContribution as unknown as new (
     ...args: unknown[]
@@ -591,6 +621,7 @@ function createContribution(store: ReturnType<typeof createFakeStore>) {
     statusBar,
     messageService,
     quickInputService,
+    selectionService,
   )
 
   return {
@@ -601,10 +632,122 @@ function createContribution(store: ReturnType<typeof createFakeStore>) {
     messageService,
     quickInputService,
     fireCurrentWidgetChanged: () => currentWidgetListener?.({ newValue: shell.activeWidget }),
+    publishSelection: (selection: unknown) => {
+      selectionService.selection = selection
+      selectionListener?.(selection)
+    },
     llmSettings,
     llmSnapshot,
   }
 }
+
+describe('ScholarContribution Semantic Lens placement', () => {
+  function equationSelection() {
+    return ScholarGraphSelectionNs.create(
+      'paper-a',
+      {
+        kind: SCHOLAR_GRAPH_SELECTION_KIND,
+        paperId: 'paper-a',
+        owner: {},
+      } as Parameters<typeof ScholarGraphSelectionNs.create>[1],
+      { kind: 'equation', equationId: 'eq-7' },
+    )
+  }
+
+  it('docks the lens in the right side bar ahead of the authoring views', async () => {
+    const context = createContribution(createFakeStore(emptySnapshot()))
+    const widgets = new Map<string, { id: string }>()
+    context.widgetManager.getOrCreateWidget.mockImplementation(async (widgetId: string) => {
+      const widget = widgets.get(widgetId) ?? { id: widgetId }
+      widgets.set(widgetId, widget)
+      return widget
+    })
+
+    await (context.contribution as unknown as {
+      initializeLayout(app: unknown): Promise<void>
+    }).initializeLayout({ shell: context.shell })
+
+    expect(context.shell.addWidget).toHaveBeenCalledWith(
+      widgets.get(SCHOLAR_SEMANTIC_LENS_WIDGET_ID),
+      { area: 'right', rank: 90 },
+    )
+    const lensCall = context.shell.addWidget.mock.calls.findIndex(
+      call => (call[0] as { id: string }).id === SCHOLAR_SEMANTIC_LENS_WIDGET_ID,
+    )
+    const annotationsCall = context.shell.addWidget.mock.calls.findIndex(
+      call => (call[0] as { id: string }).id === SCHOLAR_ANNOTATIONS_WIDGET_ID,
+    )
+    expect(lensCall).toBeLessThan(annotationsCall)
+  })
+
+  it('reveals the lens on a semantic selection without stealing focus from the paper', async () => {
+    const context = createContribution(createFakeStore(emptySnapshot()))
+    const lens = { id: SCHOLAR_SEMANTIC_LENS_WIDGET_ID, isAttached: false }
+    context.widgetManager.getOrCreateWidget.mockResolvedValue(lens)
+    context.contribution.onStart()
+
+    context.publishSelection(equationSelection())
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(context.shell.addWidget).toHaveBeenCalledWith(lens, { area: 'right', rank: 90 })
+    expect(context.shell.revealWidget).toHaveBeenCalledWith(SCHOLAR_SEMANTIC_LENS_WIDGET_ID)
+    expect(context.shell.activateWidget).not.toHaveBeenCalled()
+  })
+
+  it('ignores selections that are not semantic and never docks the lens twice', async () => {
+    const context = createContribution(createFakeStore(emptySnapshot()))
+    const lens = { id: SCHOLAR_SEMANTIC_LENS_WIDGET_ID, isAttached: false }
+    context.widgetManager.getOrCreateWidget.mockImplementation(async () => {
+      lens.isAttached = true
+      return lens
+    })
+    context.contribution.onStart()
+
+    context.publishSelection({ id: 'tree-node' })
+    await Promise.resolve()
+    expect(context.shell.revealWidget).not.toHaveBeenCalled()
+
+    context.publishSelection(equationSelection())
+    context.publishSelection(equationSelection())
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(context.shell.addWidget).not.toHaveBeenCalled()
+    expect(context.shell.revealWidget).toHaveBeenCalledTimes(2)
+  })
+
+  it('exposes the lens through the View menu and a keybinding', () => {
+    const context = createContribution(createFakeStore(emptySnapshot()))
+    const commands = new FakeCommandRegistry()
+    context.contribution.registerCommands(commands as unknown as Parameters<
+      ScholarContributionClass['registerCommands']
+    >[0])
+    const menuActions: Array<{ menuPath: unknown, commandId: string }> = []
+    context.contribution.registerMenus({
+      registerMenuAction: (menuPath: unknown, action: { commandId: string }) => {
+        menuActions.push({ menuPath, commandId: action.commandId })
+        return { dispose: () => undefined }
+      },
+      registerSubmenu: () => ({ dispose: () => undefined }),
+    } as unknown as Parameters<ScholarContributionClass['registerMenus']>[0])
+    const bindings: Array<{ command: string, keybinding: string }> = []
+    context.contribution.registerKeybindings({
+      registerKeybinding: (binding: { command: string, keybinding: string }) => {
+        bindings.push(binding)
+        return { dispose: () => undefined }
+      },
+    } as unknown as Parameters<ScholarContributionClass['registerKeybindings']>[0])
+
+    expect(commands.handlerFor(ScholarCommands.SHOW_SEMANTIC_LENS)).toBeDefined()
+    expect(menuActions).toContainEqual({
+      menuPath: CommonMenusNs.VIEW_VIEWS,
+      commandId: ScholarCommands.SHOW_SEMANTIC_LENS.id,
+    })
+    expect(bindings).toContainEqual({
+      command: ScholarCommands.SHOW_SEMANTIC_LENS.id,
+      keybinding: 'alt+shift+l',
+    })
+  })
+})
 
 describe('ScholarContribution Tooltip Drafts layout migration', () => {
   async function migrate(context: ReturnType<typeof createContribution>): Promise<void> {

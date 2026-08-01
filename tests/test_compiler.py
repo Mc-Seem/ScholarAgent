@@ -11,6 +11,7 @@ import pytest
 from backend.app.compiler.latexml_compiler import (
     LaTeXMLCompiler,
     DataIdInjector,
+    extract_equations,
     inject_data_ids,
 )
 
@@ -127,6 +128,52 @@ class TestDataIdInjector:
 
         assert 'data-id="' in result
         # The structure should be valid
+
+    def test_preserves_escaped_markup_in_text(self):
+        """Character references in text must survive the round trip."""
+        html = "<p>a &lt; b &amp;&amp; b &gt; c</p>"
+        result = inject_data_ids(html, "paper123")
+
+        assert "a &lt; b &amp;&amp; b &gt; c" in result
+
+    def test_preserves_escaped_markup_in_attributes(self):
+        """Attribute values must be re-escaped instead of emitted raw."""
+        html = '<math alttext="y_{&lt;t} &amp; z">x</math>'
+        result = inject_data_ids(html, "paper123")
+
+        assert 'alttext="y_{&lt;t} &amp; z"' in result
+
+
+class TestEquationExtraction:
+    """Equation LaTeX must survive data-id injection, including `<` in subscripts."""
+
+    MATH_HTML = (
+        '<math alttext="l_{t}=\\log{\\pi_{\\theta}(t|x,y_{&lt;t})}" display="block">'
+        '<semantics>'
+        '<mrow><mi>l</mi></mrow>'
+        '<annotation encoding="application/x-tex">'
+        'l_{t}=\\log{\\pi_{\\theta}(t|x,y_{&lt;t})}'
+        '</annotation>'
+        '<annotation-xml encoding="MathML-Content">'
+        '<csymbol>subscript</csymbol><ci>\U0001d459</ci>'
+        '</annotation-xml>'
+        '</semantics>'
+        '</math>'
+    )
+
+    def test_extracts_full_latex_after_injection(self):
+        injected = inject_data_ids(self.MATH_HTML, "paper123")
+        equations = extract_equations(injected)
+
+        assert len(equations) == 1
+        assert equations[0]["latex"] == "l_{t}=\\log{\\pi_{\\theta}(t|x,y_{<t})}"
+        assert equations[0]["is_display"] is True
+
+    def test_injection_keeps_annotation_closed(self):
+        injected = inject_data_ids(self.MATH_HTML, "paper123")
+
+        assert "</annotation>" in injected
+        assert "< annotation" not in injected
 
 
 class TestLaTeXMLCompiler:

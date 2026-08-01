@@ -36,17 +36,8 @@
   min-width: 0;
 }
 
-.equation-lens-role {
-  color: var(--theia-descriptionForeground, #64748b);
-  font-size: 0.7rem;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  line-height: 1.2;
-  text-transform: uppercase;
-}
-
 .equation-lens-title {
-  margin: 0.2rem 0 0;
+  margin: 0;
   overflow-wrap: anywhere;
   font-size: 1rem;
   font-weight: 600;
@@ -148,36 +139,64 @@
 }
 
 .equation-lens-related {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
   color: var(--theia-descriptionForeground, #64748b);
   font-size: 0.75rem;
   line-height: 1.35;
 }
 
-.equation-lens-related > span {
-  margin-right: 0.25rem;
+.equation-lens-related-label {
   font-weight: 600;
 }
 
-.equation-lens-evidence {
+.equation-lens-related-item:not(:last-child)::after {
+  content: ',';
+}
+
+.semantic-locations {
+  min-width: 0;
   color: var(--theia-descriptionForeground, #64748b);
   font-size: 0.75rem;
 }
 
-.equation-lens-evidence summary {
-  width: fit-content;
-  cursor: pointer;
-  user-select: none;
+.semantic-locations-title {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0 0 0.35rem;
+  font-size: 0.8rem;
+  font-weight: 600;
 }
 
-.equation-lens-evidence > div {
+.semantic-locations-title span {
+  min-width: 1.1rem;
+  padding: 0 0.28rem;
+  color: var(--theia-badge-foreground, #475569);
+  font-size: 0.68rem;
+  line-height: 1.1rem;
+  text-align: center;
+  background: var(--theia-badge-background, #e2e8f0);
+  border-radius: 0.55rem;
+}
+
+.semantic-locations-list {
   display: grid;
   gap: 0.35rem;
-  margin-top: 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
-.equation-lens-evidence button {
+.semantic-location {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
   width: 100%;
   padding: 0.4rem 0.5rem;
+  overflow-wrap: anywhere;
   color: inherit;
   font: inherit;
   line-height: 1.35;
@@ -187,6 +206,73 @@
   border-radius: 0.3rem;
 }
 
-.equation-lens-evidence button:hover {
+.semantic-location:not(:disabled) {
+  cursor: pointer;
+}
+
+.semantic-location:not(:disabled):hover {
   background: var(--theia-list-hoverBackground, #f8fafc);
+}
+
+.semantic-location-place {
+  color: var(--theia-textLink-foreground, #4338ca);
+  font-weight: 600;
+}
+
+.semantic-location-kind {
+  font-size: 0.67rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.semantic-location-quote {
+  color: var(--theia-foreground, #334155);
+}
+
+.semantic-note {
+  min-width: 0;
+  padding: 0.5rem 0.6rem;
+  background: var(--theia-editorWidget-background, #f8fafc);
+  border: 1px solid var(--theia-widget-border, #e2e8f0);
+  border-left: 3px solid var(--theia-textLink-foreground, #6366f1);
+  border-radius: 0.35rem;
+}
+
+.semantic-note-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem;
+  margin: 0 0 0.3rem;
+  color: var(--theia-descriptionForeground, #64748b);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.semantic-note-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.1rem 0.3rem;
+  cursor: pointer;
+  color: var(--theia-textLink-foreground, #4338ca);
+  font: inherit;
+  letter-spacing: normal;
+  text-transform: none;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 0.25rem;
+}
+
+.semantic-note-edit:hover {
+  border-color: var(--theia-widget-border, #e2e8f0);
+}
+
+.semantic-note-content {
+  overflow-wrap: anywhere;
+  color: var(--theia-foreground, #334155);
+  font-size: 0.8rem;
+  line-height: 1.45;
 }

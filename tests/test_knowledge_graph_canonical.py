@@ -56,7 +56,6 @@ def test_canonicalization_preserves_aliases_evidence_and_demotes_local_symbols()
             "summary": "Variational objective",
             "latex": "L(q)=E_q[f]",
             "equation_id": "eq-elbo",
-            "paper_role": "objective",
             "symbols": [
                 {"symbol": "q", "meaning": "variational posterior", "scope_id": "sec-1"},
                 {"symbol": "L", "meaning": "objective", "scope_id": "sec-1"},
@@ -272,7 +271,6 @@ def test_equation_analysis_is_batched_and_reports_one_named_stage(monkeypatch):
         knowledge_graph_module.EquationAnalysisCandidate(
             equation_id="eq-supg",
             summary="Adds residual-based streamline stabilization.",
-            paper_role="method_definition",
             notation=[
                 knowledge_graph_module.EquationNotationCandidate(
                     symbol="\\tau",
@@ -292,7 +290,6 @@ def test_equation_analysis_is_batched_and_reports_one_named_stage(monkeypatch):
         knowledge_graph_module.EquationAnalysisCandidate(
             equation_id="invented-equation",
             summary="Unsupported.",
-            paper_role="unknown",
         ),
     ])
     monkeypatch.setattr(knowledge_graph_module, "get_llm", lambda _workflow: object())
@@ -334,7 +331,7 @@ def test_equation_analysis_is_batched_and_reports_one_named_stage(monkeypatch):
         ("equation_analysis", 1, 1),
     ]
     assert observation.payload["summary"] == "Adds residual-based streamline stabilization."
-    assert observation.payload["paper_role"] == "method_definition"
+    assert "paper_role" not in observation.payload
     assert observation.payload["symbols"] == [{
         "symbol": "\\tau",
         "meaning": "SUPG stabilization parameter",

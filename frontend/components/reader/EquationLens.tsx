@@ -1,6 +1,8 @@
 'use client'
 
+import { toMathSource, wrapBareMath } from '../../lib/inline-math'
 import type { EquationDetails } from '../../lib/semantic-api'
+import { EvidenceLocations } from './EvidenceLocations'
 import { LatexText } from './LatexText'
 
 interface EquationLensProps {
@@ -8,35 +10,17 @@ interface EquationLensProps {
   onNavigate?: (domNodeId: string) => void
 }
 
-function mathSource(value: string, display = false): string {
-  let source = value.trim()
-  const delimiters: Array<[string, string]> = [
-    ['$$', '$$'],
-    ['\\[', '\\]'],
-    ['\\(', '\\)'],
-    ['$', '$'],
-  ]
-  for (const [opening, closing] of delimiters) {
-    if (source.startsWith(opening) && source.endsWith(closing)) {
-      source = source.slice(opening.length, -closing.length).trim()
-      break
-    }
-  }
-  return display ? `\\[${source}\\]` : `\\(${source}\\)`
-}
-
 export function EquationLens({ details, onNavigate }: EquationLensProps) {
   const { equation, notation, objects, evidence } = details
   return (
     <div className="equation-lens" data-testid="equation-lens">
       <header className="equation-lens-header">
-        <div className="equation-lens-role">
-          {equation.paper_role.replaceAll('_', ' ')}
-        </div>
-        <h3 className="equation-lens-title">{equation.summary}</h3>
+        <h3 className="equation-lens-title">
+          <LatexText text={wrapBareMath(equation.summary)} />
+        </h3>
       </header>
       <div className="equation-lens-formula" data-testid="equation-math">
-        <LatexText text={mathSource(equation.latex, true)} />
+        <LatexText text={toMathSource(equation.latex, true)} />
       </div>
       {notation.length > 0 && (
         <section>
@@ -50,14 +34,16 @@ export function EquationLens({ details, onNavigate }: EquationLensProps) {
                   className="equation-lens-symbol"
                   data-testid={`notation-symbol-${item.stable_id}`}
                 >
-                  <LatexText text={mathSource(item.symbol)} />
+                  <LatexText text={toMathSource(item.symbol)} />
                 </dt>
                 <dd className="equation-lens-meaning">
-                  <LatexText text={item.meaning} />
+                  <LatexText text={wrapBareMath(item.meaning)} />
                   {(item.units || item.constraints.length > 0) && (
                     <span className="equation-lens-notation-meta">
-                      {item.units && <span>{item.units}</span>}
-                      {item.constraints.map(constraint => <span key={constraint}>{constraint}</span>)}
+                      {item.units && <LatexText text={wrapBareMath(item.units)} />}
+                      {item.constraints.map(constraint => (
+                        <LatexText key={constraint} text={wrapBareMath(constraint)} />
+                      ))}
                     </span>
                   )}
                 </dd>
@@ -68,25 +54,21 @@ export function EquationLens({ details, onNavigate }: EquationLensProps) {
       )}
       {objects.length > 0 && (
         <div className="equation-lens-related">
-          <span>Related</span> {objects.map(item => item.label).join(', ')}
+          <span className="equation-lens-related-label">Related</span>
+          {objects.map(item => (
+            <LatexText
+              key={item.stable_id}
+              className="equation-lens-related-item"
+              text={wrapBareMath(item.label)}
+            />
+          ))}
         </div>
       )}
-      {evidence.length > 0 && (
-        <details className="equation-lens-evidence">
-          <summary>Sources ({evidence.length})</summary>
-          <div>
-            {evidence.map(item => (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => item.source.dom_node_id && onNavigate?.(item.source.dom_node_id)}
-              >
-                {item.source.quote}
-              </button>
-            ))}
-          </div>
-        </details>
-      )}
+      <EvidenceLocations
+        evidence={evidence}
+        redundantQuote={equation.latex}
+        onNavigate={onNavigate}
+      />
     </div>
   )
 }

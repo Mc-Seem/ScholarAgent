@@ -83,7 +83,6 @@ def _document_data():
         equation_id="eq-1",
         latex="L(q)=E_q[f]",
         summary="Defines the optimization objective.",
-        paper_role="objective",
         notation_ids=[notation.stable_id],
         object_ids=[entity.stable_id],
         evidence_ids=[observation.id],
@@ -165,6 +164,17 @@ def test_canonical_document_rejects_invalid_relations(mutation):
 
     with pytest.raises(ValidationError):
         KnowledgeGraphDocument.model_validate(data)
+
+
+def test_stored_equations_drop_the_retired_paper_role_label():
+    """Graphs saved before the label was retired must still load."""
+    data = deepcopy(KnowledgeGraphDocument.model_validate(_document_data()).model_dump(mode="json"))
+    data["equations"][0]["paper_role"] = "Defines the total objective as a sum of losses."
+
+    document = KnowledgeGraphDocument.model_validate(data)
+
+    assert not hasattr(document.equations[0], "paper_role")
+    assert "paper_role" not in document.equations[0].model_dump()
 
 
 def test_schema_v2_requires_rebuild_instead_of_implicit_conversion():

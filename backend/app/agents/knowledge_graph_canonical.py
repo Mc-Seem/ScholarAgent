@@ -31,7 +31,7 @@ from backend.app.agents.knowledge_graph_models import (
 
 
 PIPELINE_VERSION = "3.0"
-PROMPT_VERSIONS = {"section_observations": "2.0", "equation_analysis": "1.0"}
+PROMPT_VERSIONS = {"section_observations": "2.0", "equation_analysis": "1.1"}
 RELATION_TYPES = {
     "is_a", "part_of", "uses", "depends_on", "applies_to", "produces", "supports",
     "challenges", "compares_with",
@@ -139,7 +139,6 @@ def anchor_equation_observations(
             "equation_id": equation_id,
             "latex": latex,
             "summary": f"Displayed equation {equation_id}",
-            "paper_role": "unspecified",
             "scope_id": str(section.get("id")) if section else equation_id,
             "is_display": True,
             "symbols": _extract_scoped_symbols(latex),
@@ -409,7 +408,6 @@ def _equations_and_notation(
             equation_id=equation_id,
             latex=str(observation.payload.get("latex", "")).strip(),
             summary=str(observation.payload.get("summary") or f"Displayed equation {equation_id}"),
-            paper_role=str(observation.payload.get("paper_role") or "unspecified"),
             notation_ids=notation_ids,
             object_ids=object_ids,
             evidence_ids=[observation.id],

@@ -181,7 +181,6 @@ def _semantic_graph():
                 "equation_id": "eq-supg",
                 "latex": "u = tau R",
                 "summary": "Adds residual-based stabilization.",
-                "paper_role": "method_definition",
                 "scope_id": "sec-1",
                 "object_labels": ["SUPG"],
                 "symbols": [{

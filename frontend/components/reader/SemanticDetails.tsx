@@ -1,12 +1,22 @@
 'use client'
 
-import { ArrowLeft, ExternalLink } from 'lucide-react'
+import { ArrowLeft, Pencil } from 'lucide-react'
+import { wrapBareMath } from '../../lib/inline-math'
 import type {
   EquationDetails,
   SemanticSelection,
   SemanticSubjectDetails,
 } from '../../lib/semantic-api'
 import { EquationLens } from './EquationLens'
+import { EvidenceLocations } from './EvidenceLocations'
+import { LatexText } from './LatexText'
+
+/** A saved tooltip shown next to the semantic details of the same subject. */
+export interface SemanticNote {
+  id: string
+  content: string
+  targetText?: string | null
+}
 
 interface SemanticDetailsProps {
   selection: SemanticSelection
@@ -14,8 +24,37 @@ interface SemanticDetailsProps {
   equationDetails?: EquationDetails | null
   loading?: boolean
   error?: string | null
+  /**
+   * The reader's own explanation of the selected term or equation. Rendered in
+   * the same card so that both kinds of explanation live in one place.
+   */
+  note?: SemanticNote | null
+  onEditNote?: (note: SemanticNote) => void
   onBack?: () => void
   onNavigate?: (domNodeId: string) => void
+}
+
+function NoteCard({ note, onEditNote }: { note: SemanticNote; onEditNote?: (note: SemanticNote) => void }) {
+  return (
+    <section className="semantic-note" data-testid="semantic-note">
+      <h4 className="semantic-note-title">
+        Your note
+        {onEditNote && (
+          <button
+            type="button"
+            className="semantic-note-edit"
+            data-testid="semantic-note-edit"
+            onClick={() => onEditNote(note)}
+          >
+            <Pencil size={12} /> Edit
+          </button>
+        )}
+      </h4>
+      <div className="semantic-note-content">
+        <LatexText text={wrapBareMath(note.content)} />
+      </div>
+    </section>
+  )
 }
 
 export function SemanticDetails({
@@ -24,6 +63,8 @@ export function SemanticDetails({
   equationDetails,
   loading = false,
   error,
+  note,
+  onEditNote,
   onBack,
   onNavigate,
 }: SemanticDetailsProps) {
@@ -37,7 +78,10 @@ export function SemanticDetails({
       {loading && <p className="text-sm text-slate-500">Loading details…</p>}
       {error && <p className="text-sm text-red-600">{error}</p>}
       {!loading && !error && selection.kind === 'equation' && equationDetails && (
-        <EquationLens details={equationDetails} onNavigate={onNavigate} />
+        <>
+          <EquationLens details={equationDetails} onNavigate={onNavigate} />
+          {note && <NoteCard note={note} onEditNote={onEditNote} />}
+        </>
       )}
       {!loading && !error && (selection.kind === 'occurrence' || selection.kind === 'node') && subjectDetails && (
         <div className="space-y-4">
@@ -45,11 +89,16 @@ export function SemanticDetails({
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
               {subjectDetails.subject.kind}
             </div>
-            <h3 className="mt-1 text-lg font-semibold text-slate-900">{subjectDetails.subject.label}</h3>
+            <h3 className="mt-1 text-lg font-semibold text-slate-900">
+              <LatexText text={wrapBareMath(subjectDetails.subject.label)} />
+            </h3>
             {subjectDetails.explanation && (
-              <p className="mt-2 text-sm leading-6 text-slate-700">{subjectDetails.explanation.base_content}</p>
+              <p className="mt-2 text-sm leading-6 text-slate-700">
+                <LatexText text={wrapBareMath(subjectDetails.explanation.base_content)} />
+              </p>
             )}
           </div>
+          {note && <NoteCard note={note} onEditNote={onEditNote} />}
           {subjectDetails.subject.roles.length > 0 && (
             <div className="flex flex-wrap gap-1">
               {subjectDetails.subject.roles.map(role => (
@@ -59,19 +108,11 @@ export function SemanticDetails({
               ))}
             </div>
           )}
-          <div className="space-y-2">
-            {subjectDetails.evidence.map(item => (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => item.source.dom_node_id && onNavigate?.(item.source.dom_node_id)}
-                className="flex w-full items-start gap-2 rounded-md border border-slate-200 p-2 text-left text-xs text-slate-600 hover:bg-slate-50"
-              >
-                <ExternalLink size={12} className="mt-0.5 shrink-0" />
-                {item.source.quote}
-              </button>
-            ))}
-          </div>
+          <EvidenceLocations
+            evidence={subjectDetails.evidence}
+            redundantQuote={subjectDetails.subject.label}
+            onNavigate={onNavigate}
+          />
         </div>
       )}
       {!loading && !error && selection.kind === 'edge' && (
@@ -84,7 +125,9 @@ export function SemanticDetails({
         </div>
       )}
       {!loading && !error && selection.kind === 'evidence' && (
-        <p className="text-sm leading-6 text-slate-700">{selection.evidence.source.quote}</p>
+        <p className="text-sm leading-6 text-slate-700">
+          <LatexText text={wrapBareMath(selection.evidence.source.quote)} />
+        </p>
       )}
     </div>
   )

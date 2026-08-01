@@ -65,6 +65,10 @@ import {
 import {
   bindScholarGraphPropertyView,
 } from './scholar-graph-property-view'
+import {
+  SCHOLAR_SEMANTIC_LENS_WIDGET_ID,
+  ScholarSemanticLensWidget,
+} from './scholar-semantic-lens-widget'
 import { ScholarWorkspaceService } from './scholar-workspace-service'
 import './style/generated.css'
 
@@ -170,6 +174,15 @@ export default new ContainerModule(bind => {
       },
       widget: ScholarSuggestionsTreeWidget,
     }).get(ScholarSuggestionsTreeWidget),
+  })).inSingletonScope()
+
+  // Transient for the same reason as the LLM settings widget: closing the tab
+  // disposes the Lumino widget, so a singleton binding would hand a disposed
+  // instance back to the widget factory on the next open.
+  bind(ScholarSemanticLensWidget).toSelf()
+  bind(WidgetFactory).toDynamicValue(context => ({
+    id: SCHOLAR_SEMANTIC_LENS_WIDGET_ID,
+    createWidget: () => context.container.get(ScholarSemanticLensWidget),
   })).inSingletonScope()
 
   bind(ScholarAnnotationEditorWidget).toSelf().inSingletonScope()

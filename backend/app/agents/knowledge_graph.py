@@ -208,7 +208,6 @@ class EquationNotationCandidate(BaseModel):
 class EquationAnalysisCandidate(BaseModel):
     equation_id: str
     summary: str = Field(description="Short identifying noun phrase for the equation, at most 8 words")
-    paper_role: str
     notation: List[EquationNotationCandidate] = Field(default_factory=list)
     object_labels: List[str] = Field(default_factory=list)
 
@@ -465,9 +464,9 @@ For each supplied equation ID:
 - name what the equation is with a concise identifying noun phrase of at most 8 words (for example, "KTO loss function" or "SUPG stabilization parameter");
 - put that identifying phrase in `summary`; do not explain the equation's operations there;
 - Do not start it with verbs such as "Defines", "Computes", or "Expresses";
-- classify its paper role separately;
 - explain only meaningful symbols, parameters, functions, or quantities needed to read it;
 - omit dummy indices, punctuation, operators, and syntactic noise;
+- write every mathematical fragment inside a meaning as inline LaTeX between single dollar signs, for example "token in the rejected sequence $y_l$";
 - preserve scope: reuse a meaning only when the supplied context supports it;
 - include units and constraints only when stated by the context;
 - link to semantic objects only by labels explicitly present in the supplied context.
@@ -1722,7 +1721,6 @@ def _analyze_equation_observations(
         payload = {
             **observation.payload,
             "summary": analysis.summary,
-            "paper_role": analysis.paper_role,
             "symbols": notation,
             "object_labels": analysis.object_labels,
         }

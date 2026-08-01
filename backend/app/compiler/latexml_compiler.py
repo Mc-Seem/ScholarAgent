@@ -237,6 +237,22 @@ def extract_document_metadata(html: str) -> Optional[Dict[str, Any]]:
     return metadata if metadata else None
 
 
+def escape_markup(value: str) -> str:
+    """Escape text or attribute content so a re-parse rebuilds the same tree.
+
+    LaTeXML writes TeX sources such as ``y_{&lt;t}`` into ``alttext`` attributes and
+    ``<annotation encoding="application/x-tex">`` nodes. HTMLParser hands those values
+    over already decoded, so emitting them verbatim would leak a bare ``<`` into the
+    markup and truncate the equation on the next parse.
+    """
+    return (
+        value.replace('&', '&amp;')
+        .replace('<', '&lt;')
+        .replace('>', '&gt;')
+        .replace('"', '&quot;')
+    )
+
+
 class DataIdInjector(HTMLParser):
     """
     HTML post-processor that injects stable data-id attributes into content nodes.
@@ -248,7 +264,9 @@ class DataIdInjector(HTMLParser):
                        'math', 'figure', 'table', 'li', 'blockquote', 'pre'}
 
     def __init__(self, paper_id: str):
-        super().__init__()
+        # Keep character references intact: they are re-emitted verbatim by
+        # handle_entityref/handle_charref instead of being decoded into raw text.
+        super().__init__(convert_charrefs=False)
         self.paper_id = paper_id
         self.output: list[str] = []
         self.node_counters: dict[str, int] = {}
@@ -283,9 +301,7 @@ class DataIdInjector(HTMLParser):
             if value is None:
                 attr_str += f' {key}'
             else:
-                # Escape quotes in value
-                escaped = value.replace('"', '&quot;')
-                attr_str += f' {key}="{escaped}"'
+                attr_str += f' {key}="{escape_markup(value)}"'
 
         self.output.append(f'<{tag}{attr_str}>')
 
@@ -306,8 +322,7 @@ class DataIdInjector(HTMLParser):
             if value is None:
                 attr_str += f' {key}'
             else:
-                escaped = value.replace('"', '&quot;')
-                attr_str += f' {key}="{escaped}"'
+                attr_str += f' {key}="{escape_markup(value)}"'
 
         self.output.append(f'<{tag}{attr_str} />')
 

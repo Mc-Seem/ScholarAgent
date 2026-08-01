@@ -202,6 +202,15 @@ function createContext() {
     warn: vi.fn().mockResolvedValue(undefined),
     error: vi.fn().mockResolvedValue(undefined),
   }
+  const quickInputService = {
+    pick: vi.fn(),
+    createQuickPick: vi.fn(),
+    input: vi.fn().mockResolvedValue(''),
+  }
+  const selectionService = {
+    selection: undefined as unknown,
+    onSelectionChanged: vi.fn(() => ({ dispose: () => undefined })),
+  }
   const Constructor = ScholarContribution as unknown as new (...args: unknown[]) => ScholarContributionClass
   const contribution = new Constructor(
     store,
@@ -212,6 +221,8 @@ function createContext() {
     shell,
     statusBar,
     messageService,
+    quickInputService,
+    selectionService,
   )
   const commands = new FakeCommandRegistry()
   contribution.registerCommands(commands as never)

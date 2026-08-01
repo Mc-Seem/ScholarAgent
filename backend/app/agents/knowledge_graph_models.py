@@ -181,10 +181,22 @@ class EquationRecord(StrictModel):
     equation_id: str = Field(min_length=1)
     latex: str = Field(min_length=1)
     summary: str = Field(min_length=1)
-    paper_role: str = Field(min_length=1)
     notation_ids: list[str] = Field(default_factory=list)
     object_ids: list[str] = Field(default_factory=list)
     evidence_ids: list[str] = Field(min_length=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def drop_legacy_fields(cls, data: Any) -> Any:
+        """Already stored graphs carry a free-form ``paper_role`` label.
+
+        Nothing constrained that field to a genus term, so it collected whole
+        sentences and was dropped from the equation lens. Existing documents
+        must keep loading instead of failing the strict schema.
+        """
+        if isinstance(data, dict) and "paper_role" in data:
+            data = {key: value for key, value in data.items() if key != "paper_role"}
+        return data
 
 
 class NotationRecord(StrictModel):

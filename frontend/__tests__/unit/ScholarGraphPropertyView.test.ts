@@ -326,7 +326,6 @@ describe('ScholarGraphPropertyViewWidget semantic content', () => {
         equation_id: 'eq-7',
         latex: '\\tau = h / (2 |u|)',
         summary: 'Defines the SUPG stabilization parameter.',
-        paper_role: 'definition',
         notation_ids: ['notation:tau'],
         object_ids: ['procedure:supg'],
         evidence_ids: ['obs-1'],
