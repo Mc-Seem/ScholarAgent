@@ -520,6 +520,80 @@ class TestArxivUploadEndpoint:
         assert _extract_arxiv_id("") is None
 
 
+class TestKnowledgeGraphReanchoring:
+    """Tests for POST /api/papers/{id}/knowledge-graph/reanchor."""
+
+    SECTION_HTML = (
+        "<p data-id='p-1'>KTO optimizes "
+        "<math data-id='m-1'><annotation encoding='application/x-tex'>"
+        "\\mathcal{L}_{KTO}</annotation></math>"
+        " directly. KTO needs no pairs.</p>"
+    )
+
+    def _store_paper(self, paper_id="paper-anchor", sections=True):
+        from backend.app.agents.knowledge_graph_canonical import canonicalize_observations
+        from backend.app.agents.knowledge_graph_models import SourceObservation, SourceReference
+        from backend.app.api.main import app
+        from backend.app.database.connection import get_db
+
+        observation = SourceObservation(
+            id="obs-kto",
+            kind="procedure",
+            label="KTO",
+            payload={"summary": "A preference optimization method."},
+            confidence=0.9,
+            source=SourceReference(
+                paper_id=paper_id,
+                section_id="sec-1",
+                dom_node_id="p-1",
+                quote="A preference optimization method.",
+            ),
+        )
+        # Built without sections, the way a graph looked before anchoring
+        # covered paragraphs that contain a formula.
+        document = canonicalize_observations(paper_id, [observation])
+        db = next(app.dependency_overrides[get_db]())
+        db.add(Paper(
+            id=paper_id,
+            filename="paper.tar.gz",
+            html_content=f"<article>{self.SECTION_HTML}</article>",
+            sections_data=[{"id": "sec-1", "content_html": self.SECTION_HTML}] if sections else None,
+            knowledge_graph=document.model_dump(mode="json"),
+        ))
+        db.commit()
+        return document
+
+    def test_reanchoring_finds_terms_without_rerunning_extraction(self, api_client):
+        """A better anchoring rule must not cost a paid rebuild of the graph.
+
+        Anchoring is a deterministic pass over text the paper already has, so
+        the stored observations are enough to recompute where a term occurs.
+        """
+        document = self._store_paper()
+
+        response = api_client.post("/api/papers/paper-anchor/knowledge-graph/reanchor")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["previous_occurrence_count"] == len(document.occurrences)
+        assert body["occurrence_count"] == 2
+
+        graph = api_client.get("/api/papers/paper-anchor/knowledge-graph").json()
+        assert [item["dom_node_id"] for item in graph["occurrences"]] == ["p-1", "p-1"]
+        assert [item["stable_id"] for item in graph["objects"]] == [
+            item.stable_id for item in document.objects
+        ]
+
+    def test_reanchoring_refuses_a_paper_without_compiled_sections(self, api_client):
+        """Without section HTML the pass would anchor less, not more."""
+        self._store_paper(paper_id="paper-no-sections", sections=False)
+
+        response = api_client.post("/api/papers/paper-no-sections/knowledge-graph/reanchor")
+
+        assert response.status_code == 409
+        assert "Recompile" in response.json()["detail"]
+
+
 class TestCORS:
     """Tests for CORS configuration."""
 

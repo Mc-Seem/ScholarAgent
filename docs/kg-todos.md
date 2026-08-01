@@ -1,16 +1,29 @@
 # Knowledge Graph Backlog
 
-> **Status**: The canonical evidence rework is implemented. Older three-stage deduplication helpers remain inactive migration/reference code.
+> **Status**: The schema-v3 semantic-reading iteration is implemented. Older three-stage deduplication helpers remain inactive migration/reference code.
 
 ## Canonical Rework Completed ✅
 
-- [x] Versioned `KnowledgeGraphDocument` with observations, source evidence, canonical entities, facets, signals, relations, and diagnostics
-- [x] One coordinated concept/claim/method section extraction plus deterministic compiler equation anchoring
+- [x] Versioned schema-v3 document with objects, relations/qualifiers, equations, notation, explanations, occurrences, evidence, and diagnostics
+- [x] Universal `topic`/`claim`/`procedure`/`artifact`/`quantity` extraction with roles and domain facets
+- [x] Deterministic compiler equation anchoring plus one bounded purpose/notation analysis
 - [x] Stable semantic/math IDs, alias and observation retention, strict endpoint/evidence validation before persistence
-- [x] Formula-local symbols as facets with explicit/recurrent/independently-discussed promotion rules
-- [x] Ranked overview, one-hop/source-focused subgraph, canonical search, and legacy rebuild detection APIs
-- [x] Progressive web and Theia views with server search, stable-ID merge, evidence inspection, expertise controls, and visible-node budgets
-- [x] Tooltip suggestions through the bounded canonical projection
+- [x] Shared explanations, deterministic exact occurrence anchoring, idempotent no-LLM injection, and scoped notation separation
+- [x] Sparse overview backbone with omitted counts, complete focused expansion, search, and legacy rebuild detection
+- [x] Bounded semantic annotation, subject, Equation Lens, and glossary APIs
+- [x] Quiet web/Theia activation by click or keyboard, shared sidebar details, evidence jumps, and no hover cards
+- [x] Dedicated Theia `Semantic Lens` side view revealed without focus, keeping the bottom Property View as a fallback
+- [x] One text per subject in the lens: the reader's inline edit replaces the agent's description, name, or symbol meaning, with `Show original` and `Restore`
+- [x] Reader wording stored as a subject-keyed note (`semantic-notes` upsert/delete) so restoring a wording keeps the injected anchors
+- [x] MathJax rendering for meanings, units, constraints, labels, and notes, with bare fragments such as `y_l` wrapped before typesetting
+- [x] Evidence presented as named locations instead of a quote that only repeats the equation
+- [x] Free-form `paper_role` label retired from equation analysis, schema, and lens header; stored graphs drop the key on load
+- [x] Applying drafts highlights terms again: anchors resolved from the graph by subject id (the drafts table stores no positions), terms split by inline markup wrapped piecewise, stale anchors skipped instead of aborting, and `spans_injected` counting real anchors
+- [x] Character references preserved during `data-id` injection so equations containing `<` keep their full LaTeX
+- [x] Anchorable text defined once for the builder and the injector: paragraphs holding an inline formula are annotated again (an acronym such as `KTO` was previously anchored nowhere), math is never annotated, and anchors left inside a formula by earlier builds are removed on the next apply
+- [x] `knowledge-graph/reanchor` recomputes occurrences from stored observations without an LLM, exposed as `Re-anchor Terms in Paper`
+- [x] Tooltip suggestions from explanation subjects and complete occurrences, independent of graph rank
+- [x] Suggestion response contract realigned with schema-v3 anchors on the client boundary, and `entity_types` validated against object kinds instead of the removed `nodes` key
 - [x] Passage-only versus hybrid retrieval evaluation; no query class currently passes promotion gates
 
 ## Legacy Milestones (Inactive Reference)
@@ -60,19 +73,16 @@
 
 ### Extraction Quality
 - [x] **Source text quotes** — Exact evidence quotes, source DOM/equation IDs, and available offsets live in immutable observations
-- [ ] **Sub-paragraph entity spans** — Inject `<span>` tags around entity mentions within paragraphs
-  - Currently the finest granularity is paragraph-level (`data-id` on `<p>`)
-  - Goal: wrap individual mentions (e.g., "Theorem 3.2", "α_t") in hoverable spans linked to KG nodes
-  - Complex due to fuzzy matching, LaTeX variations, HTML preservation
+- [x] **Sub-paragraph entity spans** — Exact offsets and text are injected with occurrence and subject IDs; changed source text fails validation
 
 ---
 
 ## Medium Priority
 
 ### Frontend UX
-- [x] **Relationship evidence display** — Edge and Theia property panels expose persisted source observations
-- [ ] **Auto-generate tooltip drafts** — For important terms, pre-populate tooltip content from KG data
-- [x] **Presentation-layer concept aggregation** — Concept cards render aliases, formulas, scoped symbols, signals, and evidence as facets
+- [x] **Relationship evidence display** — Edge and Theia lens/property panels expose persisted source observations
+- [x] **Reusable semantic explanations** — One explanation per object/notation scope feeds suggestions and sidebar details
+- [x] **Independent semantic projections** — Graph, Equation Lens, glossary, annotations, and Theia details share one document
 
 ### User Interaction
 - [ ] **User-added definitions** — Allow users to manually add entities to the knowledge graph
@@ -80,7 +90,7 @@
   - Triggers incremental extraction for that selection
 
 ### Extraction Improvements
-- [x] **Symbol scoping** — Formula-local notation remains scoped facet data unless promotion criteria pass
+- [x] **Notation scoping** — Formula notation is a separate scoped record and never becomes an overview node automatically
 - [ ] **Deduplication improvements** — Current within-type dedup uses normalized keys
   - Consider semantic similarity for near-duplicates
   - Handle LaTeX variations (e.g., `\alpha` vs `α`)

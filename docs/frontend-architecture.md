@@ -288,6 +288,13 @@ Suggestion`, and `Delete Suggestion` are Theia commands exposed through the tree
 toolbar, context menu, or details widget. Apply refreshes the shared paper and
 tooltip caches so the reader and comments update immediately.
 
+`Re-anchor Terms in Paper` sits in the library context menu next to the graph
+commands. It recomputes where the graph's subjects occur in the paper and then
+reloads the paper, so an improved anchoring rule reaches an existing paper
+without a paid rebuild. It opens no confirmation dialog, because unlike
+`Build Knowledge Graph` it calls no model; drafts still have to be applied
+afterwards for the new anchors to become visible highlights.
+
 Generate and Apply publish per-paper `Generating tooltip drafts…` and
 `Applying tooltip drafts…` phases through the shared workspace status, so the
 native bottom status bar stays visible for the entire request and subsequent

@@ -50,6 +50,22 @@ describe('ReaderWorkspaceStore', () => {
     }
   })
 
+  it('reloads the paper after re-anchoring, because anchors live in the graph', async () => {
+    api.reanchorOccurrences = vi.fn().mockResolvedValue({
+      status: 'reanchored',
+      occurrence_count: 312,
+      previous_occurrence_count: 199,
+    })
+    const store = new ReaderWorkspaceStore(api)
+    await store.openPaper('paper-a')
+
+    const result = await store.reanchorOccurrences('paper-a')
+
+    expect(result.occurrence_count).toBe(312)
+    expect(api.getPaper).toHaveBeenCalledTimes(2)
+    expect(store.getSnapshot().statusByPaperId['paper-a']).toBeUndefined()
+  })
+
   it('loads the library and exposes loading completion to subscribers', async () => {
     const store = new ReaderWorkspaceStore(api)
     const snapshots = [store.getSnapshot()]

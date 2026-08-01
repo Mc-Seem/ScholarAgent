@@ -382,6 +382,11 @@ export class ScholarContribution implements
       isEnabled: (argument: unknown) => this.canStopKnowledgeGraph(argument),
       isVisible: (argument: unknown) => this.canStopKnowledgeGraph(argument),
     })
+    commands.registerCommand(ScholarCommands.REANCHOR_OCCURRENCES, {
+      execute: (argument: unknown) => this.reanchorOccurrencesFromWidget(argument),
+      isEnabled: (argument: unknown) => this.canBuildKnowledgeGraph(argument),
+      isVisible: (argument: unknown) => Boolean(this.paperIdOf(argument)),
+    })
     commands.registerCommand(ScholarCommands.DELETE_PAPER, {
       execute: (argument: unknown) => this.deletePaperFromWidget(argument),
       isEnabled: (argument: unknown) => Boolean(this.paperIdOf(argument)),
@@ -675,6 +680,10 @@ export class ScholarContribution implements
     menus.registerMenuAction(SCHOLAR_LIBRARY_CONTEXT_MENU, {
       commandId: ScholarCommands.STOP_KNOWLEDGE_GRAPH.id,
       order: 'b21',
+    })
+    menus.registerMenuAction(SCHOLAR_LIBRARY_CONTEXT_MENU, {
+      commandId: ScholarCommands.REANCHOR_OCCURRENCES.id,
+      order: 'b22',
     })
     menus.registerMenuAction(SCHOLAR_LIBRARY_CONTEXT_MENU, {
       commandId: ScholarCommands.DELETE_PAPER.id,
@@ -1202,6 +1211,24 @@ export class ScholarContribution implements
       await this.store.buildKnowledgeGraph(paperId)
     } catch (reason) {
       await this.messageService.error(`Could not build knowledge graph: ${errorMessage(reason)}`)
+    }
+  }
+
+  private async reanchorOccurrencesFromWidget(argument: unknown): Promise<void> {
+    const paperId = this.paperIdOf(argument)
+    if (!paperId) {
+      return
+    }
+    try {
+      // No confirmation dialog: unlike a graph build this calls no LLM, it only
+      // re-matches known terms against the compiled text.
+      const result = await this.store.reanchorOccurrences(paperId)
+      await this.messageService.info(
+        `Re-anchored terms: ${result.occurrence_count} occurrences`
+        + ` (was ${result.previous_occurrence_count}). Apply tooltip drafts to highlight them.`,
+      )
+    } catch (reason) {
+      await this.messageService.error(`Could not re-anchor terms: ${errorMessage(reason)}`)
     }
   }
 

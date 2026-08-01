@@ -130,6 +130,11 @@ export const ScholarCommands = {
     label: 'Stop Knowledge Graph Build',
     iconClass: 'codicon codicon-debug-stop',
   } satisfies Command,
+  REANCHOR_OCCURRENCES: {
+    id: 'scholar-agent.reanchor-occurrences',
+    label: 'Re-anchor Terms in Paper',
+    iconClass: 'codicon codicon-references',
+  } satisfies Command,
   DELETE_PAPER: {
     id: 'scholar-agent.delete-paper',
     label: 'Delete Paper',

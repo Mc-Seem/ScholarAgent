@@ -22,6 +22,7 @@ from backend.app.database.models import TooltipSuggestion as TooltipSuggestionMo
 from backend.app.compiler.latexml_compiler import compile_latex_to_html, CompilationResult
 from backend.app.api.settings_routes import router as settings_router
 from backend.app.api.semantic_routes import router as semantic_router
+from backend.app.agents.knowledge_graph_canonical import canonicalize_observations
 from backend.app.agents.knowledge_graph_models import KnowledgeGraphDocument
 from backend.app.agents.knowledge_graph_projection import (
     KnowledgeGraphProjection,
@@ -1082,7 +1083,10 @@ async def apply_tooltips_endpoint(
         # Report what the reader will actually see, not how many anchors were requested.
         spans_injected = injection.anchored
 
-        print(f"[Tooltip Apply] Complete: {spans_injected} spans injected, {tooltips_created} tooltips created")
+        print(
+            f"[Tooltip Apply] Complete: {spans_injected} spans injected, "
+            f"{tooltips_created} tooltips created, {injection.repaired} anchors removed from formulas"
+        )
         previous_progress = tooltip_apply_progress.get(paper_id, {})
         tooltip_apply_progress[paper_id] = {
             "stage": "complete",
@@ -1182,6 +1186,13 @@ class KnowledgeGraphSearchResponse(BaseModel):
     status: Literal["ready"] = "ready"
     schema_version: str
     results: List[SearchResult]
+
+
+class KnowledgeGraphReanchorResponse(BaseModel):
+    """Result of recomputing where the graph's subjects occur in the paper."""
+    status: Literal["reanchored"] = "reanchored"
+    occurrence_count: int
+    previous_occurrence_count: int
 
 
 def _parse_persisted_knowledge_graph(
@@ -1565,6 +1576,46 @@ async def search_knowledge_graph(
     return KnowledgeGraphSearchResponse(
         schema_version=document.schema_version,
         results=search_entities(document, query, types=set(types) if types else None, limit=limit),
+    )
+
+
+@app.post(
+    "/api/papers/{paper_id}/knowledge-graph/reanchor",
+    response_model=KnowledgeGraphReanchorResponse,
+)
+async def reanchor_knowledge_graph(paper_id: str, db: Session = Depends(get_db)):
+    """Recompute occurrences from the stored observations, without any LLM call.
+
+    Anchoring is deterministic: it matches subject labels against the compiled
+    section HTML. So when the anchoring rule improves, a paper does not need the
+    expensive extraction rerun -- only this pass over text it already has.
+    """
+    paper = db.query(Paper).filter(Paper.id == paper_id).first()
+    if not paper:
+        raise HTTPException(status_code=404, detail="Paper not found")
+    document, rebuild = _parse_persisted_knowledge_graph(paper)
+    if rebuild:
+        raise HTTPException(status_code=409, detail=rebuild.model_dump())
+    if not paper.sections_data:
+        # Without section HTML the canonicalizer falls back to quote offsets,
+        # which anchors far less than the real text would.
+        raise HTTPException(
+            status_code=409,
+            detail="Paper has no compiled sections. Recompile it before re-anchoring.",
+        )
+
+    refreshed = canonicalize_observations(
+        paper_id,
+        document.observations,
+        models=document.build.models,
+        sections=paper.sections_data,
+    )
+    paper.knowledge_graph = refreshed.model_dump(mode="json")
+    db.commit()
+
+    return KnowledgeGraphReanchorResponse(
+        occurrence_count=len(refreshed.occurrences),
+        previous_occurrence_count=len(document.occurrences),
     )
 
 

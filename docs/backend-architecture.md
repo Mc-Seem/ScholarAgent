@@ -132,6 +132,7 @@ Evidence remains immutable source observations. Rendering uses separate exact oc
 | GET | `/api/papers/{id}/knowledge-graph/subgraph` | One-hop or source-focused bounded projection |
 | GET | `/api/papers/{id}/knowledge-graph/search` | Canonical entity search without layout expansion |
 | GET | `/api/papers/{id}/knowledge-graph` | Complete versioned export/debug document |
+| POST | `/api/papers/{id}/knowledge-graph/reanchor` | Recompute occurrences from stored observations, no LLM |
 | DELETE | `/api/papers/{id}/knowledge-graph` | Delete for rebuilding |
 
 ### Semantic Reader
@@ -197,6 +198,34 @@ When tooltips are applied, `<span>` tags are injected:
    data-subject-id="notation_alpha_t">α_t</span> controls noise.</p>
 ```
 
+### What Text Can Be Anchored
+
+`backend/app/compiler/occurrence_text.py` holds the single rule, because the graph
+builder writes offsets and the injector resolves them much later.
+
+* Every element carrying `data-id` is a candidate anchor host, not only those without
+  annotated descendants. LaTeXML gives each `<math>` its own `data-id`, so the earlier
+  "childless nodes only" rule dropped every paragraph containing an inline formula --
+  most of the prose in a technical paper. On one real paper this cost 199 anchors out of
+  312, and an acronym like `KTO` appeared nowhere in the reader.
+* Math is never anchored. LaTeXML keeps a formula's TeX in an `<annotation>` child, so
+  matching plain text found `KTO` inside `\mathcal{L}_{KTO}` and wrapping it rewrote the
+  formula. Anchors left inside math by earlier builds are unwrapped on the next apply and
+  counted in `OccurrenceInjectionResult.repaired`.
+* A nested `data-id` node's text is excluded from its parent's offsets: it is a separate
+  anchor host, and counting it twice would let both claim the same words.
+* Text already inside `span.kg-entity` still counts toward offsets. Anchoring splits one
+  text node into three without changing the concatenation, so applying drafts in batches
+  keeps the remaining offsets valid; overlap is detected from the DOM instead.
+
+### Re-anchoring Without a Rebuild
+
+Anchoring is deterministic and observations are persisted in the document, so
+`POST /knowledge-graph/reanchor` recanonicalizes from `observations` plus
+`sections_data` and rewrites occurrences with no model call. It answers 409 for a legacy
+schema or a paper without compiled sections. Theia exposes it as
+`Re-anchor Terms in Paper` in the library context menu, without a confirmation dialog.
+
 ### Deterministic Occurrence Injection
 
 Validated occurrences are injected directly from exact DOM offsets. The active apply path does not ask an LLM to rediscover each mention.
@@ -207,7 +236,7 @@ client has no positions to send; requiring them in the request produced notes wi
 highlighted occurrences. Requests may still carry occurrences explicitly, which wins over
 the graph.
 
-`inject_validated_occurrences` returns `OccurrenceInjectionResult(html, anchored, skipped)`,
+`inject_validated_occurrences` returns `OccurrenceInjectionResult(html, anchored, skipped, repaired)`,
 so `spans_injected` reports what the reader will actually see. An occurrence that crosses
 inline markup is wrapped piecewise: LaTeXML renders acronym expansions and emphasis as nested
 tags, so one term becomes several adjacent spans sharing `data-occurrence-id`, each marked

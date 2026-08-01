@@ -5,6 +5,7 @@ from backend.app.agents.knowledge_graph_canonical import (
 )
 from backend.app.agents.knowledge_graph_models import SourceObservation, SourceReference
 from backend.app.agents import knowledge_graph as knowledge_graph_module
+from backend.app.compiler.ai_html_injection import inject_validated_occurrences
 
 
 def _observation(observation_id, kind, label, payload, section="sec-1"):
@@ -179,7 +180,44 @@ def test_repeated_term_occurrences_share_one_explanation_and_stable_subject():
     ]
 
 
-def test_occurrence_anchoring_prefers_longer_overlap_and_leaf_dom_node():
+def test_terms_are_anchored_in_paragraphs_that_contain_inline_math():
+    """Prose around a formula is still prose, and it is where terms live.
+
+    LaTeXML gives every ``<math>`` its own ``data-id``, so anchoring only in
+    nodes without annotated descendants skipped every paragraph containing an
+    inline formula -- most of a technical paper. An acronym such as ``KTO`` then
+    appeared nowhere in the reader, while the graph's single "occurrence" for it
+    sat inside the TeX source of an equation.
+    """
+    observations = [_observation("obs-kto", "procedure", "KTO", {"summary": "A preference method."})]
+    content_html = (
+        "<p data-id='p-1'>KTO optimizes "
+        "<math data-id='m-1'><annotation encoding='application/x-tex'>"
+        "\\mathcal{L}_{KTO}</annotation></math>"
+        " directly. KTO needs no pairs.</p>"
+    )
+
+    document = canonicalize_observations(
+        "paper-1", observations, sections=[{"id": "sec-1", "content_html": content_html}]
+    )
+
+    assert [(item.dom_node_id, item.text) for item in document.occurrences] == [
+        ("p-1", "KTO"),
+        ("p-1", "KTO"),
+    ]
+
+    # The offsets must resolve in the compiled page, not only in the section:
+    # the builder and the injector share one definition of anchorable text.
+    injected = inject_validated_occurrences(
+        f"<article>{content_html}</article>",
+        [item.model_dump(mode="json") for item in document.occurrences],
+    )
+    assert injected.anchored == 2
+    assert injected.skipped == []
+    assert "\\mathcal{L}_{KTO}" in injected.html
+
+
+def test_occurrence_anchoring_prefers_longer_overlap_and_innermost_dom_node():
     observations = [
         _observation("obs-gradient", "topic", "gradient", {"summary": "A derivative vector."}),
         _observation("obs-descent", "procedure", "gradient descent", {"summary": "An optimization procedure."}),

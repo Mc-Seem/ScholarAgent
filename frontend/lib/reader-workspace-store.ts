@@ -45,6 +45,7 @@ export interface ReaderWorkspaceApi {
   deletePaper?(paperId: string): Promise<void>
   buildKnowledgeGraph?(paperId: string): Promise<unknown>
   cancelKnowledgeGraph?(paperId: string): Promise<unknown>
+  reanchorOccurrences?(paperId: string): Promise<ReanchorOccurrencesResponse>
   createTooltip?(
     paperId: string,
     domNodeId: string,
@@ -74,6 +75,12 @@ export interface ReaderWorkspaceApi {
   getSectionAnnotations?(paperId: string, sectionId: string): Promise<SectionAnnotationsResponse>
   getSemanticSubject?(paperId: string, subjectId: string): Promise<SemanticSubjectDetails>
   getEquationDetails?(paperId: string, equationId: string): Promise<EquationDetails>
+}
+
+export interface ReanchorOccurrencesResponse {
+  status: string
+  occurrence_count: number
+  previous_occurrence_count: number
 }
 
 export interface ReaderWorkspaceSnapshot {
@@ -282,6 +289,22 @@ export class ReaderWorkspaceStore {
       this.setPaperError(paperId, error)
       this.clearPaperStatus(paperId)
       throw error
+    }
+  }
+
+  async reanchorOccurrences(paperId: string): Promise<ReanchorOccurrencesResponse> {
+    const reanchor = this.requireOperation('reanchorOccurrences')
+    this.setPaperStatus(paperId, 'Re-anchoring terms…')
+    try {
+      const response = await reanchor.call(this.api, paperId)
+      // Anchors live in the graph, so the reader's cached paper detail is stale.
+      await this.refreshPaper(paperId)
+      return response
+    } catch (error) {
+      this.setPaperError(paperId, error)
+      throw error
+    } finally {
+      this.clearPaperStatus(paperId)
     }
   }
 

@@ -6,10 +6,10 @@ The current transition architecture persists one validated `KnowledgeGraphDocume
 
 The implemented consumers require:
 
-- a ranked 15–25 entity overview with a hard cap of 30;
-- entity search by label, alias, facet text, type, and source section;
+- a ranked sparse object overview with a hard cap of 30;
+- object and notation search by label, alias, facet text, kind, and source section;
 - one-hop adjacency lookup from entity IDs or source locations;
-- evidence lookup from entities and relations to source observations;
+- evidence lookup from objects, relations, equations, notation, explanations, and occurrences;
 - stable entity/relation IDs across rebuilds;
 - offline retrieval evaluation by source ID and query class.
 
@@ -27,6 +27,6 @@ Start relational design when at least one measured requirement is blocked by JSO
 
 ## Candidate Boundaries
 
-Normalize `kg_builds`, `kg_observations`, `kg_entities`, `kg_entity_observations`, `kg_relations`, and `kg_relation_evidence`. Keep large facet payloads JSONB until their fields have demonstrated query requirements. Preserve the versioned document exporter as a compatibility and debugging contract.
+Normalize `kg_builds`, `kg_observations`, `kg_objects`, `kg_object_observations`, `kg_relations`, `kg_relation_evidence`, `kg_equations`, `kg_notation`, and `kg_occurrences`. Keep large facet/explanation payloads JSONB until their fields demonstrate query requirements. Preserve the versioned document exporter as a compatibility and debugging contract.
 
 Before migration, benchmark representative queries, define transaction/rebuild semantics, and add a dual-write parity test. Stable canonical IDs—not database surrogate IDs—remain the external API identity.

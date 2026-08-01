@@ -123,6 +123,83 @@ def test_stale_occurrence_is_skipped_without_losing_the_others():
     assert "no longer in the HTML" in result.skipped[1]
 
 
+def test_anchoring_skips_offsets_that_point_inside_a_formula():
+    """An anchor inside <math> rewrites the TeX source the reader renders.
+
+    LaTeXML stores the source of every formula in an ``<annotation>`` child, so
+    plain-text matching finds ``KTO`` inside ``\\mathcal{L}_{KTO}``. Wrapping it
+    truncated the formula in the reader.
+    """
+    html = (
+        "<p data-id='p-1'>The objective <math data-id='m-1'>"
+        "<annotation encoding='application/x-tex'>\\mathcal{L}_{KTO}</annotation>"
+        "</math> is used.</p>"
+    )
+    result = ai_html_injection.inject_validated_occurrences(html, [{
+        "stable_id": "occ-1", "subject_id": "artifact:kto", "dom_node_id": "m-1",
+        "start": 14, "end": 17, "text": "KTO", "scope_id": "sec-1",
+    }])
+
+    assert result.anchored == 0
+    assert result.skipped == ["occ-1: node m-1 is a formula"]
+    assert "\\mathcal{L}_{KTO}" in result.html
+
+
+def test_an_anchor_left_inside_a_formula_is_removed():
+    """Earlier builds produced such anchors, and only unwrapping undoes them."""
+    html = (
+        "<p data-id='p-1'>See <math data-id='m-1'>"
+        "<annotation encoding='application/x-tex'>\\mathcal{L}_{"
+        "<span class=\"kg-entity\" data-occurrence-id=\"old\" data-subject-id=\"artifact:kto\">KTO</span>"
+        "}</annotation></math>.</p>"
+    )
+
+    result = ai_html_injection.inject_validated_occurrences(html, [])
+
+    assert result.repaired == 1
+    assert "\\mathcal{L}_{KTO}" in result.html
+    assert "kg-entity" not in result.html
+
+
+def test_offsets_survive_anchors_added_by_an_earlier_apply():
+    """Applying drafts one batch at a time must not shift the remaining anchors.
+
+    Offsets are measured over the paper's full text, so anchored words have to
+    keep counting; excluding them made every later occurrence in the same node
+    look like moved text.
+    """
+    html = "<p data-id='p-1'>DPO and KTO differ.</p>"
+    first = ai_html_injection.inject_validated_occurrences(html, [{
+        "stable_id": "occ-1", "subject_id": "artifact:dpo", "dom_node_id": "p-1",
+        "start": 0, "end": 3, "text": "DPO", "scope_id": "sec-1",
+    }])
+
+    second = ai_html_injection.inject_validated_occurrences(first.html, [{
+        "stable_id": "occ-2", "subject_id": "artifact:kto", "dom_node_id": "p-1",
+        "start": 8, "end": 11, "text": "KTO", "scope_id": "sec-1",
+    }])
+
+    assert second.anchored == 1
+    assert second.skipped == []
+    assert [element.get_text() for element in _entities(second.html)] == ["DPO", "KTO"]
+
+
+def test_a_range_already_claimed_by_another_subject_is_reported():
+    html = "<p data-id='p-1'>Kahneman-Tversky Optimization matters.</p>"
+    first = ai_html_injection.inject_validated_occurrences(html, [{
+        "stable_id": "occ-1", "subject_id": "procedure:kto", "dom_node_id": "p-1",
+        "start": 0, "end": 29, "text": "Kahneman-Tversky Optimization", "scope_id": "sec-1",
+    }])
+
+    second = ai_html_injection.inject_validated_occurrences(first.html, [{
+        "stable_id": "occ-2", "subject_id": "topic:optimization", "dom_node_id": "p-1",
+        "start": 17, "end": 29, "text": "Optimization", "scope_id": "sec-1",
+    }])
+
+    assert second.anchored == 0
+    assert second.skipped == ["occ-2: already annotated for another subject"]
+
+
 def _entities(html):
     from bs4 import BeautifulSoup
 

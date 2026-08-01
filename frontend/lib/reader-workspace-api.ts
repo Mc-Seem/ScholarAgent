@@ -5,6 +5,7 @@ import type {
   CompilationProgress,
   KnowledgeGraphProgress,
   ReaderWorkspaceApi,
+  ReanchorOccurrencesResponse,
   TooltipUpdate,
 } from './reader-workspace-store'
 import { HttpSemanticApi } from './semantic-api'
@@ -279,6 +280,10 @@ export class HttpReaderWorkspaceApi implements ReaderWorkspaceApi, TooltipSugges
 
   cancelKnowledgeGraph(paperId: string): Promise<unknown> {
     return this.request(`/api/papers/${paperId}/knowledge-graph/cancel`, { method: 'POST' })
+  }
+
+  reanchorOccurrences(paperId: string): Promise<ReanchorOccurrencesResponse> {
+    return this.request(`/api/papers/${paperId}/knowledge-graph/reanchor`, { method: 'POST' })
   }
 
   createTooltip(

@@ -395,13 +395,29 @@ test: { testTimeout: 10000 }
 
 ## Remaining Test Work
 
+### Current Semantic/KG Verification (2026-08-01)
+
+- `207` backend tests pass, including schema-v3 integrity, ontology/qualifier separation, scoped notation, deterministic occurrences/injection, sparse projection, corpus metrics, semantic APIs, progress, and retrieval regressions.
+- `459` frontend tests pass, including click/keyboard-only annotations, Equation Lens selection, sidebar/back/split behavior, glossary, schema-v3 graph details, workspace caches, and shared Theia selections.
+- `ScholarSemanticLensWidget.test.tsx` and the `Semantic Lens placement` suite in `ScholarContribution.test.ts` cover the side-view lens: right-area docking ahead of the authoring views, reveal without activation, sticky content on unrelated selections, stale-response and error handling, reader wording shown in place of the agent text with `Show original`, an edited symbol meaning saved against its notation subject, restore delegated to the subject-keyed delete, and a paragraph comment that must not become the equation name.
+- `TestSemanticNotes` in `tests/test_api.py` pins the note contract: the row is anchored to the subject rather than a DOM node, a second edit replaces the first, blank content is rejected, and restoring keeps `span.kg-entity` anchors in the stored HTML.
+- The suggestion contract is pinned from both ends: `test_tooltip_suggestion.py` asserts the endpoint returns schema-v3 occurrence keys and validates `entity_types` against object kinds, and `ReaderWorkspaceSuggestionApi.test.ts` asserts the client parses that shape and rejects the pre-rework one that caused `Malformed response from server`.
+- Applying drafts is now covered end to end, which it previously was not at all — hence `Applied 8 tooltips to 0 occurrences` shipping unnoticed. `test_tooltip_suggestion.py` asserts anchors are resolved from the graph when the request carries none, that an entity with an existing note is re-anchored without duplicating the note, and that a draft with no graph subject is reported instead of silently highlighting nothing. `test_ai_html_injection_progress.py` covers a term split by inline markup wrapped into `first/inner/last` parts and a stale anchor skipped without losing the others. `ScholarSuggestionService.test.ts` asserts the client no longer sends an empty occurrence list, and `ScholarSuggestionCommands.test.ts` asserts zero highlights are reported as a warning rather than success.
+- Which text may be anchored is pinned where it broke. `test_knowledge_graph_canonical.py` builds occurrences for a paragraph that contains an inline formula and then injects them into the compiled page, so the builder and the injector cannot drift apart; before the fix such a paragraph produced no anchors at all and `KTO` was highlighted nowhere. `test_ai_html_injection_progress.py` asserts an occurrence pointing inside `<math>` is skipped, an anchor left inside a formula by an earlier build is unwrapped so the TeX source returns, and offsets still resolve after a previous batch anchored an earlier word in the same node.
+- `TestKnowledgeGraphReanchoring` in `tests/test_api.py` asserts re-anchoring recomputes occurrences from stored observations while keeping subject ids, and refuses a paper without compiled sections. `ScholarContribution.test.ts` asserts the command runs without a confirmation dialog and reports the new count, and `ReaderWorkspaceStore.test.ts` asserts the paper is reloaded afterwards.
+- `TestDataIdInjector` and `TestEquationExtraction` in `tests/test_compiler.py` pin the escaping round trip: character references survive `data-id` injection, so LaTeX containing `y_{<t}` is no longer truncated at the first `<`.
+- `inlineMath.test.ts` and `EquationLens.test.tsx` cover bare-math wrapping (`y_l`, `y_{i,t}`, punctuation, `snake_case`, already-delimited input) and the location list that replaces the old `Sources` block, including dropping a quote that only repeats the equation.
+- The retired `paper_role` label is pinned from both ends: `EquationLens.test.tsx` asserts the lens header holds the equation name alone, and `test_knowledge_graph_models.py` asserts a stored document carrying the old key still validates without it.
+- `mise run verify` completes Next.js and Theia browser/Electron builds. Theia reports optional native-module resolution warnings during Electron packaging but finishes all build phases with zero errors.
+- Retrieval evaluation promotes no query class; passage-only remains the runtime default.
+
 ### High Priority
-- [ ] InteractiveNode component tests
-- [ ] Full pipeline integration test
+- [x] InteractiveNode and semantic activation component tests
+- [x] Canonical build/API integration and cancellation tests
 - [ ] Frontend E2E test (Playwright)
-- [ ] Performance benchmarks
+- [x] Bounded graph transform/layout benchmark
 
 ### Low Priority
-- [ ] Edge case handling (malformed inputs)
+- [x] Semantic/KG malformed-reference, legacy-schema, overlap, and source-drift cases
 - [ ] Browser compatibility tests
 - [ ] Load testing (concurrent uploads)

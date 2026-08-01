@@ -2,35 +2,45 @@
 
 Reference for the LangGraph-based knowledge graph extraction pipeline.
 
-> **Status**: The versioned canonical evidence pipeline is active. The older four-extractor and three-stage reconciliation implementation remains in `knowledge_graph.py` only as migration/reference code and is not connected to `create_knowledge_graph_workflow()`.
+> **Status**: Schema v3 is active. The older four-extractor and three-stage reconciliation implementation remains only as inactive migration/reference code.
 
 ## Current Canonical Pipeline
 
 ```text
 load_paper_data
-  ├─ extract_section_observations  (one concept/claim/method LLM pass per section)
-  └─ anchor_equations              (deterministic compiler equation IDs and LaTeX)
+  ├─ extract_section_observations  (topic/claim/procedure/artifact/quantity)
+  └─ anchor_equations              (compiler IDs + one bounded equation analysis)
              ↓
-build_canonical_document           (stable IDs, facets, signals, validated relations)
+build_canonical_document           (objects, relations, notation, explanations)
              ↓
-Paper.knowledge_graph              (schema-versioned JSON document)
+deterministic occurrence anchoring (exact DOM/equation offsets)
+             ↓
+Paper.knowledge_graph              (validated schema-v3 JSON document)
 ```
 
-`KnowledgeGraphDocument` is defined in `backend/app/agents/knowledge_graph_models.py` and contains build metadata, immutable source observations, canonical entities, evidence-backed relations, and diagnostics. Persistence reparses the document before committing it.
+`KnowledgeGraphDocument` is defined in `backend/app/agents/knowledge_graph_models.py`. It contains build metadata, immutable observations, semantic objects, evidence-backed relations, equations, scoped notation, reusable explanations, exact occurrences, and diagnostics. Persistence reparses the document before committing it; schema v1/v2 documents require a rebuild.
 
-Visible semantic types are `concept`, `claim`, `method`, and significant `formula`. Formula-local symbols are stored in formula facets; a `symbol` entity is promoted only when explicitly defined, independently discussed, or recurrent across significant formulas. Allowed relation types are `defines`, `uses`, `depends_on`, `supports`, `derives_from`, `evaluated_by`, and `has_formula`.
+Graph object kinds are `topic`, `claim`, `procedure`, `artifact`, and `quantity`. Paper roles and domain-specific kinds are independent roles/facets. Equations and notation are representations used by Equation Lens and glossary lookup, not automatic graph peers. Allowed relations are `is_a`, `part_of`, `uses`, `depends_on`, `applies_to`, `produces`, `supports`, `challenges`, and `compares_with`; qualifiers carry context such as `evaluation`, `measurement`, or `limitation`.
 
 Stable IDs derive from normalized semantic/math signatures and paper scope rather than extraction order. Every relation requires canonical endpoints and source-observation evidence. Documents without `schema_version` are legacy and return a rebuild-required state from projection endpoints.
 
 ### Projection Consumers
 
 - `knowledge_graph_projection.py` provides ranked overviews (default 20, hard cap 30), one-hop/source-focused subgraphs (hard cap 50 nodes/100 edges), and server search.
-- Overview ranking keeps contribution, prominence, recurrence, confidence, and full-graph connectivity as separate signals. Selection reserves 25% of the visible budget for the highest-ranked core contributions, then preferentially fills the remainder from their evidence-backed neighborhood. This preserves central seeds while avoiding a top-20 collection of otherwise disconnected cards; the scalar rank weights remain unchanged.
+- Overview selection protects core contributions and connected neighbors, then emits an information/confidence-ranked spanning backbone. Ordinary nodes are preferentially capped at two overview links; focused expansion retains all canonical relations within its explicit edge budget. Responses expose global and per-node omitted-relation counts.
 - The web and Theia clients use `frontend/lib/knowledge-graph-api.ts`; neither downloads the canonical export for rendering.
-- `tooltip_suggestion.py` consumes the same bounded canonical overview.
+- `tooltip_suggestion.py` consumes reusable explanation subjects and their complete occurrence lists, independently of graph rank.
+- Occurrences live only in the semantic document: stored drafts keep label, type and text, so `/tooltips/apply` looks the anchors up by subject id instead of trusting the request. Applying a draft therefore highlights terms even though the drafts panel knows nothing about positions.
+- Anchoring tolerates real LaTeXML output: a term split across inline tags is wrapped piecewise into adjacent spans sharing one occurrence id, and an occurrence whose text moved or whose node vanished is reported as skipped rather than failing the whole apply.
+- What may be anchored is defined once, in `backend/app/compiler/occurrence_text.py`, and shared by the builder and the injector. Every `data-id` element is scanned except math, a nested `data-id` node's text belongs to that node alone, and already anchored text still counts toward offsets. The earlier "childless nodes only" rule silently skipped every paragraph containing an inline formula, because LaTeXML gives each `<math>` its own `data-id` -- and, conversely, matched terms inside the TeX source kept in `<annotation>`, which corrupted the formula.
+- Anchoring is deterministic and observations are persisted, so `POST /knowledge-graph/reanchor` recomputes occurrences from the stored document plus section HTML. An improved anchoring rule therefore costs no extraction rerun; only the anchors change, subject ids and reader notes survive.
+- `semantic_routes.py` serves bounded section annotations, subject/evidence details, Equation Lens data, and glossary results.
+- Equation observations are anchored deterministically from compiler records, so their `quote` is the equation LaTeX itself rather than a supporting sentence. Only text-derived observations carry a real quote; clients present equation evidence as a location (section plus anchored node) instead of echoing the formula.
+- Notation meanings are requested as inline LaTeX between single dollar signs. Documents built before that rule stored bare fragments, so the reader wraps them client-side rather than rewriting stored graphs.
+- Equation analysis returns an identifying noun phrase and notation only. The former free-form `paper_role` label had no vocabulary and no length bound, so it collected whole sentences and duplicated the summary above it; no closed vocabulary covers every field honestly, so the field was retired instead of narrowed. `EquationRecord` drops the key from already stored documents so they keep loading.
 - `knowledge_graph_retrieval.py` is an offline experiment only. The measured decision in `docs/kg-retrieval-evaluation.md` keeps passage-only retrieval as the runtime default.
 
-Canonicalization records same-name cross-type collisions such as a `concept` and `method` both named `SLIME` as diagnostics. It deliberately does not merge them automatically: the shared label is evidence for review, not proof that their semantic roles are interchangeable.
+Canonicalization records same-name cross-kind collisions such as a `topic` and `procedure` both named `SLIME` as diagnostics. It deliberately does not merge them automatically: a shared label is review evidence, not proof of identity.
 
 ## Legacy Pipeline Reference (Inactive)
 

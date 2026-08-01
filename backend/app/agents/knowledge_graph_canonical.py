@@ -11,6 +11,7 @@ from typing import Any, Iterable
 
 from bs4 import BeautifulSoup
 
+from backend.app.compiler.occurrence_text import annotatable_text, is_annotatable_target
 from backend.app.agents.knowledge_graph_models import (
     SCHEMA_VERSION,
     BuildMetadata,
@@ -460,10 +461,14 @@ def _candidate_occurrences(
         section_id = str(section.get("id") or "paper")
         soup = BeautifulSoup(str(section.get("content_html") or ""), "html.parser")
         for element in soup.find_all(attrs={"data-id": True}):
-            if element.find(attrs={"data-id": True}) is not None:
+            # Every ``data-id`` node is scanned, not only childless ones: LaTeXML
+            # gives inline formulas their own ``data-id``, so skipping nodes with
+            # annotated descendants silently dropped every paragraph containing
+            # math -- most of the prose in a technical paper.
+            if not is_annotatable_target(element):
                 continue
             dom_node_id = str(element.get("data-id"))
-            text = element.get_text("", strip=False)
+            text = annotatable_text(element)
             for entity in entities:
                 for label in sorted({entity.label, *entity.aliases}, key=lambda value: (-len(value), value.casefold())):
                     if len(label.strip()) < 2:

@@ -6,7 +6,7 @@ This roadmap addresses stakeholder feedback focused on: (1) making the knowledge
 ---
 
 ## Phase 1: Knowledge Graph Refinement
->**Status**: Implemented (canonical evidence pipeline and progressive graph)
+>**Status**: Implemented (schema-v3 semantic document, progressive graph, and quiet reader details)
 >
 >**Goal**: Make KG actionable and less overwhelming for papers with 100+ entities
 
@@ -14,8 +14,9 @@ This roadmap addresses stakeholder feedback focused on: (1) making the knowledge
 >**Problem**: Dense graphs with 300+ relationships are hard to parse
 
 **Solution**:
-- Bounded 15–25 node concept/claim/method overview with a server hard cap of 30
+- Bounded semantic-object overview with a server hard cap of 30
 - One-hop and current-source expansion with a client-visible cap of 50
+- Sparse information-ranked relation backbone with omitted-link expansion
 - Separate contribution, prominence, recurrence, confidence, familiarity, and connectivity signals
 
 ### 1.2 Expertise-Based Filtering
@@ -30,15 +31,27 @@ This roadmap addresses stakeholder feedback focused on: (1) making the knowledge
 >**Current Issue**: Standalone symbols clutter the graph
 
 **Changes**:
-- **Canonical types**: `concept`, `claim`, `method`, and significant `formula`
-- **Symbols**: formula-local facet data by default; promote only when explicitly defined, recurrent, or independently discussed
-- **Concept cards**: aggregate aliases, definitions, formula/symbol facets, ranking context, and source evidence
+- **Object kinds**: `topic`, `claim`, `procedure`, `artifact`, and `quantity`
+- **Independent dimensions**: paper roles and domain specialization remain roles/facets
+- **Representations**: equations and scoped notation feed Equation Lens and glossary without becoming overview nodes
+- **Cards**: aliases, roles/facets, ranking context, source evidence, and omitted-link counts
 - **Future**: User-defined entity types per research field
 
 ### 1.4 Backend: Importance Scoring & Filtering API
 - Store decomposed signals instead of one opaque importance score
 - Serve `/overview`, `/subgraph`, and `/search` projections without returning the canonical corpus
 - Persist a validated schema-versioned JSON document until relational migration triggers are measured
+
+### 1.5 Quiet Semantic Reading
+- Deterministically annotate repeated text occurrences with one reusable explanation per object or notation scope
+- Open details only on click, Enter, or Space; never show hover cards over the text
+- Keep those details in a dedicated `Semantic Lens` side view revealed without focus, so the article keeps the centre of the screen; a side view may reveal itself, but nothing may cover the text or take the caret away
+- Provide Equation Lens purpose, notation, units, constraints, related objects, and locations
+- Show the reader's own note for a term or equation in that same lens, so both kinds of explanation live in one place
+- Render every meaning, unit, constraint, label, and note through MathJax, wrapping bare fragments such as `y_l` before typesetting
+- Name where a subject appears rather than echoing a quote that only repeats the subject itself
+- Search objects and notation through a glossary without forcing results into graph layout
+- Keep graph-build progress stage-based rather than summing equation and LLM work
 
 ---
 

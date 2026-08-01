@@ -1,6 +1,6 @@
 # Formula Entity Plan for Knowledge Graph
 
-> **Superseded (2026-07-25):** Formula anchoring is now deterministic from compiler `equations_data`. Significant formulas are canonical entities/facets; formula-local symbols remain scoped facet attributes and become entities only when explicitly defined, recurrent across significant formulas, or independently discussed. The active contract is documented in `docs/kg-pipeline.md`.
+> **Superseded (2026-07-25):** Formula anchoring is deterministic from compiler `equations_data`, but schema v3 stores formulas as `EquationRecord` representations and symbols as scoped `NotationRecord` values. Neither becomes an overview node automatically. See `docs/kg-pipeline.md`.
 
 This note captures the agreed direction for issue `#4`: introducing formulas as a first-class entity in the paper knowledge graph.
 

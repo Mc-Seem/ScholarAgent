@@ -34,6 +34,10 @@ from backend.app.agents.utils import (
     filter_processable_sections,
     get_debug_flag,
 )
+from backend.app.compiler.occurrence_text import (
+    annotatable_strings,
+    is_annotatable_target,
+)
 from backend.app.utils.llm_factory import get_llm, get_structured_llm
 
 load_dotenv()
@@ -107,34 +111,39 @@ class OccurrenceInjectionResult(NamedTuple):
 
     ``anchored`` is the number of occurrences that actually became
     ``span.kg-entity`` anchors, so callers can report what the reader will see
-    instead of assuming every requested occurrence landed.
+    instead of assuming every requested occurrence landed. ``repaired`` counts
+    anchors removed from inside formulas, which earlier builds could produce.
     """
     html: str
     anchored: int
     skipped: List[str]
+    repaired: int = 0
 
 
-def _annotatable_strings(target: Tag) -> List[NavigableString]:
-    """Text nodes of ``target`` that may still receive an anchor.
+def _unwrap_anchors_inside_math(soup: BeautifulSoup) -> int:
+    """Remove anchors that sit inside a formula, restoring its source.
 
-    Text already wrapped in ``span.kg-entity`` is excluded so that reruns never
-    nest anchors. Offsets in the semantic document are measured over exactly
-    this concatenation, which is why it is recomputed after every insertion.
+    An anchor there is always a defect: LaTeXML keeps the TeX of a formula in an
+    ``<annotation>`` child, so a span wrapped around ``KTO`` in
+    ``\\mathcal{L}_{KTO}`` rewrites the source the reader's math renderer parses.
+    Builds before the anchor rule excluded math produced exactly that, and the
+    damage is only undone by unwrapping, not by refusing new anchors.
     """
-    return [
-        item
-        for item in target.descendants
-        if isinstance(item, NavigableString)
-        and not any(
-            isinstance(parent, Tag)
-            and (
-                parent.name in {"script", "style"}
-                or "kg-entity" in parent.get("class", [])
-            )
-            for parent in item.parents
-            if parent is not target
-        )
-    ]
+    removed = 0
+    for anchor in soup.select("span.kg-entity"):
+        if is_annotatable_target(anchor):
+            continue
+        anchor.unwrap()
+        removed += 1
+    return removed
+
+
+def _is_anchored(node: NavigableString) -> bool:
+    """Whether this text is already inside an anchor of some subject."""
+    return any(
+        isinstance(parent, Tag) and "kg-entity" in parent.get("class", [])
+        for parent in node.parents
+    )
 
 
 def _locate_segments(
@@ -177,6 +186,7 @@ def inject_validated_occurrences(
     reported in ``skipped`` while the rest are anchored.
     """
     soup = BeautifulSoup(html_content, "html.parser")
+    repaired = _unwrap_anchors_inside_math(soup)
     existing_ids = {
         str(element.get("data-occurrence-id"))
         for element in soup.select("span.kg-entity[data-occurrence-id]")
@@ -200,26 +210,29 @@ def inject_validated_occurrences(
                 for occurrence in node_occurrences
             )
             continue
+        if not is_annotatable_target(target):
+            # Anchoring inside <math> would insert a span into the TeX source
+            # LaTeXML stores there and corrupt the formula.
+            skipped.extend(
+                f"{occurrence.get('stable_id')}: node {dom_node_id} is a formula"
+                for occurrence in node_occurrences
+            )
+            continue
         # Descending order keeps the offsets of the not-yet-processed occurrences
         # valid: insertions only ever change text after their own start.
         for occurrence in sorted(node_occurrences, key=lambda item: int(item["start"]), reverse=True):
             start, end = int(occurrence["start"]), int(occurrence["end"])
             expected = str(occurrence["text"])
             stable_id = str(occurrence.get("stable_id"))
-            segments = _locate_segments(_annotatable_strings(target), start, end)
+            segments = _locate_segments(annotatable_strings(target), start, end)
             actual = "".join(str(node)[left:right] for node, left, right in segments)
             if actual != expected:
-                covered = _locate_segments(
-                    [item for item in target.descendants if isinstance(item, NavigableString)],
-                    start,
-                    end,
+                skipped.append(
+                    f"{stable_id}: text moved, expected {expected!r} but found {actual!r}"
                 )
-                if "".join(str(node)[left:right] for node, left, right in covered) == expected:
-                    skipped.append(f"{stable_id}: already annotated for another subject")
-                else:
-                    skipped.append(
-                        f"{stable_id}: text moved, expected {expected!r} but found {actual!r}"
-                    )
+                continue
+            if any(_is_anchored(node) for node, _, _ in segments):
+                skipped.append(f"{stable_id}: already annotated for another subject")
                 continue
             for index, (text_node, local_start, local_end) in reversed(list(enumerate(segments))):
                 raw = str(text_node)
@@ -248,7 +261,12 @@ def inject_validated_occurrences(
             completed += 1
             if progress_callback:
                 progress_callback(completed, total)
-    return OccurrenceInjectionResult(html=str(soup), anchored=completed, skipped=skipped)
+    return OccurrenceInjectionResult(
+        html=str(soup),
+        anchored=completed,
+        skipped=skipped,
+        repaired=repaired,
+    )
 
 
 # =============================================================================

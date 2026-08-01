@@ -208,6 +208,11 @@ function createFakeStore(snapshot: ReaderWorkspaceSnapshot) {
     compilePaper: vi.fn().mockResolvedValue(undefined),
     buildKnowledgeGraph: vi.fn().mockResolvedValue(undefined),
     cancelKnowledgeGraph: vi.fn().mockResolvedValue(undefined),
+    reanchorOccurrences: vi.fn().mockResolvedValue({
+      status: 'reanchored',
+      occurrence_count: 312,
+      previous_occurrence_count: 199,
+    }),
     deletePaper: vi.fn().mockResolvedValue(undefined),
     uploadPaper: vi.fn(),
     uploadArxiv: vi.fn(),
@@ -1154,6 +1159,21 @@ describe('ScholarContribution active-paper commands', () => {
     await commands.handlerFor(ScholarCommands.BUILD_KNOWLEDGE_GRAPH).execute(foreignWidget)
     expect(store.compilePaper).toHaveBeenCalledTimes(1)
     expect(store.buildKnowledgeGraph).toHaveBeenCalledTimes(1)
+  })
+
+  it('re-anchors terms straight away, because no LLM tokens are spent', async () => {
+    // Unlike a graph build this only re-matches known terms against text the
+    // paper already has, so a confirmation dialog would be noise.
+    const { messageService } = register()
+    const widget = createFakePaperWidget('paper-a')
+
+    await commands.handlerFor(ScholarCommands.REANCHOR_OCCURRENCES).execute(widget)
+
+    expect(confirmDialogOpen).not.toHaveBeenCalled()
+    expect(store.reanchorOccurrences).toHaveBeenCalledWith('paper-a')
+    expect(messageService.info).toHaveBeenCalledWith(
+      expect.stringContaining('312 occurrences (was 199)'),
+    )
   })
 
   it('deletes the paper, closes its widget and reports success only after confirmation', async () => {
@@ -2331,6 +2351,7 @@ describe('ScholarContribution menus', () => {
       ScholarCommands.COMPILE_PAPER.id,
       ScholarCommands.BUILD_KNOWLEDGE_GRAPH.id,
       ScholarCommands.STOP_KNOWLEDGE_GRAPH.id,
+      ScholarCommands.REANCHOR_OCCURRENCES.id,
       ScholarCommands.DELETE_PAPER.id,
     ])
   })
