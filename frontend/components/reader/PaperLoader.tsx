@@ -14,6 +14,7 @@ import SearchBar from "./SearchBar";
 import { getPaperTOC } from "../../utils/paperTOC";
 import { Loader2, Upload, ExternalLink, Trash2, RefreshCw, FileText, AlertCircle, Network, Settings } from "lucide-react";
 import SettingsDialog from "./SettingsDialog";
+import type { SemanticSelection } from "../../lib/semantic-api";
 
 export default function PaperLoader() {
   const {
@@ -79,6 +80,7 @@ export default function PaperLoader() {
 
   // Active tooltip state (for detail view in right sidebar)
   const [activeEntityId, setActiveEntityId] = useState<string | null>(null);
+  const [semanticSelection, setSemanticSelection] = useState<SemanticSelection | null>(null);
 
   // Store focus graph node handler from NavigationPanel
   const focusGraphNodeRef = useRef<((nodeId: string) => void) | null>(null);
@@ -453,6 +455,8 @@ export default function PaperLoader() {
       toc={toc}
       onNavigate={handleNavigate}
       onFocusGraphNode={(handler: any) => { focusGraphNodeRef.current = handler; }}
+      semanticSelection={semanticSelection}
+      onSemanticSelect={setSemanticSelection}
     />
   );
 
@@ -639,6 +643,7 @@ export default function PaperLoader() {
             onTooltipDelete={handleDeleteTooltip}
             onTooltipRemoveOccurrence={handleRemoveTooltipOccurrence}
             onEntityClick={setActiveEntityId}
+            onSemanticSelect={setSemanticSelection}
           />
         </div>
       ) : currentPaper && !currentPaper.has_html ? (

@@ -1,8 +1,11 @@
 import type {
-  KnowledgeGraphEdgeSelection,
-  KnowledgeGraphNodeSelection,
-  KnowledgeGraphSelection,
-} from '../../../../components/reader/KnowledgeGraphView'
+  SemanticEquationSelection,
+  SemanticEvidenceSelection,
+  SemanticNodeSelection,
+  SemanticOccurrenceSelection,
+  SemanticRelationSelection,
+  SemanticSelection,
+} from '../../../../lib/semantic-api'
 
 export const SCHOLAR_GRAPH_SELECTION_KIND = 'scholar-agent:graph-selection'
 
@@ -16,7 +19,7 @@ export interface ScholarGraphSelection {
   type: typeof SCHOLAR_GRAPH_SELECTION_KIND
   paperId: string
   source: ScholarGraphSelectionSource
-  payload: KnowledgeGraphSelection
+  payload: SemanticSelection
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -39,7 +42,7 @@ function isConnection(value: unknown): boolean {
 
 function isNodePayload(
   value: Record<string, unknown>,
-): value is Record<string, unknown> & KnowledgeGraphNodeSelection {
+): value is Record<string, unknown> & SemanticNodeSelection {
   return value.kind === 'node'
     && typeof value.id === 'string'
     && typeof value.label === 'string'
@@ -58,7 +61,7 @@ function isNodePayload(
 
 function isEdgePayload(
   value: Record<string, unknown>,
-): value is Record<string, unknown> & KnowledgeGraphEdgeSelection {
+): value is Record<string, unknown> & SemanticRelationSelection {
   return value.kind === 'edge'
     && typeof value.sourceId === 'string'
     && typeof value.targetId === 'string'
@@ -66,6 +69,33 @@ function isEdgePayload(
     && typeof value.targetLabel === 'string'
     && typeof value.relationshipType === 'string'
     && isOptionalString(value.evidence)
+}
+
+function isOccurrencePayload(
+  value: Record<string, unknown>,
+): value is Record<string, unknown> & SemanticOccurrenceSelection {
+  return value.kind === 'occurrence'
+    && typeof value.occurrenceId === 'string'
+    && typeof value.subjectId === 'string'
+    && typeof value.label === 'string'
+    && typeof value.scopeId === 'string'
+    && isOptionalString(value.domNodeId)
+    && isOptionalString(value.equationId)
+}
+
+function isEquationPayload(
+  value: Record<string, unknown>,
+): value is Record<string, unknown> & SemanticEquationSelection {
+  return value.kind === 'equation' && typeof value.equationId === 'string'
+}
+
+function isEvidencePayload(
+  value: Record<string, unknown>,
+): value is Record<string, unknown> & SemanticEvidenceSelection {
+  return value.kind === 'evidence'
+    && isRecord(value.evidence)
+    && isRecord(value.evidence.source)
+    && typeof value.evidence.source.quote === 'string'
 }
 
 function isSelectionSource(value: unknown): value is ScholarGraphSelectionSource {
@@ -88,13 +118,19 @@ export namespace ScholarGraphSelection {
       && typeof value.paperId === 'string'
       && value.paperId.length > 0
       && value.source.paperId === value.paperId
-      && (isNodePayload(value.payload) || isEdgePayload(value.payload))
+      && (
+        isNodePayload(value.payload)
+        || isEdgePayload(value.payload)
+        || isOccurrencePayload(value.payload)
+        || isEquationPayload(value.payload)
+        || isEvidencePayload(value.payload)
+      )
   }
 
   export function create(
     paperId: string,
     source: ScholarGraphSelectionSource,
-    payload: KnowledgeGraphSelection,
+    payload: SemanticSelection,
   ): ScholarGraphSelection {
     if (!paperId || !isSelectionSource(source) || source.paperId !== paperId) {
       throw new Error('A graph selection requires a matching paper and source')

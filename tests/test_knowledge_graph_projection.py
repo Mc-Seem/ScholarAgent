@@ -70,9 +70,9 @@ def make_document(entity_count=40):
             confidence=0.8,
         ))
     return KnowledgeGraphDocument(
-        schema_version="1.0",
+        schema_version="3.0",
         build=BuildMetadata(
-            pipeline_version="2.0",
+            pipeline_version="3.0",
             created_at=datetime(2026, 7, 25, tzinfo=UTC),
         ),
         observations=observations,
@@ -116,12 +116,67 @@ def test_overview_prefers_connected_neighbors_over_disconnected_lower_rank_nodes
     assert len(projection.relations) >= 6
 
 
+def test_overview_uses_sparse_backbone_and_reports_omitted_relations():
+    document = make_document(8)
+    for source in range(8):
+        for target in range(source + 1, 8):
+            if any(
+                relation.source_id == f"concept:{source}" and relation.target_id == f"concept:{target}"
+                for relation in document.relations
+            ):
+                continue
+            document.relations.append(Relation(
+                stable_id=f"dense:{source}:{target}",
+                type="compares_with",
+                source_id=f"concept:{source}",
+                target_id=f"concept:{target}",
+                qualifiers=["baseline"],
+                evidence_ids=[f"obs-{source}"],
+                confidence=0.7,
+            ))
+    document.metrics.relation_count = len(document.relations)
+
+    projection = overview_projection(document, limit=8)
+
+    assert len(projection.relations) == 7
+    assert projection.omitted_relation_count == len(document.relations) - 7
+    assert all(relation.qualifiers == (["baseline"] if relation.type == "compares_with" else []) for relation in projection.relations)
+    assert sum(node.omitted_relation_count for node in projection.nodes) > 0
+    assert 1 <= (2 * len(projection.relations) / len(projection.nodes)) <= 2
+
+
+def test_focus_projection_keeps_non_backbone_relations_within_explicit_budget():
+    document = make_document(5)
+    document.relations.extend([
+        Relation(
+            stable_id=f"extra:{index}",
+            type="supports",
+            source_id="concept:1",
+            target_id=f"concept:{index}",
+            qualifiers=["evidence"],
+            evidence_ids=[f"obs-{index}"],
+        )
+        for index in range(2, 5)
+    ])
+    document.metrics.relation_count = len(document.relations)
+
+    projection = focus_projection(
+        document,
+        seed_ids={"concept:1"},
+        node_budget=5,
+        edge_budget=20,
+    )
+
+    assert len(projection.relations) == len(document.relations)
+    assert projection.omitted_relation_count == 0
+
+
 def test_overview_filters_types_sections_and_familiar_entities():
     document = make_document()
 
     projection = overview_projection(
         document,
-        types={"concept"},
+        types={"topic"},
         section="sec-1",
         expertise="expert",
         show_familiar=False,
@@ -129,7 +184,7 @@ def test_overview_filters_types_sections_and_familiar_entities():
     )
 
     assert projection.nodes
-    assert all(node.type == "concept" for node in projection.nodes)
+    assert all(node.type == "topic" for node in projection.nodes)
     assert all(any(evidence.source.section_id == "sec-1" for evidence in node.evidence) for node in projection.nodes)
     assert "concept:38" not in {node.stable_id for node in projection.nodes}
 

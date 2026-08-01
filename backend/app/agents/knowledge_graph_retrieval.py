@@ -322,17 +322,17 @@ def build_fixture_document(fixture: dict[str, Any]) -> KnowledgeGraphDocument:
             confidence=1.0,
         ))
     return KnowledgeGraphDocument(
-        schema_version="1.0",
+        schema_version="3.0",
         build=BuildMetadata(
-            pipeline_version="retrieval-fixture-1",
+            pipeline_version="retrieval-fixture-3",
             created_at=datetime(2026, 7, 25, tzinfo=UTC),
         ),
         observations=observations,
-        entities=entities,
+        objects=entities,
         relations=relations,
         metrics=KnowledgeGraphMetrics(
             observation_count=len(observations),
-            entity_count=len(entities),
+            object_count=len(entities),
             relation_count=len(relations),
             diagnostics={"fixture": True},
         ),

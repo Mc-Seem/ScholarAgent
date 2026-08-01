@@ -6,15 +6,16 @@ import argparse
 import json
 from collections import Counter
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, get_args
 
 from backend.app.agents.knowledge_graph_canonical import cross_type_label_collisions
-from backend.app.agents.knowledge_graph_models import KnowledgeGraphDocument
+from backend.app.agents.knowledge_graph_models import EntityType, KnowledgeGraphDocument, RelationType
 from backend.app.agents.knowledge_graph_projection import overview_projection
 
 
 MAX_OVERVIEW_ISOLATE_RATE = 0.10
 MIN_OVERVIEW_LARGEST_COMPONENT_RATE = 0.70
+MIN_ONTOLOGY_COVERAGE_RATE = 0.90
 
 
 def _ids(items: list[dict[str, Any]]) -> set[str]:
@@ -57,6 +58,9 @@ def _connectivity_metrics(
     largest_component_size = max((len(component) for component in components), default=0)
     possible_edges = len(nodes) * (len(nodes) - 1) / 2
     undirected_edges = {tuple(sorted(edge)) for edge in valid_edges}
+    degrees = [len(neighbors) for neighbors in adjacency.values()]
+    ordinary_degrees = [degree for degree in degrees if degree <= 2]
+    hub_degrees = [degree for degree in degrees if degree > 2]
     return {
         "node_count": len(nodes),
         "edge_count": len(valid_edges),
@@ -67,6 +71,14 @@ def _connectivity_metrics(
         "largest_component_rate": _rate(largest_component_size, len(nodes)),
         "mean_degree": _rate(sum(len(neighbors) for neighbors in adjacency.values()), len(nodes)),
         "edge_density": _rate(len(undirected_edges), int(possible_edges)),
+        "degree_distribution": {
+            "minimum": min(degrees, default=0),
+            "maximum": max(degrees, default=0),
+            "ordinary_node_count": len(ordinary_degrees),
+            "ordinary_mean_degree": _rate(sum(ordinary_degrees), len(ordinary_degrees)),
+            "hub_node_count": len(hub_degrees),
+            "hub_mean_degree": _rate(sum(hub_degrees), len(hub_degrees)),
+        },
     }
 
 
@@ -164,11 +176,34 @@ def measure_canonical_document(
     overview["node_type_counts"] = dict(sorted(Counter(node.type for node in projection.nodes).items()))
     overview["node_retention_rate"] = _rate(overview["node_count"], full["node_count"])
     overview["relation_retention_rate"] = _rate(overview["edge_count"], full["edge_count"])
+    overview["omitted_relation_count"] = projection.omitted_relation_count
     collisions = cross_type_label_collisions(parsed.entities)
-    semantic_types = {"concept", "claim", "method"}
+    semantic_types = set(get_args(EntityType))
     semantic_collision_count = sum(
         set(collision["types"]) <= semantic_types for collision in collisions
     )
+    unclassified = int(parsed.metrics.diagnostics.get("ontology_unclassified_count", 0))
+    classified = len(parsed.objects)
+    allowed_relations = set(get_args(RelationType))
+    vocabulary_misses = sorted({
+        *(
+            str(value)
+            for value in parsed.metrics.diagnostics.get("relation_vocabulary_misses", [])
+        ),
+        *(relation.type for relation in parsed.relations if relation.type not in allowed_relations),
+    })
+    notation_signatures = [
+        (
+            "".join(item.symbol.casefold().split()),
+            " ".join(item.meaning.casefold().split()),
+            " ".join(item.scope_id.casefold().split()),
+        )
+        for item in parsed.notation
+    ]
+    signature_counts = Counter(notation_signatures)
+    meanings_by_glyph: dict[str, set[tuple[str, str]]] = {}
+    for glyph, meaning, scope in notation_signatures:
+        meanings_by_glyph.setdefault(glyph, set()).add((meaning, scope))
     return {
         "schema_version": parsed.schema_version,
         "full": full,
@@ -176,6 +211,29 @@ def measure_canonical_document(
         "cross_type_label_collision_count": len(collisions),
         "semantic_cross_type_label_collision_count": semantic_collision_count,
         "cross_type_label_collisions": collisions,
+        "ontology": {
+            "classified_count": classified,
+            "unclassified_count": unclassified,
+            "coverage_rate": _rate(classified, classified + unclassified),
+            "kind_counts": dict(sorted(Counter(item.kind for item in parsed.objects).items())),
+        },
+        "relations": {
+            "vocabulary_miss_count": len(vocabulary_misses),
+            "vocabulary_misses": vocabulary_misses,
+            "qualifier_count": sum(len(relation.qualifiers) for relation in parsed.relations),
+        },
+        "notation": {
+            "record_count": len(parsed.notation),
+            "duplicate_signature_count": sum(
+                count - 1 for count in signature_counts.values() if count > 1
+            ),
+            "same_glyph_distinct_scope_count": sum(
+                len(meanings) > 1 for meanings in meanings_by_glyph.values()
+            ),
+            "reused_record_count": sum(
+                len(item.evidence_ids) > 1 for item in parsed.notation
+            ),
+        },
     }
 
 
@@ -213,12 +271,17 @@ def measure_canonical_corpus(
             "domain": domain,
             **metrics,
             "connectivity_gate_passed": _connectivity_gate(metrics),
+            "ontology_gate_passed": (
+                metrics["ontology"]["coverage_rate"] >= MIN_ONTOLOGY_COVERAGE_RATE
+            ),
         })
 
     overview_node_count = sum(paper["overview"]["node_count"] for paper in papers)
     overview_edge_count = sum(paper["overview"]["edge_count"] for paper in papers)
     overview_isolate_count = sum(paper["overview"]["isolate_count"] for paper in papers)
     largest_component_nodes = sum(paper["overview"]["largest_component_size"] for paper in papers)
+    classified_objects = sum(paper["ontology"]["classified_count"] for paper in papers)
+    unclassified_objects = sum(paper["ontology"]["unclassified_count"] for paper in papers)
     return {
         "paper_count": len(papers),
         "domain_counts": dict(sorted(Counter(paper["domain"] for paper in papers).items())),
@@ -238,10 +301,20 @@ def measure_canonical_corpus(
                 sum(paper["connectivity_gate_passed"] for paper in papers),
                 len(papers),
             ),
+            "ontology_coverage_rate": _rate(
+                classified_objects, classified_objects + unclassified_objects
+            ),
+            "relation_vocabulary_miss_count": sum(
+                paper["relations"]["vocabulary_miss_count"] for paper in papers
+            ),
+            "notation_scope_collision_count": sum(
+                paper["notation"]["same_glyph_distinct_scope_count"] for paper in papers
+            ),
         },
         "gates": {
             "max_overview_isolate_rate": MAX_OVERVIEW_ISOLATE_RATE,
             "min_overview_largest_component_rate": MIN_OVERVIEW_LARGEST_COMPONENT_RATE,
+            "min_ontology_coverage_rate": MIN_ONTOLOGY_COVERAGE_RATE,
         },
     }
 

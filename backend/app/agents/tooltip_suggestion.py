@@ -10,7 +10,7 @@ from typing import List, Dict, Any, Optional, Callable
 from pydantic import BaseModel, Field
 from langchain_core.prompts import ChatPromptTemplate
 from backend.app.utils.llm_factory import get_llm, get_structured_llm
-from backend.app.agents.knowledge_graph_projection import overview_projection, parse_document
+from backend.app.agents.knowledge_graph_projection import parse_document
 
 # Debug mode controlled by environment variable
 DEBUG = os.getenv("TOOLTIP_AGENT_DEBUG", "false").lower() == "true"
@@ -296,25 +296,54 @@ def suggest_tooltips(
         }
 
     document = parse_document(knowledge_graph)
-    total_count = len(document.entities)
+    total_count = len(document.objects) + len(document.notation)
     debug_print(f"Knowledge graph loaded: {total_count} total entities")
 
-    projection = overview_projection(
-        document,
-        types=set(entity_type_filter) if entity_type_filter else {
-            "concept", "claim", "method", "formula", "symbol"
-        },
-        show_familiar=True,
-        limit=30,
-    )
+    observation_index = {item.id: item for item in document.observations}
+    explanation_by_subject = {
+        item.subject_id: item for item in document.explanations if item.expertise == "intermediate"
+    }
+    occurrences_by_subject: Dict[str, List[Dict[str, Any]]] = {}
+    for occurrence in document.occurrences:
+        occurrences_by_subject.setdefault(occurrence.subject_id, []).append(
+            occurrence.model_dump(mode="json")
+        )
     entities_to_consider = []
-    for node in projection.nodes:
-        entity = node.model_dump(mode="json")
+    for semantic_object in document.objects:
+        if entity_type_filter and semantic_object.kind not in entity_type_filter:
+            continue
+        explanation = explanation_by_subject.get(semantic_object.stable_id)
+        if not explanation:
+            continue
+        entity = semantic_object.model_dump(mode="json")
         entity["id"] = entity.pop("stable_id")
-        entity["occurrences"] = [
-            evidence["source"] for evidence in entity.get("evidence", [])
+        entity["type"] = entity.pop("kind")
+        entity["base_explanation"] = explanation.base_content
+        entity["evidence"] = [
+            observation_index[evidence_id].model_dump(mode="json")
+            for evidence_id in semantic_object.observation_ids
         ]
+        entity["occurrences"] = occurrences_by_subject.get(semantic_object.stable_id, [])
         entities_to_consider.append(entity)
+    for notation in document.notation:
+        if entity_type_filter and "notation" not in entity_type_filter:
+            continue
+        explanation = explanation_by_subject.get(notation.stable_id)
+        if not explanation:
+            continue
+        entities_to_consider.append({
+            "id": notation.stable_id,
+            "type": "notation",
+            "label": notation.symbol,
+            "latex": notation.symbol,
+            "context": explanation.base_content,
+            "base_explanation": explanation.base_content,
+            "evidence": [
+                observation_index[evidence_id].model_dump(mode="json")
+                for evidence_id in notation.evidence_ids
+            ],
+            "occurrences": occurrences_by_subject.get(notation.stable_id, []),
+        })
 
     # Filter by expertise
     if progress_callback:
@@ -329,14 +358,14 @@ def suggest_tooltips(
     suggestions = []
     for idx, entity in enumerate(filtered_entities, 1):
         # Generate tooltip content
-        tooltip_content = generate_tooltip_content(entity)
+        tooltip_content = entity.get("base_explanation") or generate_tooltip_content(entity)
 
         # Extract occurrences (from Phase 1)
         occurrences = entity.get('occurrences', [])
 
         suggestion = {
             "entity_id": entity['id'],
-            "entity_label": entity.get('latex') if entity.get('type') == 'symbol' else entity.get('label',
+            "entity_label": entity.get('latex') if entity.get('type') == 'notation' else entity.get('label',
                                                                                       entity.get('term', 'Unknown')),
             "entity_type": entity.get('type', 'unknown'),
             "tooltip_content": tooltip_content,

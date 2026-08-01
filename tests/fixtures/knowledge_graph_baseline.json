@@ -64,17 +64,15 @@
   ],
   "retrieval_graph": {
     "entities": [
-      {"id": "concept:elbo", "type": "concept", "label": "Evidence lower bound", "aliases": ["ELBO", "variational objective"], "source_ids": ["p-elbo-definition"]},
-      {"id": "formula:elbo", "type": "formula", "label": "ELBO objective", "aliases": ["objective", "L(q)"], "source_ids": ["eq-elbo"]},
-      {"id": "concept:kl", "type": "concept", "label": "KL divergence", "aliases": ["KL"], "source_ids": ["p-kl"]},
+      {"id": "quantity:elbo", "type": "quantity", "label": "Evidence lower bound", "aliases": ["ELBO", "variational objective", "ELBO objective", "objective", "L(q)"], "source_ids": ["p-elbo-definition", "eq-elbo"]},
+      {"id": "topic:kl", "type": "topic", "label": "KL divergence", "aliases": ["KL"], "source_ids": ["p-kl"]},
       {"id": "claim:convergence", "type": "claim", "label": "Convergence result", "aliases": ["convergence theorem", "stationary point"], "source_ids": ["thm-convergence"]},
-      {"id": "symbol:q", "type": "symbol", "label": "q", "aliases": ["variational posterior"], "source_ids": ["eq-elbo"]}
+      {"id": "artifact:posterior", "type": "artifact", "label": "Variational posterior", "aliases": ["q"], "source_ids": ["eq-elbo"]}
     ],
     "relations": [
-      {"id": "relation:has-formula", "type": "has_formula", "source_id": "concept:elbo", "target_id": "formula:elbo", "evidence_source_ids": ["p-elbo-definition", "eq-elbo"]},
-      {"id": "relation:depends-kl", "type": "depends_on", "source_id": "formula:elbo", "target_id": "concept:kl", "evidence_source_ids": ["eq-elbo", "p-kl"]},
-      {"id": "relation:claim-uses", "type": "uses", "source_id": "claim:convergence", "target_id": "formula:elbo", "evidence_source_ids": ["thm-convergence", "eq-elbo"]},
-      {"id": "relation:formula-uses-q", "type": "uses", "source_id": "formula:elbo", "target_id": "symbol:q", "evidence_source_ids": ["eq-elbo"]}
+      {"id": "relation:depends-kl", "type": "depends_on", "source_id": "quantity:elbo", "target_id": "topic:kl", "evidence_source_ids": ["eq-elbo", "p-kl"]},
+      {"id": "relation:claim-depends", "type": "depends_on", "source_id": "claim:convergence", "target_id": "quantity:elbo", "evidence_source_ids": ["thm-convergence", "eq-elbo"]},
+      {"id": "relation:objective-uses-posterior", "type": "uses", "source_id": "quantity:elbo", "target_id": "artifact:posterior", "evidence_source_ids": ["eq-elbo"]}
     ]
   }
 }

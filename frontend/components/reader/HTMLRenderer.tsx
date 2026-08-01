@@ -10,6 +10,7 @@ import {
 } from './InteractiveNode';
 import { ContextMenu } from './ContextMenu';
 import type { Tooltip } from '../../hooks/useTooltips';
+import type { SemanticSelection } from '../../lib/semantic-api';
 
 interface HTMLRendererProps {
   html: string;
@@ -21,6 +22,7 @@ interface HTMLRendererProps {
   onTooltipDelete: (tooltipId: string) => void;
   onTooltipRemoveOccurrence?: (tooltipId: string, domNodeId: string) => void;
   onEntityClick?: (entityId: string) => void;
+  onSemanticSelect?: (selection: SemanticSelection) => void;
   annotationActivation?: AnnotationActivation;
   onAnnotationContextMenu?: (request: AnnotationContextMenuRequest) => void;
 }
@@ -42,6 +44,7 @@ export function HTMLRenderer({
   onTooltipDelete,
   onTooltipRemoveOccurrence,
   onEntityClick,
+  onSemanticSelect,
   annotationActivation = 'click',
   onAnnotationContextMenu
 }: HTMLRendererProps) {
@@ -68,6 +71,11 @@ export function HTMLRenderer({
           <MathJaxNode
             key={domNode.attribs?.['data-id'] || Math.random().toString(36)}
             mathml={domNode}
+            equationId={domNode.attribs?.['data-id']}
+            onEquationSelect={onSemanticSelect ? (equationId) => onSemanticSelect({
+              kind: 'equation',
+              equationId,
+            }) : undefined}
           />
         );
       }
@@ -75,20 +83,48 @@ export function HTMLRenderer({
       // Handle .kg-entity spans - make them clickable for detail view
       if (domNode.name === 'span' && domNode.attribs?.['class']?.includes('kg-entity')) {
         const entityId = domNode.attribs['data-entity-id'];
+        const subjectId = domNode.attribs['data-subject-id'] || entityId;
+        const occurrenceId = domNode.attribs['data-occurrence-id'];
         // Use a stable key combining entity ID and a counter
         // This ensures the same key across re-renders while avoiding duplicates
         const uniqueKey = `kg-entity-${entityId}-${entitySpanCounter++}`;
+        const activate = (target: HTMLElement) => {
+          if (occurrenceId && subjectId && onSemanticSelect) {
+            const parent = target.closest('[data-id]');
+            const domNodeId = parent?.getAttribute('data-id') || undefined;
+            onSemanticSelect({
+              kind: 'occurrence',
+              occurrenceId,
+              subjectId,
+              label: target.textContent?.trim() || subjectId,
+              subjectKind: domNode.attribs['data-entity-type'] || undefined,
+              domNodeId,
+              equationId: domNode.attribs['data-equation-id'] || undefined,
+              scopeId: domNode.attribs['data-scope-id'] || domNodeId || 'paper',
+            });
+          } else if (entityId && onEntityClick) {
+            onEntityClick(entityId);
+          }
+        };
         return (
           <span
             key={uniqueKey}
             className={domNode.attribs['class']}
             data-entity-id={entityId}
             data-entity-type={domNode.attribs['data-entity-type']}
+            data-occurrence-id={occurrenceId}
+            data-subject-id={subjectId}
+            role="button"
+            tabIndex={0}
             onClick={(e) => {
               e.stopPropagation();
-              if (entityId && onEntityClick) {
-                onEntityClick(entityId);
-              }
+              activate(e.currentTarget);
+            }}
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter' && e.key !== ' ') return;
+              e.preventDefault();
+              e.stopPropagation();
+              activate(e.currentTarget);
             }}
             onContextMenu={(e) => {
               if (!onTooltipRemoveOccurrence && !onAnnotationContextMenu) return;
@@ -396,15 +432,9 @@ export function HTMLRenderer({
 
         /* Injected tooltip (KG entity) styles */
         .html-renderer .kg-entity {
-          border-bottom: 2px solid #818cf8; /* indigo-400 */
-          background-color: #eef2ff; /* indigo-50 */
+          border-bottom: 1px solid #a5b4fc;
+          background-color: rgba(238, 242, 255, 0.45);
           cursor: pointer;
-          transition: all 0.2s ease;
-        }
-
-        .html-renderer .kg-entity:hover {
-          background-color: #e0e7ff; /* indigo-100 */
-          border-bottom-color: #4f46e5; /* indigo-600 */
         }
       `}</style>
 

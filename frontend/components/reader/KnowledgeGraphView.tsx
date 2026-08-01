@@ -78,6 +78,7 @@ const emptyControllerSnapshot: KnowledgeGraphControllerSnapshot = {
   totalNodeCount: 0,
   visibleEdgeCount: 0,
   totalEdgeCount: 0,
+  omittedEdgeCount: 0,
   selectedNode: null,
   focusMode: false,
   focusedNodeId: null,
@@ -103,17 +104,20 @@ export interface KnowledgeGraphNodeSelection {
   signals?: import('../../lib/knowledge-graph-api').KnowledgeGraphSignals;
   evidence?: import('../../lib/knowledge-graph-api').KnowledgeGraphEvidence[];
   rank?: number;
+  omittedRelationCount?: number;
   incomingConnections: ConnectionInfo[];
   outgoingConnections: ConnectionInfo[];
 }
 
 export interface KnowledgeGraphEdgeSelection {
   kind: 'edge';
+  relationId?: string;
   sourceId: string;
   targetId: string;
   sourceLabel: string;
   targetLabel: string;
   relationshipType: string;
+  qualifiers?: string[];
   evidence?: string;
   evidenceItems?: import('../../lib/knowledge-graph-api').KnowledgeGraphEvidence[];
 }

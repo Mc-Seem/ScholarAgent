@@ -2,7 +2,7 @@
 
 import { memo } from 'react';
 import { Handle, Position, NodeProps } from 'reactflow';
-import { Variable, BookOpen, Lightbulb, FunctionSquare, Network, Wrench, BadgeCheck } from 'lucide-react';
+import { Variable, BookOpen, Network, Wrench, BadgeCheck } from 'lucide-react';
 import { LatexText } from './LatexText';
 
 interface GraphNodeData {
@@ -18,11 +18,12 @@ interface GraphNodeData {
   isFocused?: boolean;
   rank?: number;
   aliases?: string[];
+  omittedRelationCount?: number;
 }
 
 // Colors and icons for different node types
 const nodeConfig = {
-  concept: {
+  topic: {
     bgColor: 'bg-emerald-50',
     borderColor: 'border-emerald-300',
     hoverBorderColor: 'hover:border-emerald-400',
@@ -38,7 +39,7 @@ const nodeConfig = {
     icon: BadgeCheck,
     iconColor: 'text-violet-500',
   },
-  method: {
+  procedure: {
     bgColor: 'bg-indigo-50',
     borderColor: 'border-indigo-300',
     hoverBorderColor: 'hover:border-indigo-400',
@@ -46,37 +47,21 @@ const nodeConfig = {
     icon: Wrench,
     iconColor: 'text-indigo-500',
   },
-  formula: {
+  artifact: {
     bgColor: 'bg-amber-50',
     borderColor: 'border-amber-300',
     hoverBorderColor: 'hover:border-amber-400',
     textColor: 'text-amber-700',
-    icon: FunctionSquare,
+    icon: BookOpen,
     iconColor: 'text-amber-500',
   },
-  symbol: {
+  quantity: {
     bgColor: 'bg-blue-50',
     borderColor: 'border-blue-300',
     hoverBorderColor: 'hover:border-blue-400',
     textColor: 'text-blue-700',
     icon: Variable,
     iconColor: 'text-blue-500',
-  },
-  definition: {
-    bgColor: 'bg-emerald-50',
-    borderColor: 'border-emerald-300',
-    hoverBorderColor: 'hover:border-emerald-400',
-    textColor: 'text-emerald-700',
-    icon: BookOpen,
-    iconColor: 'text-emerald-500',
-  },
-  theorem: {
-    bgColor: 'bg-violet-50',
-    borderColor: 'border-violet-300',
-    hoverBorderColor: 'hover:border-violet-400',
-    textColor: 'text-violet-700',
-    icon: Lightbulb,
-    iconColor: 'text-violet-500',
   },
 };
 
@@ -89,7 +74,7 @@ function ensureMathDelimiters(text: string): string {
 }
 
 function GraphNodeComponent({ data }: NodeProps<GraphNodeData>) {
-  const config = nodeConfig[data.nodeType as keyof typeof nodeConfig] || nodeConfig.symbol;
+  const config = nodeConfig[data.nodeType as keyof typeof nodeConfig] || nodeConfig.topic;
   const Icon = config.icon;
 
   // Get the description based on node type
@@ -101,7 +86,6 @@ function GraphNodeComponent({ data }: NodeProps<GraphNodeData>) {
   const secondaryLatex = data.nodeType === 'formula' && data.latex && data.latex !== data.label
     ? ensureMathDelimiters(data.latex)
     : null;
-  const hoverTitle = description ? `${data.label}: ${description}` : data.label;
 
   return (
     <div
@@ -112,7 +96,6 @@ function GraphNodeComponent({ data }: NodeProps<GraphNodeData>) {
         hover:shadow-md min-w-[120px] max-w-[180px]
         ${data.isFocused ? 'ring-2 ring-amber-400 ring-offset-2' : ''}
       `}
-      title={hoverTitle}
     >
       {/* Input handle */}
       <Handle
@@ -130,6 +113,11 @@ function GraphNodeComponent({ data }: NodeProps<GraphNodeData>) {
         {typeof data.rank === 'number' && (
           <span className="ml-auto text-[9px] text-slate-400" title="Projection rank">
             {Math.round(data.rank * 100)}
+          </span>
+        )}
+        {Boolean(data.omittedRelationCount) && (
+          <span className="ml-auto rounded bg-white/70 px-1 text-[9px] text-slate-500">
+            +{data.omittedRelationCount} links
           </span>
         )}
       </div>

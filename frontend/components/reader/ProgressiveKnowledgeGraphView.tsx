@@ -50,23 +50,23 @@ const OVERVIEW_LIMIT = 20
 type ControllerActions = Omit<KnowledgeGraphController, 'getSnapshot' | 'subscribe'>
 
 const nodeTypes = {
-  concept: GraphNode,
+  topic: GraphNode,
   claim: GraphNode,
-  method: GraphNode,
-  formula: GraphNode,
-  symbol: GraphNode,
-  definition: GraphNode,
-  theorem: GraphNode,
+  procedure: GraphNode,
+  artifact: GraphNode,
+  quantity: GraphNode,
 }
 
 const edgeColors: Record<string, string> = {
-  defines: '#10b981',
+  is_a: '#10b981',
+  part_of: '#14b8a6',
   uses: '#6366f1',
   depends_on: '#f59e0b',
+  applies_to: '#0ea5e9',
+  produces: '#22c55e',
   supports: '#8b5cf6',
-  derives_from: '#0ea5e9',
-  evaluated_by: '#ec4899',
-  has_formula: '#14b8a6',
+  challenges: '#ef4444',
+  compares_with: '#ec4899',
 }
 
 const emptySnapshot: KnowledgeGraphControllerSnapshot = {
@@ -78,6 +78,7 @@ const emptySnapshot: KnowledgeGraphControllerSnapshot = {
   totalNodeCount: 0,
   visibleEdgeCount: 0,
   totalEdgeCount: 0,
+  omittedEdgeCount: 0,
   selectedNode: null,
   focusMode: false,
   focusedNodeId: null,
@@ -355,13 +356,14 @@ export function ProgressiveKnowledgeGraphView({
       data: {
         label: node.label,
         nodeType: node.type,
-        definition: node.type === 'concept' ? description : undefined,
+        definition: node.type === 'topic' ? description : undefined,
         statement: node.type === 'claim' ? description : undefined,
         summary: formula.summary ?? description,
         latex: formula.latex,
         domNodeId: sourceDomId(node) ?? '',
         rank: node.rank,
         aliases: node.aliases,
+        omittedRelationCount: node.omitted_relation_count,
         onNavigate: () => {
           const id = sourceDomId(node)
           if (id) navigateRef.current?.(id)
@@ -417,7 +419,7 @@ export function ProgressiveKnowledgeGraphView({
       id: node.stable_id,
       label: node.label,
       nodeType: node.type,
-      definition: ['concept', 'definition', 'theorem'].includes(node.type) ? description : undefined,
+      definition: node.type === 'topic' ? description : undefined,
       statement: node.type === 'claim' ? description : undefined,
       summary: formula.summary ?? description,
       latex: formula.latex,
@@ -427,6 +429,7 @@ export function ProgressiveKnowledgeGraphView({
       signals: node.signals,
       evidence: node.evidence,
       rank: node.rank,
+      omittedRelationCount: node.omitted_relation_count,
       incomingConnections: connections.incoming,
       outgoingConnections: connections.outgoing,
     }
@@ -474,11 +477,13 @@ export function ProgressiveKnowledgeGraphView({
     setSelectedNodeId(null)
     const selection: KnowledgeGraphEdgeSelection = {
       kind: 'edge',
+      relationId: relation.stable_id,
       sourceId: source.stable_id,
       targetId: target.stable_id,
       sourceLabel: source.label,
       targetLabel: target.label,
       relationshipType: relation.type,
+      qualifiers: relation.qualifiers,
       evidence: relation.evidence[0]?.source.quote,
       evidenceItems: relation.evidence,
     }
@@ -584,6 +589,7 @@ export function ProgressiveKnowledgeGraphView({
       totalNodeCount,
       visibleEdgeCount: visibleCanonicalRelations.length,
       totalEdgeCount,
+      omittedEdgeCount: Math.max(0, totalEdgeCount - visibleCanonicalRelations.length),
       selectedNode: selectedNode ? {
         id: selectedNode.stable_id,
         label: selectedNode.label,
@@ -738,7 +744,7 @@ export function ProgressiveKnowledgeGraphView({
         <NodeInfoPanel
           label={selectedNode.label}
           nodeType={selectedNode.type}
-          definition={selectedNode.type === 'concept' ? facetText(selectedNode) : undefined}
+          definition={selectedNode.type === 'topic' ? facetText(selectedNode) : undefined}
           statement={selectedNode.type === 'claim' ? facetText(selectedNode) : undefined}
           summary={formulaData(selectedNode).summary ?? facetText(selectedNode)}
           latex={formulaData(selectedNode).latex}
@@ -757,6 +763,7 @@ export function ProgressiveKnowledgeGraphView({
           }}
           onFocus={() => actionsRef.current.focusSelection()}
           onExpand={() => void expandNode(selectedNode.stable_id)}
+          omittedRelationCount={selectedNode.omitted_relation_count}
           isFocused={focusedNodeId === selectedNode.stable_id}
         />
       )}
@@ -768,6 +775,7 @@ export function ProgressiveKnowledgeGraphView({
           sourceLabel={source.label}
           targetLabel={target.label}
           relationshipType={selectedRelation.type}
+          qualifiers={selectedRelation.qualifiers}
           evidence={selectedRelation.evidence[0]?.source.quote}
           evidenceItems={selectedRelation.evidence}
           onNavigateEvidence={evidence => {

@@ -82,6 +82,37 @@ describe('HTMLRenderer', () => {
     expect(onEntityClick).toHaveBeenCalledWith('entity-attention')
   })
 
+  it('activates occurrence-aware semantic links by click and keyboard but not hover', () => {
+    const onSemanticSelect = vi.fn()
+    render(
+      <HTMLRenderer
+        {...mockProps}
+        html={'<p data-id="p-1"><span class="kg-entity" data-occurrence-id="occ-1" data-subject-id="procedure:supg" data-entity-id="procedure:supg">SUPG</span></p>'}
+        onSemanticSelect={onSemanticSelect}
+      />,
+    )
+    const link = screen.getByRole('button', { name: 'SUPG' })
+
+    fireEvent.mouseOver(link)
+    expect(onSemanticSelect).not.toHaveBeenCalled()
+    fireEvent.click(link)
+    fireEvent.keyDown(link, { key: 'Enter' })
+    fireEvent.keyDown(link, { key: ' ' })
+
+    expect(link).toHaveAttribute('tabindex', '0')
+    expect(onSemanticSelect).toHaveBeenCalledTimes(3)
+    expect(onSemanticSelect).toHaveBeenLastCalledWith({
+      kind: 'occurrence',
+      occurrenceId: 'occ-1',
+      subjectId: 'procedure:supg',
+      label: 'SUPG',
+      subjectKind: undefined,
+      domNodeId: 'p-1',
+      equationId: undefined,
+      scopeId: 'p-1',
+    })
+  })
+
   it('forwards context-menu annotation activation to interactive nodes', () => {
     render(
       <HTMLRenderer

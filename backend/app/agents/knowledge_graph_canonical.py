@@ -9,25 +9,34 @@ from collections import Counter, defaultdict
 from statistics import mean
 from typing import Any, Iterable
 
+from bs4 import BeautifulSoup
+
 from backend.app.agents.knowledge_graph_models import (
     SCHEMA_VERSION,
     BuildMetadata,
     CanonicalEntity,
     EntityFacet,
     EntitySignals,
+    EquationRecord,
     KnowledgeGraphDocument,
     KnowledgeGraphMetrics,
+    LEGACY_RELATION_TYPES,
+    NotationRecord,
     Relation,
+    SemanticExplanation,
+    SemanticOccurrence,
     SourceObservation,
     SourceReference,
 )
 
 
-PIPELINE_VERSION = "2.0"
-PROMPT_VERSIONS = {"section_observations": "1.0"}
+PIPELINE_VERSION = "3.0"
+PROMPT_VERSIONS = {"section_observations": "2.0", "equation_analysis": "1.0"}
 RELATION_TYPES = {
-    "defines", "uses", "depends_on", "supports", "derives_from", "evaluated_by", "has_formula"
+    "is_a", "part_of", "uses", "depends_on", "applies_to", "produces", "supports",
+    "challenges", "compares_with",
 }
+SEMANTIC_KINDS = {"topic", "claim", "procedure", "artifact", "quantity"}
 
 
 def _normalize_text(value: str | None) -> str:
@@ -96,11 +105,10 @@ def _extract_scoped_symbols(latex: str) -> list[dict[str, Any]]:
     seen = set()
     for symbol in [*greek, *latin]:
         key = _normalize_math(symbol)
-        if key and key not in seen:
+        if key and key not in {"i", "j", "k"} and key not in seen:
             symbols.append({
                 "symbol": symbol,
-                "role": "formula-local",
-                "explicitly_defined": False,
+                "meaning": "Meaning not explicitly defined near this equation",
             })
             seen.add(key)
     return symbols
@@ -128,14 +136,17 @@ def anchor_equation_observations(
             quote=latex,
         )
         payload = {
+            "equation_id": equation_id,
             "latex": latex,
             "summary": f"Displayed equation {equation_id}",
+            "paper_role": "unspecified",
+            "scope_id": str(section.get("id")) if section else equation_id,
             "is_display": True,
             "symbols": _extract_scoped_symbols(latex),
         }
         observations.append(SourceObservation(
-            id=_observation_id("formula", equation_id or latex, source, payload),
-            kind="formula",
+            id=_observation_id("equation", equation_id or latex, source, payload),
+            kind="equation",
             label=equation_id or latex,
             payload=payload,
             confidence=1.0,
@@ -172,38 +183,14 @@ def _group_observations(observations: list[SourceObservation]) -> list[list[Sour
 
 def _entity_facets(kind: str, group: list[SourceObservation]) -> list[EntityFacet]:
     facets: list[EntityFacet] = []
-    if kind == "formula":
-        representative = group[0]
-        facets.append(EntityFacet(
-            kind="formula",
-            payload={
-                "latex": representative.payload.get("latex", ""),
-                "summary": representative.payload.get("summary", ""),
-                "equation_id": representative.source.equation_id,
-            },
-            evidence_ids=[item.id for item in group],
-        ))
-        symbols = []
-        seen_symbols = set()
-        for observation in group:
-            for symbol in observation.payload.get("symbols", []):
-                key = (_normalize_math(str(symbol.get("symbol", ""))), _normalize_text(str(symbol.get("role", ""))))
-                if key not in seen_symbols:
-                    symbols.append(symbol)
-                    seen_symbols.add(key)
-        if symbols:
+    for observation in group:
+        summary = observation.payload.get("summary") or observation.payload.get("text")
+        if summary:
             facets.append(EntityFacet(
-                kind="symbols", payload={"items": symbols}, evidence_ids=[item.id for item in group]
+                kind=str(observation.payload.get("facet_kind") or kind),
+                payload={"text": summary, **dict(observation.payload.get("facet", {}))},
+                evidence_ids=[observation.id],
             ))
-    else:
-        for observation in group:
-            summary = observation.payload.get("summary") or observation.payload.get("text")
-            if summary:
-                facets.append(EntityFacet(
-                    kind="definition" if kind == "concept" else kind,
-                    payload={"text": summary},
-                    evidence_ids=[observation.id],
-                ))
     return facets
 
 
@@ -225,11 +212,9 @@ def _canonical_entities(
     observation_to_entity: dict[str, str] = {}
     for group in _group_observations(observations):
         representative = group[0]
-        math_signature = representative.payload.get("latex") if representative.kind == "formula" else None
         entity_id = stable_identifier(
             representative.kind,
             representative.label,
-            math_signature=math_signature,
             scope=paper_id,
         )
         alias_values = []
@@ -238,9 +223,15 @@ def _canonical_entities(
         aliases = sorted({value for value in alias_values if value != representative.label}, key=str.casefold)
         entity = CanonicalEntity(
             stable_id=entity_id,
-            type=representative.kind,
+            kind=representative.kind,
             label=representative.label,
             aliases=aliases,
+            roles=sorted({
+                str(role)
+                for item in group
+                for role in item.payload.get("roles", [])
+                if str(role).strip()
+            }),
             observation_ids=[item.id for item in group],
             facets=_entity_facets(representative.kind, group),
             signals=_entity_signals(group),
@@ -306,6 +297,11 @@ def _relations(
     for observation in observations:
         if observation.kind == "relation":
             relation_type = observation.payload.get("type")
+            qualifiers = list(observation.payload.get("qualifiers", []))
+            if relation_type in LEGACY_RELATION_TYPES:
+                relation_type, legacy_qualifier = LEGACY_RELATION_TYPES[relation_type]
+                if legacy_qualifier not in qualifiers:
+                    qualifiers.append(legacy_qualifier)
             source_id = aliases.get(_normalize_text(str(observation.payload.get("source", ""))))
             target_id = aliases.get(_normalize_text(str(observation.payload.get("target", ""))))
             if relation_type not in RELATION_TYPES or not source_id or not target_id or source_id == target_id:
@@ -316,6 +312,7 @@ def _relations(
                 type=relation_type,
                 source_id=source_id,
                 target_id=target_id,
+                qualifiers=sorted(set(qualifiers)),
                 evidence_ids=[observation.id],
                 confidence=observation.confidence,
             )
@@ -325,6 +322,11 @@ def _relations(
             continue
         for candidate in observation.payload.get("relations", []):
             relation_type = candidate.get("type")
+            qualifiers = list(candidate.get("qualifiers", []))
+            if relation_type in LEGACY_RELATION_TYPES:
+                relation_type, legacy_qualifier = LEGACY_RELATION_TYPES[relation_type]
+                if legacy_qualifier not in qualifiers:
+                    qualifiers.append(legacy_qualifier)
             target_id = aliases.get(_normalize_text(str(candidate.get("target", ""))))
             if relation_type not in RELATION_TYPES or not target_id or target_id == source_id:
                 continue
@@ -336,28 +338,220 @@ def _relations(
                 type=relation_type,
                 source_id=source_id,
                 target_id=target_id,
+                qualifiers=sorted(set(qualifiers)),
                 evidence_ids=[observation.id],
                 confidence=float(candidate.get("confidence", observation.confidence)),
             )
-
-    concept_entities = [entity for entity in entities if entity.type == "concept"]
-    formula_entities = [entity for entity in entities if entity.type == "formula"]
-    for concept in concept_entities:
-        concept_aliases = {_normalize_text(value) for value in [concept.label, *concept.aliases]}
-        for formula in formula_entities:
-            if not concept_aliases & {_normalize_text(value) for value in [formula.label, *formula.aliases]}:
-                continue
-            evidence_ids = sorted(set(concept.observation_ids + formula.observation_ids))
-            relation_id = stable_identifier("relation", f"has_formula|{concept.stable_id}|{formula.stable_id}")
-            relations[relation_id] = Relation(
-                stable_id=relation_id,
-                type="has_formula",
-                source_id=concept.stable_id,
-                target_id=formula.stable_id,
-                evidence_ids=evidence_ids,
-                confidence=min(concept.signals.confidence, formula.signals.confidence),
-            )
     return sorted(relations.values(), key=lambda relation: relation.stable_id)
+
+
+def _equations_and_notation(
+    observations: list[SourceObservation],
+    entities: list[CanonicalEntity],
+) -> tuple[list[EquationRecord], list[NotationRecord]]:
+    aliases = {
+        _normalize_text(value): entity.stable_id
+        for entity in entities
+        for value in [entity.label, *entity.aliases]
+    }
+    notation_by_signature: dict[tuple[str, str, str], NotationRecord] = {}
+    equation_rows: list[tuple[SourceObservation, str, list[str], list[str]]] = []
+    for observation in observations:
+        if observation.kind != "equation":
+            continue
+        equation_id = str(
+            observation.payload.get("equation_id") or observation.source.equation_id or observation.label
+        )
+        default_scope = str(
+            observation.payload.get("scope_id") or observation.source.section_id or equation_id
+        )
+        equation_notation_ids = []
+        for symbol in observation.payload.get("symbols", []):
+            glyph = str(symbol.get("symbol", "")).strip()
+            if not glyph:
+                continue
+            meaning = str(
+                symbol.get("meaning") or symbol.get("role") or "Meaning not explicitly defined near this equation"
+            ).strip()
+            scope_id = str(symbol.get("scope_id") or default_scope)
+            signature = (_normalize_math(glyph), _normalize_text(meaning), _normalize_text(scope_id))
+            notation_id = stable_identifier(
+                "notation", glyph, math_signature=meaning, scope=f"{observation.source.paper_id}|{scope_id}"
+            )
+            object_ids = sorted({
+                aliases[_normalize_text(str(label))]
+                for label in symbol.get("object_labels", [])
+                if _normalize_text(str(label)) in aliases
+            })
+            existing = notation_by_signature.get(signature)
+            evidence_ids = sorted(set([observation.id, *(existing.evidence_ids if existing else [])]))
+            notation_by_signature[signature] = NotationRecord(
+                stable_id=notation_id,
+                symbol=glyph,
+                meaning=meaning,
+                scope_id=scope_id,
+                units=symbol.get("units"),
+                constraints=sorted({str(value) for value in symbol.get("constraints", [])}),
+                object_ids=sorted(set(object_ids + (existing.object_ids if existing else []))),
+                evidence_ids=evidence_ids,
+            )
+            equation_notation_ids.append(notation_id)
+        object_ids = sorted({
+            aliases[_normalize_text(str(label))]
+            for label in observation.payload.get("object_labels", [])
+            if _normalize_text(str(label)) in aliases
+        })
+        equation_rows.append((observation, equation_id, sorted(set(equation_notation_ids)), object_ids))
+
+    equations = [
+        EquationRecord(
+            stable_id=stable_identifier("equation", equation_id, math_signature=str(observation.payload.get("latex", ""))),
+            equation_id=equation_id,
+            latex=str(observation.payload.get("latex", "")).strip(),
+            summary=str(observation.payload.get("summary") or f"Displayed equation {equation_id}"),
+            paper_role=str(observation.payload.get("paper_role") or "unspecified"),
+            notation_ids=notation_ids,
+            object_ids=object_ids,
+            evidence_ids=[observation.id],
+        )
+        for observation, equation_id, notation_ids, object_ids in equation_rows
+        if str(observation.payload.get("latex", "")).strip()
+    ]
+    return sorted(equations, key=lambda item: item.stable_id), sorted(
+        notation_by_signature.values(), key=lambda item: item.stable_id
+    )
+
+
+def _base_explanations(
+    entities: list[CanonicalEntity], notation: list[NotationRecord]
+) -> list[SemanticExplanation]:
+    explanations = []
+    for entity in entities:
+        content = next(
+            (
+                str(facet.payload.get("text", "")).strip()
+                for facet in entity.facets
+                if str(facet.payload.get("text", "")).strip()
+            ),
+            entity.label,
+        )
+        explanations.append(SemanticExplanation(
+            stable_id=stable_identifier("explanation", entity.stable_id, scope="intermediate"),
+            subject_id=entity.stable_id,
+            base_content=content,
+            expertise="intermediate",
+            evidence_ids=entity.observation_ids,
+        ))
+    for item in notation:
+        explanations.append(SemanticExplanation(
+            stable_id=stable_identifier("explanation", item.stable_id, scope="intermediate"),
+            subject_id=item.stable_id,
+            base_content=item.meaning,
+            expertise="intermediate",
+            evidence_ids=item.evidence_ids,
+        ))
+    return sorted(explanations, key=lambda item: item.stable_id)
+
+
+def _candidate_occurrences(
+    entities: list[CanonicalEntity],
+    sections: list[dict[str, Any]],
+) -> list[SemanticOccurrence]:
+    candidates: list[tuple[str, int, int, str, str, str]] = []
+    for section in sections:
+        section_id = str(section.get("id") or "paper")
+        soup = BeautifulSoup(str(section.get("content_html") or ""), "html.parser")
+        for element in soup.find_all(attrs={"data-id": True}):
+            if element.find(attrs={"data-id": True}) is not None:
+                continue
+            dom_node_id = str(element.get("data-id"))
+            text = element.get_text("", strip=False)
+            for entity in entities:
+                for label in sorted({entity.label, *entity.aliases}, key=lambda value: (-len(value), value.casefold())):
+                    if len(label.strip()) < 2:
+                        continue
+                    pattern = re.compile(rf"(?<!\w){re.escape(label)}(?!\w)", re.IGNORECASE)
+                    for match in pattern.finditer(text):
+                        candidates.append((dom_node_id, match.start(), match.end(), match.group(), section_id, entity.stable_id))
+
+    selected = []
+    occupied: dict[str, list[tuple[int, int]]] = defaultdict(list)
+    for dom_node_id, start, end, text, scope_id, subject_id in sorted(
+        candidates, key=lambda item: (item[0], item[1], -(item[2] - item[1]), item[5])
+    ):
+        if any(start < used_end and end > used_start for used_start, used_end in occupied[dom_node_id]):
+            continue
+        occupied[dom_node_id].append((start, end))
+        selected.append(SemanticOccurrence(
+            stable_id=stable_identifier("occurrence", subject_id, scope=f"{dom_node_id}|{start}|{end}"),
+            subject_id=subject_id,
+            dom_node_id=dom_node_id,
+            start=start,
+            end=end,
+            text=text,
+            scope_id=scope_id,
+        ))
+    return sorted(selected, key=lambda item: (item.dom_node_id or "", item.start, item.stable_id))
+
+
+def _fallback_occurrences(
+    entities: list[CanonicalEntity], observations: list[SourceObservation]
+) -> list[SemanticOccurrence]:
+    by_id = {observation.id: observation for observation in observations}
+    occurrences = []
+    for entity in entities:
+        for evidence_id in entity.observation_ids:
+            observation = by_id[evidence_id]
+            source = observation.source
+            if not source.dom_node_id:
+                continue
+            labels = sorted({entity.label, *entity.aliases}, key=lambda value: (-len(value), value.casefold()))
+            match = None
+            for label in labels:
+                if len(label.strip()) < 2:
+                    continue
+                match = re.search(
+                    rf"(?<!\w){re.escape(label)}(?!\w)", source.quote, re.IGNORECASE
+                )
+                if match:
+                    break
+            if not match:
+                continue
+            base = source.char_start or 0
+            start, end = base + match.start(), base + match.end()
+            occurrences.append(SemanticOccurrence(
+                stable_id=stable_identifier("occurrence", entity.stable_id, scope=f"{source.dom_node_id}|{start}|{end}"),
+                subject_id=entity.stable_id,
+                dom_node_id=source.dom_node_id,
+                start=start,
+                end=end,
+                text=match.group(),
+                scope_id=str(source.section_id or source.dom_node_id),
+            ))
+    return sorted({item.stable_id: item for item in occurrences}.values(), key=lambda item: item.stable_id)
+
+
+def _notation_occurrences(
+    equations: list[EquationRecord], notation: list[NotationRecord]
+) -> list[SemanticOccurrence]:
+    notation_by_id = {item.stable_id: item for item in notation}
+    occurrences = []
+    for equation in equations:
+        for notation_id in equation.notation_ids:
+            item = notation_by_id[notation_id]
+            for match in re.finditer(re.escape(item.symbol), equation.latex):
+                occurrences.append(SemanticOccurrence(
+                    stable_id=stable_identifier(
+                        "occurrence", notation_id, scope=f"{equation.equation_id}|{match.start()}|{match.end()}"
+                    ),
+                    subject_id=notation_id,
+                    equation_id=equation.equation_id,
+                    start=match.start(),
+                    end=match.end(),
+                    text=match.group(),
+                    scope_id=item.scope_id,
+                ))
+    return occurrences
 
 
 def _cross_type_label_collisions(entities: list[CanonicalEntity]) -> list[dict[str, Any]]:
@@ -411,6 +605,7 @@ def canonicalize_observations(
     observations: Iterable[SourceObservation | dict[str, Any]],
     *,
     models: dict[str, str] | None = None,
+    sections: list[dict[str, Any]] | None = None,
 ) -> KnowledgeGraphDocument:
     """Canonicalize immutable observations into a validated versioned document."""
     parsed = [
@@ -418,20 +613,22 @@ def canonicalize_observations(
         for item in observations
     ]
     parsed.sort(key=lambda item: item.id)
-    regular = [item for item in parsed if item.kind not in {"symbol", "relation"}]
+    regular = [item for item in parsed if item.kind in SEMANTIC_KINDS]
     entities, observation_to_entity = _canonical_entities(paper_id, regular)
-    formula_observations = [item for item in regular if item.kind == "formula"]
-    promoted_symbols = _promoted_symbols(paper_id, formula_observations)
-    entities.extend(promoted_symbols)
     entities.sort(key=lambda entity: entity.stable_id)
     relations = _relations(parsed, entities, observation_to_entity)
+    equations, notation = _equations_and_notation(parsed, entities)
+    explanations = _base_explanations(entities, notation)
+    occurrences = _candidate_occurrences(entities, sections or []) if sections else _fallback_occurrences(entities, parsed)
+    occurrences.extend(_notation_occurrences(equations, notation))
+    occurrences = sorted({item.stable_id: item for item in occurrences}.values(), key=lambda item: item.stable_id)
 
-    total_symbols = sum(len(item.payload.get("symbols", [])) for item in formula_observations)
     diagnostics = {
         "observation_kinds": dict(sorted(Counter(item.kind for item in parsed).items())),
-        "promoted_symbol_count": len(promoted_symbols),
-        "scoped_symbol_count": total_symbols,
-        "demoted_symbol_count": max(0, total_symbols - len(promoted_symbols)),
+        "equation_count": len(equations),
+        "scoped_notation_count": len(notation),
+        "explanation_count": len(explanations),
+        "occurrence_count": len(occurrences),
         "cross_type_label_collisions": _cross_type_label_collisions(entities),
     }
     return KnowledgeGraphDocument(
@@ -442,11 +639,15 @@ def canonicalize_observations(
             models=models or {},
         ),
         observations=parsed,
-        entities=entities,
+        objects=entities,
         relations=relations,
+        equations=equations,
+        notation=notation,
+        explanations=explanations,
+        occurrences=occurrences,
         metrics=KnowledgeGraphMetrics(
             observation_count=len(parsed),
-            entity_count=len(entities),
+            object_count=len(entities),
             relation_count=len(relations),
             diagnostics=diagnostics,
         ),

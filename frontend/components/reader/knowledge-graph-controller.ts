@@ -37,6 +37,7 @@ export interface KnowledgeGraphControllerSnapshot {
   totalNodeCount: number;
   visibleEdgeCount: number;
   totalEdgeCount: number;
+  omittedEdgeCount?: number;
   selectedNode: KnowledgeGraphControllerNodeSelection | null;
   focusMode: boolean;
   focusedNodeId: string | null;

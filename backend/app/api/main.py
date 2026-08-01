@@ -21,6 +21,7 @@ from backend.app.database.models import Paper, Tooltip
 from backend.app.database.models import TooltipSuggestion as TooltipSuggestionModel
 from backend.app.compiler.latexml_compiler import compile_latex_to_html, CompilationResult
 from backend.app.api.settings_routes import router as settings_router
+from backend.app.api.semantic_routes import router as semantic_router
 from backend.app.agents.knowledge_graph_models import KnowledgeGraphDocument
 from backend.app.agents.knowledge_graph_projection import (
     KnowledgeGraphProjection,
@@ -43,6 +44,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(settings_router)
+app.include_router(semantic_router)
 
 @app.get("/health")
 async def health_check():
@@ -149,11 +151,15 @@ class TooltipSuggestionRequest(BaseModel):
 
 class OccurrenceData(BaseModel):
     """A single occurrence of an entity in the document"""
-    section_id: str
-    dom_node_id: str
-    char_offset: int
-    length: int
-    snippet: str
+    stable_id: str
+    subject_id: str
+    dom_node_id: Optional[str] = None
+    equation_id: Optional[str] = None
+    start: int
+    end: int
+    text: str
+    scope_id: str
+    local_override_id: Optional[str] = None
 
 
 class TooltipSuggestion(BaseModel):
@@ -911,11 +917,9 @@ async def apply_tooltips_endpoint(
                 errors=["All selected entities already have tooltips applied"]
             )
 
-        # NEW APPROACH: Use AI model to inject spans into each subsection
-        # This is much more robust than manual offset tracking
-        print(f"[Tooltip Apply] Using AI model to inject spans into subsections...")
+        print("[Tooltip Apply] Injecting validated semantic occurrences...")
 
-        from backend.app.compiler.ai_html_injection import inject_spans_with_ai
+        from backend.app.compiler.ai_html_injection import inject_validated_occurrences
 
         def report_progress(current: int, total: int):
             tooltip_apply_progress[paper_id] = {
@@ -924,16 +928,22 @@ async def apply_tooltips_endpoint(
                 "total": total,
             }
 
-        modified_html, injection_errors = await asyncio.to_thread(
-            inject_spans_with_ai,
-            html_content=paper.html_content,
-            sections_data=paper.sections_data or [],
-            suggestions=suggestions_dict,
-            progress_callback=report_progress,
+        occurrences = [
+            occurrence
+            for suggestion in suggestions_dict
+            for occurrence in suggestion.get("occurrences", [])
+            if occurrence.get("dom_node_id")
+        ]
+        modified_html = await asyncio.to_thread(
+            inject_validated_occurrences,
+            paper.html_content,
+            occurrences,
+            report_progress,
         )
+        injection_errors = []
 
         if not modified_html:
-            raise ValueError("AI injection failed to produce modified HTML")
+            raise ValueError("Semantic occurrence injection failed to produce modified HTML")
 
         # Validate HTML integrity
         is_valid, validation_error = validate_html_integrity(original_html, modified_html)
@@ -1237,12 +1247,20 @@ def _run_kg_build_task(paper_id: str):
     def progress_callback(stage: str, current: int, total: int):
         """Update progress for SSE clients."""
         if paper_id in kg_build_progress:
+            labels = {
+                "semantic_extraction": "Semantic extraction",
+                "equation_analysis": "Equation analysis",
+                "canonicalization": "Canonicalization",
+                "occurrence_anchoring": "Occurrence anchoring",
+            }
             kg_build_progress[paper_id] = {
                 "stage": "extracting",
                 "progress": {
-                    **kg_build_progress[paper_id].get("progress", {}),
-                    stage: {"current": current, "total": total}
-                }
+                    "stage": stage,
+                    "label": labels.get(stage, stage.replace("_", " ").title()),
+                    "current": current,
+                    "total": total,
+                },
             }
 
     def cancel_check() -> bool:

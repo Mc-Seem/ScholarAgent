@@ -12,18 +12,19 @@ function source() {
 
 function node() {
   return {
-    stable_id: 'concept:1', type: 'concept', label: 'ELBO', aliases: ['Evidence lower bound'],
+    stable_id: 'quantity:1', type: 'quantity', label: 'ELBO', aliases: ['Evidence lower bound'],
     facets: [],
     signals: { contribution: 1, prominence: 0.8, recurrence: 0.5, confidence: 0.9, familiarity: 0.2 },
     rank: 0.9,
-    evidence: [{ observation_id: 'obs-1', kind: 'concept', label: 'ELBO', source: source() }],
+    evidence: [{ observation_id: 'obs-1', kind: 'quantity', label: 'ELBO', source: source() }],
+    omitted_relation_count: 3,
   }
 }
 
 function projection() {
   return {
-    status: 'ready', schema_version: '1.0', nodes: [node()], relations: [],
-    total_entity_count: 100, total_relation_count: 20, truncated: true,
+    status: 'ready', schema_version: '3.0', nodes: [node()], relations: [],
+    total_entity_count: 100, total_relation_count: 20, omitted_relation_count: 20, truncated: true,
   }
 }
 
@@ -49,16 +50,16 @@ describe('HttpKnowledgeGraphApi', () => {
   it('encodes repeated seeds and hard budgets for one-hop expansion', async () => {
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(projection())))
 
-    await api.subgraph('paper-1', { seedIds: ['concept:1', 'claim:2'], nodeBudget: 12, edgeBudget: 20 })
+    await api.subgraph('paper-1', { seedIds: ['quantity:1', 'claim:2'], nodeBudget: 12, edgeBudget: 20 })
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://api.test/api/papers/paper-1/knowledge-graph/subgraph?seed_ids=concept%3A1&seed_ids=claim%3A2&node_budget=12&edge_budget=20',
+      'http://api.test/api/papers/paper-1/knowledge-graph/subgraph?seed_ids=quantity%3A1&seed_ids=claim%3A2&node_budget=12&edge_budget=20',
     )
   })
 
   it('parses search results without turning them into projection nodes', async () => {
     const { rank, ...searchNode } = node()
-    const response = { status: 'ready', schema_version: '1.0', results: [{ ...searchNode, score: 1.1 }] }
+    const response = { status: 'ready', schema_version: '3.0', results: [{ ...searchNode, score: 1.1 }] }
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(response)))
 
     await expect(api.search('paper-1', 'ELBO', { limit: 5 })).resolves.toEqual(response)

@@ -1,5 +1,7 @@
+import * as React from 'react'
+import { act, cleanup, render, screen } from '@testing-library/react'
 import { Container, ContainerModule } from '@theia/core/shared/inversify'
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { PropertyDataService } from '@theia/property-view/lib/browser/property-data-service'
 import { PropertyViewWidgetProvider } from '@theia/property-view/lib/browser/property-view-widget-provider'
@@ -39,6 +41,8 @@ afterAll(() => {
   delete (document as Partial<Document>).queryCommandSupported
 })
 
+afterEach(() => cleanup())
+
 function nodeSelection(overrides: Partial<{
   definition: string
   statement: string
@@ -46,6 +50,8 @@ function nodeSelection(overrides: Partial<{
   context: string
   aliases: string[]
   rank: number
+  facets: Array<{ kind: string; payload: Record<string, unknown>; evidence_ids: string[] }>
+  omittedRelationCount: number
   evidence: Array<{
     observation_id: string
     kind: string
@@ -95,6 +101,15 @@ function edgeSelection(overrides: Partial<{ evidence: string }> = {}) {
     relationshipType: 'depends_on',
     ...overrides,
   })
+}
+
+function semanticSelection(payload: Parameters<typeof ScholarGraphSelection.create>[2]) {
+  const source: ScholarGraphSelectionSource = {
+    kind: 'scholar-agent:graph-selection',
+    paperId: 'paper-a',
+    owner: {},
+  }
+  return ScholarGraphSelection.create('paper-a', source, payload)
 }
 
 describe('ScholarGraphPropertyDataService', () => {
@@ -214,6 +229,54 @@ describe('buildScholarGraphPropertyRows (edge)', () => {
   })
 })
 
+describe('buildScholarGraphPropertyRows (shared semantic details)', () => {
+  it('shows relation qualifiers and object facets with omitted counts', () => {
+    const nodeRows = buildScholarGraphPropertyRows(nodeSelection({
+      rank: 0.9,
+      facets: [{ kind: 'algorithm', payload: {}, evidence_ids: ['obs-1'] }],
+      omittedRelationCount: 4,
+    }))
+    const edgeRows = buildScholarGraphPropertyRows(semanticSelection({
+      kind: 'edge',
+      sourceId: 'procedure:supg',
+      targetId: 'artifact:benchmark',
+      sourceLabel: 'SUPG',
+      targetLabel: 'Benchmark',
+      relationshipType: 'uses',
+      qualifiers: ['evaluation'],
+    }))
+
+    expect(nodeRows).toContainEqual(expect.objectContaining({ label: 'Facets', value: 'algorithm' }))
+    expect(nodeRows).toContainEqual(expect.objectContaining({ label: 'Omitted Relations', value: '4' }))
+    expect(edgeRows).toContainEqual(expect.objectContaining({ label: 'Qualifiers', value: 'evaluation' }))
+  })
+
+  it('renders occurrence, equation, and evidence source details', () => {
+    const occurrenceRows = buildScholarGraphPropertyRows(semanticSelection({
+      kind: 'occurrence', occurrenceId: 'occ-1', subjectId: 'procedure:supg',
+      label: 'SUPG', subjectKind: 'procedure', domNodeId: 'p-1', scopeId: 'sec-1',
+    }))
+    const equationRows = buildScholarGraphPropertyRows(semanticSelection({
+      kind: 'equation', equationId: 'eq-7',
+    }))
+    const evidenceRows = buildScholarGraphPropertyRows(semanticSelection({
+      kind: 'evidence',
+      evidence: {
+        observation_id: 'obs-1', kind: 'topic', label: 'SUPG',
+        source: {
+          paper_id: 'paper-a', section_id: 'sec-1', section_title: 'Method',
+          dom_node_id: 'p-1', equation_id: null, quote: 'SUPG stabilizes transport.',
+          char_start: 0, char_end: 4,
+        },
+      },
+    }))
+
+    expect(occurrenceRows).toContainEqual(expect.objectContaining({ label: 'Source', value: 'p-1' }))
+    expect(equationRows).toContainEqual(expect.objectContaining({ label: 'Equation ID', value: 'eq-7' }))
+    expect(evidenceRows).toContainEqual(expect.objectContaining({ label: 'Quote', value: 'SUPG stabilizes transport.' }))
+  })
+})
+
 describe('ScholarGraphPropertyViewWidgetProvider', () => {
   it('can handle only ScholarGraphSelection objects with graph priority', () => {
     const container = new Container()
@@ -250,6 +313,59 @@ describe('ScholarGraphPropertyViewWidgetProvider', () => {
       expect.any(ScholarGraphPropertyDataService),
       selection,
     )
+  })
+})
+
+describe('ScholarGraphPropertyViewWidget semantic content', () => {
+  it('loads and renders the shared Equation Lens for a Desktop equation selection', async () => {
+    const selection = semanticSelection({ kind: 'equation', equationId: 'eq-7' })
+    const details = {
+      schema_version: '3.0',
+      equation: {
+        stable_id: 'equation:eq-7',
+        equation_id: 'eq-7',
+        latex: '\\tau = h / (2 |u|)',
+        summary: 'Defines the SUPG stabilization parameter.',
+        paper_role: 'definition',
+        notation_ids: ['notation:tau'],
+        object_ids: ['procedure:supg'],
+        evidence_ids: ['obs-1'],
+      },
+      notation: [{
+        stable_id: 'notation:tau',
+        symbol: 'τ',
+        meaning: 'SUPG stabilization parameter',
+        scope_id: 'sec-1',
+        units: null,
+        constraints: ['positive'],
+        object_ids: ['procedure:supg'],
+        evidence_ids: ['obs-1'],
+      }],
+      objects: [],
+      evidence: [],
+    }
+    const store = {
+      loadEquationDetails: vi.fn().mockResolvedValue(details),
+      loadSemanticSubject: vi.fn(),
+    }
+    const WidgetWithStore = ScholarGraphPropertyViewWidget as unknown as new (
+      store: typeof store,
+    ) => InstanceType<typeof ScholarGraphPropertyViewWidget>
+    const widget = new WidgetWithStore(store)
+    const dataService = new ScholarGraphPropertyDataService()
+
+    await act(async () => {
+      widget.updatePropertyViewContent(dataService, selection)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    const content = (widget as unknown as { render(): React.ReactNode }).render()
+    render(React.createElement(React.Fragment, null, content))
+
+    expect(store.loadEquationDetails).toHaveBeenCalledWith('paper-a', 'eq-7')
+    expect(screen.getByTestId('equation-lens')).toBeInTheDocument()
+    expect(screen.getByText('Defines the SUPG stabilization parameter.')).toBeInTheDocument()
+    expect(screen.getByText('SUPG stabilization parameter')).toBeInTheDocument()
   })
 })
 

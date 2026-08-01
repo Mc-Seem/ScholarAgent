@@ -1,3 +1,5 @@
+import pytest
+
 from backend.app.compiler import ai_html_injection
 
 
@@ -47,3 +49,40 @@ def test_process_sections_reports_each_completed_work_item(monkeypatch):
     ai_html_injection.process_sections(state)
 
     assert progress == [(1, 2), (2, 2)]
+
+
+def test_validated_occurrences_are_injected_without_llm_and_are_idempotent(monkeypatch):
+    monkeypatch.setattr(
+        ai_html_injection,
+        "get_llm",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("LLM must not be called")),
+    )
+    html = "<article><p data-id='p-1'>SUPG stabilizes transport. SUPG uses tau.</p></article>"
+    occurrences = [
+        {"stable_id": "occ-1", "subject_id": "procedure:supg", "dom_node_id": "p-1", "start": 0, "end": 4, "text": "SUPG", "scope_id": "sec-1"},
+        {"stable_id": "occ-2", "subject_id": "procedure:supg", "dom_node_id": "p-1", "start": 27, "end": 31, "text": "SUPG", "scope_id": "sec-1"},
+    ]
+
+    injected = ai_html_injection.inject_validated_occurrences(html, occurrences)
+    reinjected = ai_html_injection.inject_validated_occurrences(injected, occurrences)
+
+    assert injected == reinjected
+    assert injected.count('class="kg-entity"') == 2
+    assert 'data-occurrence-id="occ-1"' in injected
+    assert 'data-subject-id="procedure:supg"' in injected
+
+
+def test_validated_occurrence_rejects_changed_source_text():
+    with pytest.raises(ValueError, match="text mismatch"):
+        ai_html_injection.inject_validated_occurrences(
+            "<p data-id='p-1'>Changed text</p>",
+            [{
+                "stable_id": "occ-1",
+                "subject_id": "topic:expected",
+                "dom_node_id": "p-1",
+                "start": 0,
+                "end": 8,
+                "text": "Expected",
+                "scope_id": "sec-1",
+            }],
+        )

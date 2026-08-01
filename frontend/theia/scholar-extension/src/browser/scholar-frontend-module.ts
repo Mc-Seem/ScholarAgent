@@ -248,6 +248,7 @@ export default new ContainerModule(bind => {
         context.container.get(ContextMenuRenderer),
         options,
         context.container.get(ScholarAnnotationService),
+        context.container.get(SelectionService),
       )
     },
   })).inSingletonScope()

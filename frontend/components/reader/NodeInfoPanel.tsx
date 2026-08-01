@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { X, Variable, BookOpen, Lightbulb, Focus, ChevronRight, ChevronDown, FunctionSquare, Network, Wrench, BadgeCheck, Plus } from 'lucide-react';
+import { X, Variable, BookOpen, Focus, ChevronRight, ChevronDown, Network, Wrench, BadgeCheck, Plus } from 'lucide-react';
 import { LatexText } from './LatexText';
 import { Button, IconButton, CollapsibleSection } from '../ui';
 import { colors, textStyles } from '../../lib/design-system';
@@ -35,17 +35,18 @@ interface NodeInfoPanelProps {
   evidence?: KnowledgeGraphEvidence[];
   rank?: number;
   onExpand?: () => void;
+  omittedRelationCount?: number;
 }
 
 // Node styling config matching GraphNode - using design system colors
 const nodeConfig = {
-  concept: {
+  topic: {
     bgColor: colors.entity.definition.bg,
     borderColor: colors.entity.definition.border,
     textColor: colors.entity.definition.text,
     icon: Network,
     iconColor: colors.entity.definition.icon,
-    label: 'Concept',
+    label: 'Topic',
   },
   claim: {
     bgColor: colors.entity.theorem.bg,
@@ -55,45 +56,29 @@ const nodeConfig = {
     iconColor: colors.entity.theorem.icon,
     label: 'Claim',
   },
-  method: {
+  procedure: {
     bgColor: colors.entity.symbol.bg,
     borderColor: colors.entity.symbol.border,
     textColor: colors.entity.symbol.text,
     icon: Wrench,
     iconColor: colors.entity.symbol.icon,
-    label: 'Method',
+    label: 'Procedure',
   },
-  formula: {
+  artifact: {
     bgColor: colors.entity.formula.bg,
     borderColor: colors.entity.formula.border,
     textColor: colors.entity.formula.text,
-    icon: FunctionSquare,
+    icon: BookOpen,
     iconColor: colors.entity.formula.icon,
-    label: 'Formula',
+    label: 'Artifact',
   },
-  symbol: {
+  quantity: {
     bgColor: colors.entity.symbol.bg,
     borderColor: colors.entity.symbol.border,
     textColor: colors.entity.symbol.text,
     icon: Variable,
     iconColor: colors.entity.symbol.icon,
-    label: 'Symbol',
-  },
-  definition: {
-    bgColor: colors.entity.definition.bg,
-    borderColor: colors.entity.definition.border,
-    textColor: colors.entity.definition.text,
-    icon: BookOpen,
-    iconColor: colors.entity.definition.icon,
-    label: 'Definition',
-  },
-  theorem: {
-    bgColor: colors.entity.theorem.bg,
-    borderColor: colors.entity.theorem.border,
-    textColor: colors.entity.theorem.text,
-    icon: Lightbulb,
-    iconColor: colors.entity.theorem.icon,
-    label: 'Theorem',
+    label: 'Quantity',
   },
 };
 
@@ -146,8 +131,9 @@ export function NodeInfoPanel({
   evidence = [],
   rank,
   onExpand,
+  omittedRelationCount = 0,
 }: NodeInfoPanelProps) {
-  const config = nodeConfig[nodeType as keyof typeof nodeConfig] || nodeConfig.symbol;
+  const config = nodeConfig[nodeType as keyof typeof nodeConfig] || nodeConfig.topic;
   const Icon = config.icon;
 
   const [incomingExpanded, setIncomingExpanded] = useState(false);
@@ -155,12 +141,7 @@ export function NodeInfoPanel({
 
   // Determine what content to show based on node type
   const mainContent = definition || statement || summary || context;
-  const formulaTitleIsMath = nodeType === 'formula' && (!latex || label === latex);
-  const headerText = nodeType === 'formula'
-    ? (formulaTitleIsMath ? ensureMathDelimiters(label) : label)
-    : (latex || label);
-  const showFormulaBody = nodeType === 'formula' && latex && latex !== label;
-  const formulaBody = showFormulaBody ? ensureMathDelimiters(latex) : null;
+  const headerText = latex || label;
 
   // Group connections by relationship type
   const incomingGrouped = groupByRelationship(incomingConnections);
@@ -186,16 +167,6 @@ export function NodeInfoPanel({
 
       {/* Content */}
       <div className="p-4 space-y-3">
-        {showFormulaBody && (
-          <div>
-            <div className={textStyles.sectionHeader + ' mb-2'}>
-              Formula
-            </div>
-            <div className="text-sm text-slate-700 leading-relaxed break-words">
-              <LatexText text={formulaBody || ''} />
-            </div>
-          </div>
-        )}
 
         {/* Main content (definition/statement/context) */}
         {mainContent && (
@@ -227,17 +198,6 @@ export function NodeInfoPanel({
           </div>
         )}
 
-        {facets.some(facet => facet.kind === 'symbols') && (
-          <CollapsibleSection title="Scoped symbols" defaultExpanded={false}>
-            <div className="space-y-1 text-xs text-slate-600">
-              {facets.filter(facet => facet.kind === 'symbols').flatMap(facet => (
-                Array.isArray(facet.payload.items) ? facet.payload.items : []
-              )).map((symbol, index) => (
-                <div key={index}>{String((symbol as Record<string, unknown>).symbol ?? '')}: {String((symbol as Record<string, unknown>).role ?? '')}</div>
-              ))}
-            </div>
-          </CollapsibleSection>
-        )}
 
         {evidence.length > 0 && (
           <CollapsibleSection title={`Evidence (${evidence.length})`} defaultExpanded={false}>
@@ -252,17 +212,6 @@ export function NodeInfoPanel({
           </CollapsibleSection>
         )}
 
-        {/* Additional context for symbols */}
-        {nodeType === 'symbol' && context && definition && (
-          <div>
-            <div className={textStyles.sectionHeader + ' mb-2'}>
-              Additional Context
-            </div>
-            <div className="text-sm text-slate-700 leading-relaxed">
-              <LatexText text={context} />
-            </div>
-          </div>
-        )}
 
         {/* Incoming connections */}
         {incomingConnections.length > 0 && (
@@ -365,9 +314,9 @@ export function NodeInfoPanel({
               <span>{isFocused ? 'Focused' : 'Focus'}</span>
             </button>
           )}
-          {onExpand && (
+          {onExpand && omittedRelationCount > 0 && (
             <button onClick={onExpand} className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-lg text-indigo-700 bg-indigo-50 hover:bg-indigo-100">
-              <Plus size={14} /> Expand
+              <Plus size={14} /> Show {omittedRelationCount} more
             </button>
           )}
         </div>

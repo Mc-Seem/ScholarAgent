@@ -32,8 +32,8 @@ class Paper(Base):
     paper_metadata = Column(JSON, nullable=True)    # Title, authors, abstract
     latex_source = Column(Text, nullable=True)      # Raw main.tex content for agent context
 
-    # Knowledge graph (populated by agent pipeline)
-    knowledge_graph = Column(JSON, nullable=True)   # {nodes: [...], edges: [...], metadata: {...}}
+    # Versioned semantic document (objects, relations, equations, notation, occurrences)
+    knowledge_graph = Column(JSON, nullable=True)
 
     # Cached tooltip suggestions (populated by suggest endpoint, used by apply endpoint)
     # Stored as JSON: {expertise: str, suggestions: [...], generated_at: timestamp}

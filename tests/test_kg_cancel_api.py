@@ -87,19 +87,23 @@ def _seed_compiled_paper(session_factory, paper_id: str = "paper-kg-1") -> str:
 
 def _empty_canonical_graph():
     return {
-        "schema_version": "1.0",
+        "schema_version": "3.0",
         "build": {
-            "pipeline_version": "2.0",
-            "prompt_versions": {"section_observations": "1.0"},
+            "pipeline_version": "3.0",
+            "prompt_versions": {"section_observations": "2.0"},
             "models": {"section_observations": "test"},
             "created_at": "2026-07-25T00:00:00Z",
         },
         "observations": [],
-        "entities": [],
+        "objects": [],
         "relations": [],
+        "equations": [],
+        "notation": [],
+        "explanations": [],
+        "occurrences": [],
         "metrics": {
             "observation_count": 0,
-            "entity_count": 0,
+            "object_count": 0,
             "relation_count": 0,
             "diagnostics": {},
         },
@@ -134,7 +138,12 @@ def _canonical_graph(entity_count: int = 40):
             id=f"obs-relation-{index}",
             kind="relation",
             label=f"Concept 0 depends on Concept {index}",
-            payload={"type": "depends_on", "source": "Concept 0", "target": f"Concept {index}"},
+            payload={
+                "type": "depends_on",
+                "source": "Concept 0",
+                "target": f"Concept {index}",
+                "qualifiers": ["prerequisite"],
+            },
             confidence=0.8,
             source=SourceReference(
                 paper_id="paper-kg-1",
@@ -144,6 +153,61 @@ def _canonical_graph(entity_count: int = 40):
             ),
         ))
     return canonicalize_observations("paper-kg-1", observations).model_dump(mode="json")
+
+
+def _semantic_graph():
+    from backend.app.agents.knowledge_graph_canonical import canonicalize_observations
+    from backend.app.agents.knowledge_graph_models import SourceObservation, SourceReference
+
+    source = SourceReference(
+        paper_id="paper-kg-1",
+        section_id="sec-1",
+        dom_node_id="p-1",
+        quote="SUPG stabilizes transport. SUPG uses tau.",
+    )
+    observations = [
+        SourceObservation(
+            id="obs-supg",
+            kind="procedure",
+            label="SUPG",
+            payload={"summary": "A stabilized finite element procedure.", "roles": ["main_contribution"]},
+            source=source,
+        ),
+        SourceObservation(
+            id="obs-equation",
+            kind="equation",
+            label="SUPG stabilization",
+            payload={
+                "equation_id": "eq-supg",
+                "latex": "u = tau R",
+                "summary": "Adds residual-based stabilization.",
+                "paper_role": "method_definition",
+                "scope_id": "sec-1",
+                "object_labels": ["SUPG"],
+                "symbols": [{
+                    "symbol": "tau",
+                    "meaning": "stabilization parameter",
+                    "scope_id": "supg",
+                    "constraints": ["positive"],
+                    "object_labels": ["SUPG"],
+                }],
+            },
+            source=SourceReference(
+                paper_id="paper-kg-1",
+                section_id="sec-1",
+                equation_id="eq-supg",
+                quote="u = tau R",
+            ),
+        ),
+    ]
+    return canonicalize_observations(
+        "paper-kg-1",
+        observations,
+        sections=[{
+            "id": "sec-1",
+            "content_html": "<p data-id='p-1'>SUPG stabilizes transport. SUPG uses tau.</p>",
+        }],
+    ).model_dump(mode="json")
 
 
 def _store_graph(session_factory, paper_id: str, graph):
@@ -292,13 +356,15 @@ class TestKnowledgeGraphProjectionEndpoints:
             for relation in body["relations"]
         )
         assert all(relation["evidence"] for relation in body["relations"])
+        assert all(relation["qualifiers"] == ["prerequisite"] for relation in body["relations"])
+        assert body["omitted_relation_count"] >= 0
 
     def test_subgraph_and_search_are_bounded_server_side(self, kg_client):
         client, session_factory = kg_client
         paper_id = _seed_compiled_paper(session_factory)
         graph = _canonical_graph()
         _store_graph(session_factory, paper_id, graph)
-        seed_id = next(entity["stable_id"] for entity in graph["entities"] if entity["label"] == "Concept 0")
+        seed_id = next(entity["stable_id"] for entity in graph["objects"] if entity["label"] == "Concept 0")
 
         subgraph = client.get(
             f"/api/papers/{paper_id}/knowledge-graph/subgraph",
@@ -328,7 +394,7 @@ class TestKnowledgeGraphProjectionEndpoints:
     def test_malformed_canonical_graph_returns_server_error(self, kg_client):
         client, session_factory = kg_client
         paper_id = _seed_compiled_paper(session_factory)
-        _store_graph(session_factory, paper_id, {"schema_version": "1.0"})
+        _store_graph(session_factory, paper_id, {"schema_version": "3.0"})
 
         response = client.get(f"/api/papers/{paper_id}/knowledge-graph/overview")
 
@@ -365,3 +431,63 @@ class TestKnowledgeGraphBuildProgressStream:
         # exactly like it already does for "complete"/"error".
         assert any('"cancelled"' in event for event in events)
         assert paper_id not in main_module.kg_build_progress
+
+
+class TestSemanticEndpoints:
+    def test_section_annotations_are_bounded_and_occurrence_aware(self, kg_client):
+        client, session_factory = kg_client
+        paper_id = _seed_compiled_paper(session_factory)
+        _store_graph(session_factory, paper_id, _semantic_graph())
+
+        response = client.get(
+            f"/api/papers/{paper_id}/semantic/sections/sec-1/annotations",
+            params={"limit": 1},
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["total"] >= 2
+        assert len(body["items"]) == 1
+        assert body["items"][0]["occurrence"]["dom_node_id"] == "p-1"
+        assert body["items"][0]["subject"]["kind"] == "procedure"
+
+    def test_subject_equation_and_glossary_return_evidence_backed_details(self, kg_client):
+        client, session_factory = kg_client
+        paper_id = _seed_compiled_paper(session_factory)
+        graph = _semantic_graph()
+        _store_graph(session_factory, paper_id, graph)
+        subject_id = graph["objects"][0]["stable_id"]
+
+        subject = client.get(f"/api/papers/{paper_id}/semantic/subjects/{subject_id}")
+        equation = client.get(f"/api/papers/{paper_id}/semantic/equations/eq-supg")
+        glossary = client.get(
+            f"/api/papers/{paper_id}/semantic/glossary",
+            params={"query": "tau", "limit": 5},
+        )
+
+        assert subject.status_code == 200
+        assert subject.json()["subject"]["roles"] == ["main_contribution"]
+        assert subject.json()["evidence"][0]["source"]["dom_node_id"] == "p-1"
+        assert equation.status_code == 200
+        assert equation.json()["equation"]["equation_id"] == "eq-supg"
+        assert equation.json()["notation"][0]["constraints"] == ["positive"]
+        assert equation.json()["evidence"]
+        assert glossary.status_code == 200
+        assert glossary.json()["results"][0]["kind"] == "notation"
+        assert glossary.json()["results"][0]["label"] == "tau"
+
+    def test_semantic_endpoints_distinguish_legacy_and_malformed_documents(self, kg_client):
+        client, session_factory = kg_client
+        paper_id = _seed_compiled_paper(session_factory)
+        _store_graph(session_factory, paper_id, {"schema_version": "1.0"})
+
+        legacy = client.get(f"/api/papers/{paper_id}/semantic/glossary")
+
+        assert legacy.status_code == 409
+        assert legacy.json()["detail"]["code"] == "rebuild_required"
+
+        _store_graph(session_factory, paper_id, {"schema_version": "3.0"})
+        malformed = client.get(f"/api/papers/{paper_id}/semantic/glossary")
+
+        assert malformed.status_code == 500
+        assert malformed.json()["detail"]["code"] == "malformed_semantic_document"

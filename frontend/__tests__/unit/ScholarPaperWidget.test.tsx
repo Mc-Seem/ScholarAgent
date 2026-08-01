@@ -86,11 +86,16 @@ function createStore(value: ReaderWorkspaceSnapshot): ScholarWorkspaceService {
     closePaper: vi.fn(),
     activatePaper: vi.fn(),
     setActiveEntity: vi.fn(),
+    setSemanticSelection: vi.fn(),
     createTooltip: vi.fn().mockResolvedValue(undefined),
     updateTooltip: vi.fn().mockResolvedValue(undefined),
     deleteTooltip: vi.fn().mockResolvedValue(undefined),
     removeTooltipOccurrence: vi.fn().mockResolvedValue(undefined),
   } as unknown as ScholarWorkspaceService
+}
+
+function createSelectionService() {
+  return { selection: undefined as unknown }
 }
 
 function createWidget(
@@ -106,6 +111,7 @@ function createWidget(
       { render: vi.fn() } as never,
       options,
       { select: vi.fn() } as never,
+      createSelectionService() as never,
     )
   })
   widgets.push(widget!)
@@ -127,6 +133,57 @@ function installSearchRoot(widget: ScholarPaperWidgetClass, text: string): HTMLE
 }
 
 describe('ScholarPaperWidget', () => {
+  it('publishes occurrence and equation selections from the Desktop reader without hover activation', () => {
+    const value = snapshot(
+      'paper-a',
+      '<p data-id="p-1"><span class="kg-entity" data-entity-id="procedure:supg" data-subject-id="procedure:supg" data-occurrence-id="occ-1" data-scope-id="sec-1">SUPG</span></p><math data-id="eq-7" display="block"><mi>τ</mi></math>',
+    )
+    const store = createStore(value)
+    const selectionService = createSelectionService()
+    let widget: ScholarPaperWidgetClass | undefined
+    act(() => {
+      const WidgetWithSemanticSelection = ScholarPaperWidget as unknown as new (
+        ...args: unknown[]
+      ) => ScholarPaperWidgetClass
+      widget = new WidgetWithSemanticSelection(
+        store,
+        { error: vi.fn() },
+        { render: vi.fn() },
+        { paperId: 'paper-a', label: 'Paper A' },
+        { select: vi.fn() },
+        selectionService,
+      )
+    })
+    widgets.push(widget!)
+    renderWidget(widget!)
+
+    fireEvent.mouseOver(screen.getByText('SUPG'))
+    expect(selectionService.selection).toBeUndefined()
+
+    fireEvent.click(screen.getByText('SUPG'))
+    expect(selectionService.selection).toEqual(expect.objectContaining({
+      paperId: 'paper-a',
+      payload: expect.objectContaining({
+        kind: 'occurrence',
+        occurrenceId: 'occ-1',
+        subjectId: 'procedure:supg',
+      }),
+    }))
+    expect(store.setSemanticSelection).toHaveBeenLastCalledWith(
+      'paper-a',
+      expect.objectContaining({ kind: 'occurrence', occurrenceId: 'occ-1' }),
+    )
+
+    selectionService.selection = undefined
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Open details for equation eq-7' }), {
+      key: 'Enter',
+    })
+    expect(selectionService.selection).toEqual(expect.objectContaining({
+      paperId: 'paper-a',
+      payload: { kind: 'equation', equationId: 'eq-7' },
+    }))
+  })
+
   it('selects the applied semantic tooltip when its entity is clicked', () => {
     const value = snapshot(
       'paper-a',
@@ -154,6 +211,7 @@ describe('ScholarPaperWidget', () => {
         { render: vi.fn() } as never,
         { paperId: 'paper-a', label: 'Paper A' },
         annotations,
+        createSelectionService() as never,
       )
     })
     widgets.push(widget!)
@@ -177,6 +235,7 @@ describe('ScholarPaperWidget', () => {
         { render: vi.fn() } as never,
         { paperId: 'paper-a', label: 'Paper A' },
         annotations,
+        createSelectionService() as never,
       )
     })
     widgets.push(widget!)

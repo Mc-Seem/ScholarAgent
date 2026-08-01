@@ -1,6 +1,6 @@
 import { API_BASE, apiUrl } from '../hooks/useApi'
 
-export type KnowledgeGraphEntityType = 'concept' | 'claim' | 'method' | 'formula' | 'symbol'
+export type KnowledgeGraphEntityType = 'topic' | 'claim' | 'procedure' | 'artifact' | 'quantity'
 export type KnowledgeGraphExpertise = 'novice' | 'intermediate' | 'expert'
 
 export interface KnowledgeGraphSource {
@@ -44,6 +44,7 @@ export interface KnowledgeGraphNode {
   signals: KnowledgeGraphSignals
   rank: number
   evidence: KnowledgeGraphEvidence[]
+  omitted_relation_count: number
 }
 
 export interface KnowledgeGraphRelation {
@@ -51,6 +52,7 @@ export interface KnowledgeGraphRelation {
   type: string
   source_id: string
   target_id: string
+  qualifiers: string[]
   confidence: number
   evidence: KnowledgeGraphEvidence[]
 }
@@ -62,6 +64,7 @@ export interface KnowledgeGraphProjection {
   relations: KnowledgeGraphRelation[]
   total_entity_count: number
   total_relation_count: number
+  omitted_relation_count: number
   truncated: boolean
 }
 

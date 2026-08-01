@@ -108,7 +108,7 @@ function graphFixture() {
   }
   const evidence = (id: string, label: string, domNodeId: string) => [{
     observation_id: `obs-${id}`,
-    kind: 'concept',
+    kind: 'topic',
     label,
     source: {
       paper_id: 'paper-a',
@@ -123,27 +123,29 @@ function graphFixture() {
   }]
   return {
     status: 'ready',
-    schema_version: '1.0',
+    schema_version: '3.0',
     nodes: [
       {
         stable_id: 'n1',
-        type: 'theorem',
+        type: 'claim',
         label: 'Theorem 1',
         aliases: [],
         facets: [{ kind: 'theorem', payload: { text: 'A well-known theorem.' }, evidence_ids: ['obs-n1'] }],
         signals,
         rank: 0.9,
         evidence: evidence('n1', 'Theorem 1', 'dom-n1'),
+        omitted_relation_count: 1,
       },
       {
         stable_id: 'n2',
-        type: 'definition',
+        type: 'topic',
         label: 'Definition 2',
         aliases: [],
         facets: [{ kind: 'definition', payload: { text: 'A basic definition.' }, evidence_ids: ['obs-n2'] }],
         signals,
         rank: 0.8,
         evidence: evidence('n2', 'Definition 2', 'dom-n2'),
+        omitted_relation_count: 0,
       },
     ],
     relations: [
@@ -152,6 +154,7 @@ function graphFixture() {
         source_id: 'n1',
         target_id: 'n2',
         type: 'depends_on',
+        qualifiers: ['prerequisite'],
         confidence: 0.9,
         evidence: [{
           observation_id: 'obs-e1',
@@ -172,6 +175,7 @@ function graphFixture() {
     ],
     total_entity_count: 2,
     total_relation_count: 1,
+    omitted_relation_count: 0,
     truncated: false,
   }
 }
@@ -180,7 +184,7 @@ async function renderGraph(props: Partial<React.ComponentProps<typeof KnowledgeG
   const utils = render(
     <KnowledgeGraphView paperId="paper-a" {...props} />,
   )
-  await waitFor(() => expect(screen.getByTestId('react-flow-mock')).toBeInTheDocument())
+  await waitFor(() => expect(screen.getByTestId('node-n1')).toBeInTheDocument())
   return utils
 }
 
@@ -212,8 +216,9 @@ describe('KnowledgeGraphView selection callback', () => {
       kind: 'node',
       id: 'n1',
       label: 'Theorem 1',
-      nodeType: 'theorem',
-      definition: 'A well-known theorem.',
+      nodeType: 'claim',
+      statement: 'A well-known theorem.',
+      omittedRelationCount: 1,
     }))
     expect(lastCall.outgoingConnections).toEqual([
       expect.objectContaining({ nodeId: 'n2', relationshipType: 'depends_on' }),
@@ -237,6 +242,7 @@ describe('KnowledgeGraphView selection callback', () => {
       sourceLabel: 'Theorem 1',
       targetLabel: 'Definition 2',
       relationshipType: 'depends_on',
+      qualifiers: ['prerequisite'],
       evidence: 'See proof in Section 2.',
     }))
     expect(lastCall.evidenceItems).toHaveLength(1)
@@ -361,7 +367,7 @@ describe('KnowledgeGraphView progressive loading', () => {
       status: 200,
       statusText: 'OK',
       json: () => Promise.resolve(url.includes('/search?')
-        ? { status: 'ready', schema_version: '1.0', results: [{ ...remoteNode, score: 1 }] }
+        ? { status: 'ready', schema_version: '3.0', results: [{ ...remoteNode, score: 1 }] }
         : graph),
     }))
     vi.stubGlobal('fetch', fetchMock)
@@ -431,7 +437,7 @@ describe('KnowledgeGraphView progressive loading', () => {
       status: 200,
       statusText: 'OK',
       json: () => Promise.resolve(url.includes('/search?')
-        ? { status: 'ready', schema_version: '1.0', results: [{ ...searchNode, score: 1 }] }
+        ? { status: 'ready', schema_version: '3.0', results: [{ ...searchNode, score: 1 }] }
         : graph),
     }))
     vi.stubGlobal('fetch', fetchMock)
@@ -533,6 +539,7 @@ describe('KnowledgeGraphView controller bridge', () => {
       totalNodeCount: 2,
       visibleEdgeCount: 1,
       totalEdgeCount: 1,
+      omittedEdgeCount: 0,
       selectedNode: null,
       focusMode: false,
       focusedNodeId: null,
@@ -542,12 +549,12 @@ describe('KnowledgeGraphView controller bridge', () => {
     expect(snapshot.searchItems).toContainEqual(expect.objectContaining({
       id: 'n1',
       label: 'Theorem 1',
-      nodeType: 'theorem',
+      nodeType: 'claim',
       detail: 'A well-known theorem.',
     }))
     expect(snapshot.nodeTypeFilters).toContainEqual({
-      type: 'theorem',
-      label: 'Theorems',
+      type: 'claim',
+      label: 'Claims',
       count: 1,
       selected: true,
     })
@@ -583,7 +590,7 @@ describe('KnowledgeGraphView controller bridge', () => {
       selectedNode: expect.objectContaining({
         id: 'n1',
         label: 'Theorem 1',
-        nodeType: 'theorem',
+        nodeType: 'claim',
         domNodeId: 'dom-n1',
       }),
       canFocusSelection: true,
@@ -625,13 +632,13 @@ describe('KnowledgeGraphView controller bridge', () => {
     expect(listener).not.toHaveBeenCalled()
 
     act(() => controller!.setVisibleTypes(
-      ['formula', 'symbol', 'definition', 'theorem'],
-      ['has_symbol', 'uses', 'depends_on', 'defines', 'extends', 'mentions'],
+      ['claim', 'topic'],
+      ['depends_on'],
     ))
     await act(async () => undefined)
     expect(listener).not.toHaveBeenCalled()
 
-    act(() => controller!.setVisibleTypes(['theorem'], ['depends_on']))
+    act(() => controller!.setVisibleTypes(['claim'], ['depends_on']))
     await waitFor(() => expect(listener).toHaveBeenCalledTimes(1))
 
     unsubscribe()

@@ -67,6 +67,34 @@ describe('ScholarGraphSelection.create / is', () => {
     })
     expect(ScholarGraphSelection.is(selection)).toBe(true)
   })
+
+  it.each([
+    {
+      kind: 'occurrence' as const,
+      occurrenceId: 'occ-1',
+      subjectId: 'procedure:supg',
+      label: 'SUPG',
+      scopeId: 'sec-1',
+      domNodeId: 'p-1',
+    },
+    { kind: 'equation' as const, equationId: 'eq-7' },
+    {
+      kind: 'evidence' as const,
+      evidence: {
+        observation_id: 'obs-1',
+        kind: 'topic',
+        label: 'SUPG',
+        source: {
+          paper_id: 'paper-a', section_id: 'sec-1', section_title: 'Method',
+          dom_node_id: 'p-1', equation_id: null, quote: 'SUPG stabilizes transport.',
+          char_start: 0, char_end: 4,
+        },
+      },
+    },
+  ])('accepts shared semantic payload $kind', payload => {
+    const selection = ScholarGraphSelection.create('paper-a', createSource('paper-a'), payload)
+    expect(ScholarGraphSelection.is(selection)).toBe(true)
+  })
 })
 
 describe('ScholarGraphSelection.is (negative / edge cases)', () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MathJaxNode } from '@/components/reader/MathJaxNode'
 import type { Element } from 'html-react-parser'
 
@@ -20,12 +20,13 @@ describe('MathJaxNode', () => {
     delete (window as any).MathJax
   })
 
-  const createMathElement = (display?: string): Element => ({
+  const createMathElement = (display?: string, equationId?: string): Element => ({
     type: 'tag',
     name: 'math',
     attribs: {
       xmlns: 'http://www.w3.org/1998/Math/MathML',
-      ...(display && { display })
+      ...(display && { display }),
+      ...(equationId && { 'data-id': equationId }),
     },
     children: [
       {
@@ -101,6 +102,44 @@ describe('MathJaxNode', () => {
     await waitFor(() => {
       expect(mathNode.style.opacity).toBe('1')
     })
+  })
+
+  it('activates Equation Lens by click and keyboard without reacting to hover', () => {
+    const onEquationSelect = vi.fn()
+    render(
+      <MathJaxNode
+        mathml={createMathElement('block', 'eq-7')}
+        onEquationSelect={onEquationSelect}
+      />,
+    )
+    const equation = screen.getByRole('button', { name: 'Open details for equation eq-7' })
+
+    fireEvent.mouseOver(equation)
+    expect(onEquationSelect).not.toHaveBeenCalled()
+    fireEvent.click(equation)
+    fireEvent.keyDown(equation, { key: 'Enter' })
+    fireEvent.keyDown(equation, { key: ' ' })
+
+    expect(onEquationSelect).toHaveBeenCalledTimes(3)
+    expect(onEquationSelect).toHaveBeenLastCalledWith('eq-7')
+  })
+
+  it('does not offer Equation Lens for inline math excluded from the semantic document', () => {
+    const onEquationSelect = vi.fn()
+    const { container } = render(
+      <MathJaxNode
+        mathml={createMathElement(undefined, 'inline-1')}
+        onEquationSelect={onEquationSelect}
+      />,
+    )
+
+    const equation = container.querySelector('.mathjax-node') as HTMLElement
+    expect(equation).not.toHaveAttribute('role', 'button')
+    expect(equation).not.toHaveAttribute('tabindex')
+
+    fireEvent.click(equation)
+    fireEvent.keyDown(equation, { key: 'Enter' })
+    expect(onEquationSelect).not.toHaveBeenCalled()
   })
 
   it('handles MathJax not being available initially', async () => {

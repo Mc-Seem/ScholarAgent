@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from collections import Counter
+from math import ceil
 from typing import Any, Iterable, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from backend.app.agents.knowledge_graph_models import (
+    SCHEMA_VERSION,
     CanonicalEntity,
     EntityFacet,
     EntitySignals,
@@ -23,6 +25,18 @@ MAX_OVERVIEW_LIMIT = 30
 MAX_SUBGRAPH_NODES = 50
 MAX_SUBGRAPH_EDGES = 100
 OVERVIEW_CORE_SEED_FRACTION = 0.25
+OVERVIEW_ORDINARY_DEGREE_LIMIT = 2
+RELATION_INFORMATION = {
+    "challenges": 1.0,
+    "supports": 0.95,
+    "depends_on": 0.9,
+    "produces": 0.85,
+    "compares_with": 0.8,
+    "applies_to": 0.75,
+    "part_of": 0.7,
+    "uses": 0.65,
+    "is_a": 0.6,
+}
 
 
 class LegacyKnowledgeGraphError(ValueError):
@@ -53,6 +67,7 @@ class ProjectionNode(ProjectionModel):
     signals: EntitySignals
     rank: float = Field(ge=0.0)
     evidence: list[ProjectionEvidence]
+    omitted_relation_count: int = Field(default=0, ge=0)
 
 
 class ProjectionRelation(ProjectionModel):
@@ -60,6 +75,7 @@ class ProjectionRelation(ProjectionModel):
     type: str
     source_id: str
     target_id: str
+    qualifiers: list[str] = Field(default_factory=list)
     confidence: float
     evidence: list[ProjectionEvidence]
 
@@ -71,6 +87,7 @@ class KnowledgeGraphProjection(ProjectionModel):
     relations: list[ProjectionRelation]
     total_entity_count: int
     total_relation_count: int
+    omitted_relation_count: int = Field(default=0, ge=0)
     truncated: bool = False
 
 
@@ -90,6 +107,10 @@ def parse_document(data: dict[str, Any] | KnowledgeGraphDocument) -> KnowledgeGr
         return data
     if not isinstance(data, dict) or "schema_version" not in data:
         raise LegacyKnowledgeGraphError("knowledge graph must be rebuilt using the canonical schema")
+    if data.get("schema_version") != SCHEMA_VERSION:
+        raise LegacyKnowledgeGraphError(
+            f"knowledge graph schema {data.get('schema_version')} must be rebuilt as {SCHEMA_VERSION}"
+        )
     try:
         return KnowledgeGraphDocument.model_validate(data)
     except ValidationError as error:
@@ -239,22 +260,105 @@ def _project_relations(
     selected_ids: set[str],
     observation_index: dict[str, SourceObservation],
     edge_budget: int,
+    *,
+    sparse: bool = False,
 ) -> list[ProjectionRelation]:
     candidates = [
         relation for relation in document.relations
         if relation.source_id in selected_ids and relation.target_id in selected_ids
     ]
-    candidates.sort(key=lambda relation: (-relation.confidence, relation.stable_id))
+    candidates.sort(key=lambda relation: (
+        -RELATION_INFORMATION.get(relation.type, 0.0),
+        -relation.confidence,
+        -len(relation.evidence_ids),
+        relation.stable_id,
+    ))
+    if sparse and candidates:
+        parent = {entity_id: entity_id for entity_id in selected_ids}
+        degree: Counter[str] = Counter()
+        candidate_degree: Counter[str] = Counter()
+        for relation in candidates:
+            candidate_degree[relation.source_id] += 1
+            candidate_degree[relation.target_id] += 1
+        mean_candidate_degree = sum(candidate_degree.values()) / max(1, len(selected_ids))
+        entity_index = {entity.stable_id: entity for entity in document.entities}
+        hubs = {
+            entity_id
+            for entity_id in selected_ids
+            if entity_index[entity_id].signals.contribution >= 0.8
+            or candidate_degree[entity_id] > max(3, ceil(mean_candidate_degree * 2))
+        }
+
+        def find(entity_id: str) -> str:
+            while parent[entity_id] != entity_id:
+                parent[entity_id] = parent[parent[entity_id]]
+                entity_id = parent[entity_id]
+            return entity_id
+
+        def add(relation: Relation) -> bool:
+            source_root, target_root = find(relation.source_id), find(relation.target_id)
+            if source_root == target_root:
+                return False
+            parent[target_root] = source_root
+            degree[relation.source_id] += 1
+            degree[relation.target_id] += 1
+            return True
+
+        selected_relations = []
+        for relation in candidates:
+            if len(selected_relations) >= edge_budget:
+                break
+            if any(
+                degree[entity_id] >= OVERVIEW_ORDINARY_DEGREE_LIMIT
+                for entity_id in (relation.source_id, relation.target_id)
+                if entity_id not in hubs
+            ):
+                continue
+            if add(relation):
+                selected_relations.append(relation)
+        for relation in candidates:
+            if len(selected_relations) >= edge_budget:
+                break
+            if relation not in selected_relations and add(relation):
+                selected_relations.append(relation)
+        candidates = selected_relations
     return [
         ProjectionRelation(
             stable_id=relation.stable_id,
             type=relation.type,
             source_id=relation.source_id,
             target_id=relation.target_id,
+            qualifiers=relation.qualifiers,
             confidence=relation.confidence,
             evidence=_evidence(relation.evidence_ids, observation_index),
         )
         for relation in candidates[:edge_budget]
+    ]
+
+
+def _with_omitted_relation_counts(
+    nodes: list[ProjectionNode],
+    document: KnowledgeGraphDocument,
+    relations: list[ProjectionRelation],
+) -> list[ProjectionNode]:
+    canonical_degree: Counter[str] = Counter()
+    projected_degree: Counter[str] = Counter()
+    node_ids = {node.stable_id for node in nodes}
+    for relation in document.relations:
+        if relation.source_id in node_ids:
+            canonical_degree[relation.source_id] += 1
+        if relation.target_id in node_ids:
+            canonical_degree[relation.target_id] += 1
+    for relation in relations:
+        projected_degree[relation.source_id] += 1
+        projected_degree[relation.target_id] += 1
+    return [
+        node.model_copy(update={
+            "omitted_relation_count": max(
+                0, canonical_degree[node.stable_id] - projected_degree[node.stable_id]
+            ),
+        })
+        for node in nodes
     ]
 
 
@@ -269,7 +373,7 @@ def overview_projection(
     limit: int = DEFAULT_OVERVIEW_LIMIT,
 ) -> KnowledgeGraphProjection:
     observation_index = _observation_index(document)
-    selected_types = types or {"concept", "claim", "method"}
+    selected_types = types or {"topic", "claim", "procedure", "artifact", "quantity"}
     candidates = []
     for entity in document.entities:
         if entity.type not in selected_types:
@@ -291,13 +395,17 @@ def overview_projection(
     selected = _select_overview_entities(document, ranked, bounded_limit)
     nodes = [_project_node(entity, rank, observation_index) for entity, rank in selected]
     selected_ids = {node.stable_id for node in nodes}
-    relations = _project_relations(document, selected_ids, observation_index, MAX_SUBGRAPH_EDGES)
+    relations = _project_relations(
+        document, selected_ids, observation_index, MAX_SUBGRAPH_EDGES, sparse=True
+    )
+    nodes = _with_omitted_relation_counts(nodes, document, relations)
     return KnowledgeGraphProjection(
         schema_version=document.schema_version,
         nodes=nodes,
         relations=relations,
         total_entity_count=len(document.entities),
         total_relation_count=len(document.relations),
+        omitted_relation_count=max(0, len(document.relations) - len(relations)),
         truncated=len(ranked) > len(nodes),
     )
 
@@ -334,6 +442,7 @@ def focus_projection(
             relations=[],
             total_entity_count=len(document.entities),
             total_relation_count=len(document.relations),
+            omitted_relation_count=len(document.relations),
         )
 
     allowed_types = types or {entity.type for entity in document.entities}
@@ -369,12 +478,14 @@ def focus_projection(
         for entity in selected_entities
     ]
     relations = _project_relations(document, selected_ids, observation_index, bounded_edges)
+    nodes = _with_omitted_relation_counts(nodes, document, relations)
     return KnowledgeGraphProjection(
         schema_version=document.schema_version,
         nodes=nodes,
         relations=relations,
         total_entity_count=len(document.entities),
         total_relation_count=len(document.relations),
+        omitted_relation_count=max(0, len(document.relations) - len(relations)),
         truncated=len(resolved_seeds | neighbor_ids) > len(nodes),
     )
 

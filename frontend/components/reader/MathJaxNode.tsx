@@ -5,6 +5,8 @@ import { Element } from 'html-react-parser';
 
 interface MathJaxNodeProps {
   mathml: Element;
+  equationId?: string;
+  onEquationSelect?: (equationId: string) => void;
 }
 
 /**
@@ -13,7 +15,7 @@ interface MathJaxNodeProps {
  * Takes a parsed <math> element from html-react-parser and renders it
  * using MathJax for proper typesetting and semantic enrichment.
  */
-export function MathJaxNode({ mathml }: MathJaxNodeProps) {
+export function MathJaxNode({ mathml, equationId, onEquationSelect }: MathJaxNodeProps) {
   const containerRef = useRef<HTMLSpanElement>(null);
   const [isRendered, setIsRendered] = useState(false);
 
@@ -23,6 +25,14 @@ export function MathJaxNode({ mathml }: MathJaxNodeProps) {
   // Determine if this is display or inline math
   const isDisplay = mathml.attribs?.display === 'block' ||
                     mathml.attribs?.mode === 'display';
+  const resolvedEquationId = equationId || mathml.attribs?.['data-id'];
+  const isSelectable = Boolean(isDisplay && resolvedEquationId && onEquationSelect);
+
+  const activateEquation = () => {
+    if (resolvedEquationId && onEquationSelect) {
+      onEquationSelect(resolvedEquationId);
+    }
+  };
 
   useEffect(() => {
     const container = containerRef.current;
@@ -67,6 +77,16 @@ export function MathJaxNode({ mathml }: MathJaxNodeProps) {
       ref={containerRef as any}
       className={`mathjax-node ${isDisplay ? 'math-display' : 'math-inline'}`}
       data-mathml-source={mathmlString}
+      data-equation-id={resolvedEquationId}
+      role={isSelectable ? 'button' : undefined}
+      aria-label={isSelectable ? `Open details for equation ${resolvedEquationId}` : undefined}
+      tabIndex={isSelectable ? 0 : undefined}
+      onClick={isSelectable ? activateEquation : undefined}
+      onKeyDown={isSelectable ? (event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        activateEquation();
+      } : undefined}
       style={{
         display: isDisplay ? 'block' : 'inline',
         textAlign: isDisplay ? 'center' : undefined,

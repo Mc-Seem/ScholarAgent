@@ -8,6 +8,7 @@ interface EdgeInfoPanelProps {
   sourceLabel: string;
   targetLabel: string;
   relationshipType: string;
+  qualifiers?: string[];
   evidence?: string;
   onClose: () => void;
   onClickSource?: () => void;
@@ -18,17 +19,22 @@ interface EdgeInfoPanelProps {
 
 // Edge colors matching KnowledgeGraphView
 const edgeColors: Record<string, string> = {
-  uses: '#6366f1',       // indigo
-  depends_on: '#f59e0b', // amber
-  defines: '#10b981',    // emerald
-  extends: '#8b5cf6',    // violet
-  mentions: '#94a3b8',   // slate
+  is_a: '#10b981',
+  part_of: '#14b8a6',
+  uses: '#6366f1',
+  depends_on: '#f59e0b',
+  applies_to: '#0ea5e9',
+  produces: '#22c55e',
+  supports: '#8b5cf6',
+  challenges: '#ef4444',
+  compares_with: '#ec4899',
 };
 
 export function EdgeInfoPanel({
   sourceLabel,
   targetLabel,
   relationshipType,
+  qualifiers = [],
   evidence,
   onClose,
   onClickSource,
@@ -72,6 +78,15 @@ export function EdgeInfoPanel({
               <LatexText text={targetLabel} />
             </button>
           </div>
+          {qualifiers.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1">
+              {qualifiers.map(qualifier => (
+                <span key={qualifier} className="rounded bg-white px-1.5 py-0.5 text-[10px] text-slate-500">
+                  {qualifier.replaceAll('_', ' ')}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
         <button
           onClick={onClose}

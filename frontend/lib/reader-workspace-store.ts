@@ -1,5 +1,11 @@
 import type { Paper, PaperDetail } from '../hooks/usePapers'
 import type { Tooltip } from '../hooks/useTooltips'
+import type {
+  EquationDetails,
+  SectionAnnotationsResponse,
+  SemanticSelection,
+  SemanticSubjectDetails,
+} from './semantic-api'
 
 export interface TooltipUpdate {
   content: string
@@ -18,7 +24,12 @@ export interface CompilationProgress {
 export interface KnowledgeGraphProgress {
   type?: string
   stage: string
-  progress: Record<string, { current: number; total: number }>
+  progress: {
+    stage?: string
+    label?: string
+    current?: number
+    total?: number
+  } | Record<string, { current: number; total: number }>
   error?: string
   node_count?: number
   edge_count?: number
@@ -53,6 +64,9 @@ export interface ReaderWorkspaceApi {
     onProgress: (progress: KnowledgeGraphProgress) => void,
     onConnectionError: () => void,
   ): () => void
+  getSectionAnnotations?(paperId: string, sectionId: string): Promise<SectionAnnotationsResponse>
+  getSemanticSubject?(paperId: string, subjectId: string): Promise<SemanticSubjectDetails>
+  getEquationDetails?(paperId: string, equationId: string): Promise<EquationDetails>
 }
 
 export interface ReaderWorkspaceSnapshot {
@@ -68,6 +82,10 @@ export interface ReaderWorkspaceSnapshot {
   paperErrors: Record<string, string>
   statusByPaperId: Record<string, string>
   knowledgeGraphProgressByPaperId: Record<string, KnowledgeGraphProgress>
+  semanticSelectionByPaperId: Record<string, SemanticSelection | null>
+  sectionAnnotationsByPaperId: Record<string, Record<string, SectionAnnotationsResponse>>
+  semanticSubjectsByPaperId: Record<string, Record<string, SemanticSubjectDetails>>
+  equationDetailsByPaperId: Record<string, Record<string, EquationDetails>>
 }
 
 type Listener = () => void
@@ -85,6 +103,10 @@ const initialSnapshot = (): ReaderWorkspaceSnapshot => ({
   paperErrors: {},
   statusByPaperId: {},
   knowledgeGraphProgressByPaperId: {},
+  semanticSelectionByPaperId: {},
+  sectionAnnotationsByPaperId: {},
+  semanticSubjectsByPaperId: {},
+  equationDetailsByPaperId: {},
 })
 
 const errorMessage = (error: unknown): string => {
@@ -363,6 +385,73 @@ export class ReaderWorkspaceStore {
     })
   }
 
+  setSemanticSelection(paperId: string, selection: SemanticSelection | null): void {
+    if (!paperId.trim()) return
+    this.update({
+      semanticSelectionByPaperId: {
+        ...this.snapshot.semanticSelectionByPaperId,
+        [paperId]: selection,
+      },
+    })
+  }
+
+  async loadSectionAnnotations(
+    paperId: string,
+    sectionId: string,
+  ): Promise<SectionAnnotationsResponse> {
+    const cached = this.snapshot.sectionAnnotationsByPaperId[paperId]?.[sectionId]
+    if (cached) return cached
+    const load = this.requireOperation('getSectionAnnotations')
+    const response = await load.call(this.api, paperId, sectionId)
+    this.update({
+      sectionAnnotationsByPaperId: {
+        ...this.snapshot.sectionAnnotationsByPaperId,
+        [paperId]: {
+          ...this.snapshot.sectionAnnotationsByPaperId[paperId],
+          [sectionId]: response,
+        },
+      },
+    })
+    return response
+  }
+
+  async loadSemanticSubject(
+    paperId: string,
+    subjectId: string,
+  ): Promise<SemanticSubjectDetails> {
+    const cached = this.snapshot.semanticSubjectsByPaperId[paperId]?.[subjectId]
+    if (cached) return cached
+    const load = this.requireOperation('getSemanticSubject')
+    const response = await load.call(this.api, paperId, subjectId)
+    this.update({
+      semanticSubjectsByPaperId: {
+        ...this.snapshot.semanticSubjectsByPaperId,
+        [paperId]: {
+          ...this.snapshot.semanticSubjectsByPaperId[paperId],
+          [subjectId]: response,
+        },
+      },
+    })
+    return response
+  }
+
+  async loadEquationDetails(paperId: string, equationId: string): Promise<EquationDetails> {
+    const cached = this.snapshot.equationDetailsByPaperId[paperId]?.[equationId]
+    if (cached) return cached
+    const load = this.requireOperation('getEquationDetails')
+    const response = await load.call(this.api, paperId, equationId)
+    this.update({
+      equationDetailsByPaperId: {
+        ...this.snapshot.equationDetailsByPaperId,
+        [paperId]: {
+          ...this.snapshot.equationDetailsByPaperId[paperId],
+          [equationId]: response,
+        },
+      },
+    })
+    return response
+  }
+
   closePaper(paperId: string): void {
     const openPaperIds = this.snapshot.openPaperIds.filter(id => id !== paperId)
     this.update({
@@ -589,8 +678,26 @@ export class ReaderWorkspaceStore {
 }
 
 function knowledgeGraphStatus(progress: KnowledgeGraphProgress): string {
+  if ('current' in progress.progress && 'total' in progress.progress) {
+    const current = progress.progress.current
+    const total = progress.progress.total
+    if (Number.isFinite(current) && Number.isFinite(total) && Number(total) > 0) {
+      const boundedCurrent = Math.min(Number(current), Number(total))
+      const percent = Math.round((boundedCurrent / Number(total)) * 100)
+      const label = progress.progress.label || progress.progress.stage || 'Knowledge graph'
+      return `${label}: ${boundedCurrent}/${total} (${percent}%)`
+    }
+  }
   const stages = Object.values(progress.progress ?? {})
-    .filter(stage => Number.isFinite(stage.current) && Number.isFinite(stage.total) && stage.total > 0)
+    .filter((stage): stage is { current: number; total: number } => (
+      typeof stage === 'object'
+      && stage !== null
+      && 'current' in stage
+      && 'total' in stage
+      && Number.isFinite(stage.current)
+      && Number.isFinite(stage.total)
+      && stage.total > 0
+    ))
   if (stages.length === 0) {
     return 'Building knowledge graph…'
   }

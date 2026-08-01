@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { FileText } from 'lucide-react'
-import { Emitter, Event, MessageService } from '@theia/core'
+import { Emitter, Event, MessageService, SelectionService } from '@theia/core'
 import { ContextMenuRenderer, Message, ReactWidget } from '@theia/core/lib/browser'
 
 import { HTMLRenderer } from '../../../../components/reader/HTMLRenderer'
@@ -11,6 +11,7 @@ import {
   type PaperSearchControllerSnapshot,
 } from '../../../../components/reader/paper-search-controller'
 import type { TooltipUpdate } from '../../../../lib/reader-workspace-store'
+import type { SemanticSelection } from '../../../../lib/semantic-api'
 import { paperLabel, truncateLabel, useScholarSnapshot, useTooltipMaps } from './scholar-react'
 import {
   SCHOLAR_PAPER_CONTEXT_MENU,
@@ -18,6 +19,11 @@ import {
   type ScholarAnnotationTarget,
 } from './scholar-annotation-service'
 import type { ScholarWorkspaceService } from './scholar-workspace-service'
+import {
+  SCHOLAR_GRAPH_SELECTION_KIND,
+  ScholarGraphSelection,
+  type ScholarGraphSelectionSource,
+} from './scholar-graph-selection'
 
 export const SCHOLAR_PAPER_FACTORY_ID = 'scholar-agent:paper'
 
@@ -42,6 +48,7 @@ export class ScholarPaperWidget extends ReactWidget {
   private readonly searchController: PaperSearchController
   private readonly searchControllerUnsubscribe: () => void
   private searchDisposed = false
+  private readonly selectionSource: ScholarGraphSelectionSource
 
   readonly onDidChangeSearchState: Event<void> = this.searchStateChangedEmitter.event
 
@@ -51,8 +58,14 @@ export class ScholarPaperWidget extends ReactWidget {
     private readonly contextMenuRenderer: ContextMenuRenderer,
     readonly options: ScholarPaperWidgetOptions,
     private readonly annotations: ScholarAnnotationService,
+    private readonly selectionService: SelectionService,
   ) {
     super()
+    this.selectionSource = {
+      kind: SCHOLAR_GRAPH_SELECTION_KIND,
+      paperId: options.paperId,
+      owner: this,
+    }
     this.searchController = createPaperSearchController({
       getSearchRoot: () => this.node.querySelector<HTMLElement>(
         '.scholar-reader-scroll .html-renderer',
@@ -85,6 +98,7 @@ export class ScholarPaperWidget extends ReactWidget {
   }
 
   protected override onCloseRequest(message: Message): void {
+    this.clearSemanticSelection()
     this.store.closePaper(this.options.paperId)
     super.onCloseRequest(message)
   }
@@ -94,6 +108,7 @@ export class ScholarPaperWidget extends ReactWidget {
       return
     }
     this.searchDisposed = true
+    this.clearSemanticSelection()
     this.searchControllerUnsubscribe()
     this.searchController.dispose()
     super.dispose()
@@ -136,6 +151,22 @@ export class ScholarPaperWidget extends ReactWidget {
     this.refreshSearch()
   }
 
+  private readonly handleSemanticSelection = (selection: SemanticSelection): void => {
+    this.store.setSemanticSelection(this.options.paperId, selection)
+    this.selectionService.selection = ScholarGraphSelection.create(
+      this.options.paperId,
+      this.selectionSource,
+      selection,
+    )
+  }
+
+  private clearSemanticSelection(): void {
+    this.store.setSemanticSelection(this.options.paperId, null)
+    if (ScholarGraphSelection.isSource(this.selectionService.selection, this.selectionSource)) {
+      this.selectionService.selection = undefined
+    }
+  }
+
   openAnnotationMenu(request: AnnotationContextMenuRequest): void {
     const semanticTooltip = request.tooltips.find(tooltip => Boolean(tooltip.entity_id))
     const target: ScholarAnnotationTarget = {
@@ -165,6 +196,7 @@ export class ScholarPaperWidget extends ReactWidget {
         annotations={this.annotations}
         onContentChanged={this.handleContentChanged}
         onAnnotationContextMenu={request => this.openAnnotationMenu(request)}
+        onSemanticSelect={this.handleSemanticSelection}
       />
     )
   }
@@ -191,6 +223,7 @@ interface ScholarPaperContentProps {
   annotations: ScholarAnnotationService
   onContentChanged: () => void
   onAnnotationContextMenu: (request: AnnotationContextMenuRequest) => void
+  onSemanticSelect: (selection: SemanticSelection) => void
 }
 
 function ScholarPaperContent({
@@ -200,6 +233,7 @@ function ScholarPaperContent({
   annotations,
   onContentChanged,
   onAnnotationContextMenu,
+  onSemanticSelect,
 }: ScholarPaperContentProps): React.ReactElement {
   const snapshot = useScholarSnapshot(store)
   const paper = snapshot.papersById[paperId]
@@ -274,6 +308,7 @@ function ScholarPaperContent({
                 annotations.select(paperId, tooltip.id)
               }
             }}
+            onSemanticSelect={onSemanticSelect}
             annotationActivation="context-menu"
             onAnnotationContextMenu={onAnnotationContextMenu}
           />

@@ -23,3 +23,170 @@
 .interactive-node.is-active {
   outline: 2px solid rgba(99, 102, 241, 0.3);
 }
+
+.equation-lens {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-width: 0;
+  color: var(--theia-foreground, #334155);
+}
+
+.equation-lens-header {
+  min-width: 0;
+}
+
+.equation-lens-role {
+  color: var(--theia-descriptionForeground, #64748b);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.equation-lens-title {
+  margin: 0.2rem 0 0;
+  overflow-wrap: anywhere;
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.equation-lens-formula {
+  min-width: 0;
+  padding: 0.55rem 0.65rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  text-align: center;
+  background: var(--theia-editorWidget-background, #f8fafc);
+  border: 1px solid var(--theia-widget-border, #e2e8f0);
+  border-radius: 0.35rem;
+}
+
+.equation-lens-formula mjx-container {
+  max-width: 100%;
+  margin: 0.1rem auto !important;
+}
+
+.equation-lens-section-title {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0 0 0.35rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.equation-lens-section-title span {
+  min-width: 1.1rem;
+  padding: 0 0.28rem;
+  color: var(--theia-badge-foreground, #475569);
+  font-size: 0.68rem;
+  line-height: 1.1rem;
+  text-align: center;
+  background: var(--theia-badge-background, #e2e8f0);
+  border-radius: 0.55rem;
+}
+
+.equation-lens-notation {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(15rem, 100%), 1fr));
+  gap: 1px;
+  margin: 0;
+  overflow: hidden;
+  background: var(--theia-widget-border, #e2e8f0);
+  border: 1px solid var(--theia-widget-border, #e2e8f0);
+  border-radius: 0.35rem;
+}
+
+.equation-lens-notation-item {
+  display: grid;
+  grid-template-columns: minmax(3rem, auto) minmax(0, 1fr);
+  gap: 0.55rem;
+  align-items: baseline;
+  min-width: 0;
+  padding: 0.4rem 0.5rem;
+  background: var(--theia-editor-background, #fff);
+}
+
+.equation-lens-symbol {
+  max-width: 7rem;
+  overflow-x: auto;
+  color: var(--theia-textLink-foreground, #4338ca);
+  font-size: 0.9rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.equation-lens-symbol mjx-container {
+  margin: 0 !important;
+}
+
+.equation-lens-meaning {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+
+.equation-lens-notation-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-top: 0.2rem;
+}
+
+.equation-lens-notation-meta span {
+  padding: 0.05rem 0.3rem;
+  color: var(--theia-descriptionForeground, #64748b);
+  font-size: 0.67rem;
+  line-height: 1.2;
+  background: var(--theia-badge-background, #f1f5f9);
+  border-radius: 0.2rem;
+}
+
+.equation-lens-related {
+  color: var(--theia-descriptionForeground, #64748b);
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+
+.equation-lens-related > span {
+  margin-right: 0.25rem;
+  font-weight: 600;
+}
+
+.equation-lens-evidence {
+  color: var(--theia-descriptionForeground, #64748b);
+  font-size: 0.75rem;
+}
+
+.equation-lens-evidence summary {
+  width: fit-content;
+  cursor: pointer;
+  user-select: none;
+}
+
+.equation-lens-evidence > div {
+  display: grid;
+  gap: 0.35rem;
+  margin-top: 0.4rem;
+}
+
+.equation-lens-evidence button {
+  width: 100%;
+  padding: 0.4rem 0.5rem;
+  color: inherit;
+  font: inherit;
+  line-height: 1.35;
+  text-align: left;
+  background: transparent;
+  border: 1px solid var(--theia-widget-border, #e2e8f0);
+  border-radius: 0.3rem;
+}
+
+.equation-lens-evidence button:hover {
+  background: var(--theia-list-hoverBackground, #f8fafc);
+}

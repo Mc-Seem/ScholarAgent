@@ -167,11 +167,16 @@ describe('ReaderWorkspaceStore', () => {
     await store.buildKnowledgeGraph('paper-a')
     publishProgress?.({
       stage: 'extracting',
-      progress: { symbols: { current: 2, total: 4 } },
+      progress: {
+        stage: 'semantic_extraction',
+        label: 'Semantic extraction',
+        current: 2,
+        total: 4,
+      },
     })
 
     expect(store.getSnapshot().statusByPaperId['paper-a'])
-      .toBe('Knowledge graph: 2/4 (50%)')
+      .toBe('Semantic extraction: 2/4 (50%)')
     expect(store.getSnapshot().knowledgeGraphProgressByPaperId['paper-a'])
       .toEqual(expect.objectContaining({ stage: 'extracting' }))
 
@@ -189,6 +194,31 @@ describe('ReaderWorkspaceStore', () => {
 
     publishProgress?.({ stage: 'error', progress: {}, error: 'Late stream error' })
     expect(store.getSnapshot().paperErrors['paper-a']).toBeUndefined()
+  })
+
+  it('caches section annotations and equation details per paper', async () => {
+    const annotations = { schema_version: '3.0', section_id: 'sec-1', items: [], total: 0, offset: 0, limit: 100 }
+    const equation = {
+      schema_version: '3.0',
+      equation: {
+        stable_id: 'equation:1', equation_id: 'eq-1', latex: 'x=1', summary: 'Defines x.',
+        paper_role: 'definition', notation_ids: [], object_ids: [], evidence_ids: ['obs-1'],
+      },
+      notation: [], objects: [], evidence: [],
+    }
+    api.getSectionAnnotations = vi.fn().mockResolvedValue(annotations)
+    api.getEquationDetails = vi.fn().mockResolvedValue(equation)
+    const store = new ReaderWorkspaceStore(api)
+
+    await store.loadSectionAnnotations('paper-a', 'sec-1')
+    await store.loadSectionAnnotations('paper-a', 'sec-1')
+    await store.loadEquationDetails('paper-a', 'eq-1')
+    await store.loadEquationDetails('paper-a', 'eq-1')
+
+    expect(api.getSectionAnnotations).toHaveBeenCalledOnce()
+    expect(api.getEquationDetails).toHaveBeenCalledOnce()
+    expect(store.getSnapshot().sectionAnnotationsByPaperId['paper-a']['sec-1']).toBe(annotations)
+    expect(store.getSnapshot().equationDetailsByPaperId['paper-a']['eq-1']).toBe(equation)
   })
 
   it('clears a terminal knowledge-graph status so paper actions become available again', async () => {

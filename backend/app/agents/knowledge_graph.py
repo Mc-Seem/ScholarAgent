@@ -5,6 +5,7 @@ anchors formulas to compiler equation records, and persists a validated
 canonical document. Legacy helper functions remain covered during migration.
 """
 
+import json
 import os
 from typing import TypedDict, List, Dict, Any, Optional, Annotated, Literal
 try:
@@ -166,18 +167,23 @@ class FormulaExtractionOutput(BaseModel):
 
 class CanonicalRelationCandidate(BaseModel):
     type: Literal[
-        "defines", "uses", "depends_on", "supports", "derives_from", "evaluated_by"
+        "is_a", "part_of", "uses", "depends_on", "applies_to", "produces", "supports",
+        "challenges", "compares_with",
     ]
     target: str = Field(description="Exact label or alias of the target candidate")
     evidence: str = Field(description="Exact source quote supporting this relation")
+    qualifiers: List[str] = Field(default_factory=list)
     confidence: float = Field(default=0.8, ge=0.0, le=1.0)
 
 
 class SectionEntityCandidate(BaseModel):
-    kind: Literal["concept", "claim", "method"]
+    kind: Literal["topic", "claim", "procedure", "artifact", "quantity"]
     label: str
     summary: str
     aliases: List[str] = Field(default_factory=list)
+    roles: List[str] = Field(default_factory=list)
+    facet_kind: Optional[str] = None
+    facet: Dict[str, Any] = Field(default_factory=dict)
     source_quote: str = Field(description="Exact, non-empty quote from the section")
     confidence: float = Field(default=0.8, ge=0.0, le=1.0)
     contribution: float = Field(default=0.5, ge=0.0, le=1.0)
@@ -188,6 +194,27 @@ class SectionEntityCandidate(BaseModel):
 
 class SectionKnowledgeExtractionOutput(BaseModel):
     entities: List[SectionEntityCandidate] = Field(default_factory=list)
+
+
+class EquationNotationCandidate(BaseModel):
+    symbol: str
+    meaning: str
+    scope_id: Optional[str] = None
+    units: Optional[str] = None
+    constraints: List[str] = Field(default_factory=list)
+    object_labels: List[str] = Field(default_factory=list)
+
+
+class EquationAnalysisCandidate(BaseModel):
+    equation_id: str
+    summary: str = Field(description="Short identifying noun phrase for the equation, at most 8 words")
+    paper_role: str
+    notation: List[EquationNotationCandidate] = Field(default_factory=list)
+    object_labels: List[str] = Field(default_factory=list)
+
+
+class EquationAnalysisOutput(BaseModel):
+    equations: List[EquationAnalysisCandidate] = Field(default_factory=list)
 
 
 class Relationship(BaseModel):
@@ -410,17 +437,20 @@ Extract the important formulas explicitly present in this section."""
 
 SECTION_KNOWLEDGE_SYSTEM_PROMPT = """You extract a compact, evidence-backed semantic map from one academic-paper section.
 
-Return only important concepts, claims, and methods. Prefer the paper's central contributions and prerequisites that are needed to understand them. Do not extract notation, local variables, generic nouns, citations, headings, or unsupported inferred entities. Formula extraction is handled separately from compiler data.
+Return only important semantic objects. Prefer the paper's central contributions and prerequisites that are needed to understand them. Do not extract notation, local variables, formulas, generic nouns, citations, headings, or unsupported inferred entities. Equation analysis is handled separately from compiler data.
 
 For every entity:
 - use a concise canonical label and list only aliases explicitly used in the section;
 - include an exact non-empty source quote copied from the supplied text;
-- classify it as concept, claim, or method;
+- classify it as topic, claim, procedure, artifact, or quantity;
+- keep paper roles such as main_contribution, background, study_object, limitation, or evaluation_resource separate from kind;
+- put domain-specific specialization in facet_kind and facet rather than inventing top-level kinds;
 - score contribution relevance, structural prominence, confidence, and likely reader familiarity independently;
-- include only relations in the allowed set: defines, uses, depends_on, supports, derives_from, evaluated_by;
+- include only relations in the allowed set: is_a, part_of, uses, depends_on, applies_to, produces, supports, challenges, compares_with;
+- use short qualifiers such as evaluation, measurement, input, limitation, or training when they clarify a generic relation;
 - name relation targets by an exact candidate label or alias and provide an exact supporting quote.
 
-Do not invent relations or merge backend entity kinds."""
+Do not invent free-form relation types or mix semantic kind with paper role or representation."""
 
 SECTION_KNOWLEDGE_USER_PROMPT = """Section: {section_title}
 
@@ -428,6 +458,26 @@ Content:
 {content_text}
 
 Extract the small set of evidence-backed semantic candidates from this section."""
+
+EQUATION_ANALYSIS_SYSTEM_PROMPT = """You explain a bounded batch of displayed equations from one academic paper.
+
+For each supplied equation ID:
+- name what the equation is with a concise identifying noun phrase of at most 8 words (for example, "KTO loss function" or "SUPG stabilization parameter");
+- put that identifying phrase in `summary`; do not explain the equation's operations there;
+- Do not start it with verbs such as "Defines", "Computes", or "Expresses";
+- classify its paper role separately;
+- explain only meaningful symbols, parameters, functions, or quantities needed to read it;
+- omit dummy indices, punctuation, operators, and syntactic noise;
+- preserve scope: reuse a meaning only when the supplied context supports it;
+- include units and constraints only when stated by the context;
+- link to semantic objects only by labels explicitly present in the supplied context.
+
+Never return an equation ID or symbol that is absent from the input."""
+
+EQUATION_ANALYSIS_USER_PROMPT = """Displayed equations and nearby section context:
+{equation_context}
+
+Analyze this batch without inventing definitions."""
 
 
 DEPENDENCY_SYSTEM_PROMPT = """You are analyzing dependencies in an academic paper.
@@ -1458,7 +1508,7 @@ def _locate_source_quote(
 
 
 def extract_section_observations(state: GraphState) -> GraphState:
-    """Extract concept, claim, and method observations in one pass per section."""
+    """Extract universal semantic objects in one coordinated pass per section."""
     sections = [
         section for section in state["sections"]
         if len(strip_html_tags(section.get("content_html", ""))) >= 50
@@ -1472,7 +1522,7 @@ def extract_section_observations(state: GraphState) -> GraphState:
     ]) | structured_llm
     llm_profile = state.setdefault("llm_profile", {})
 
-    _report_progress(state, "semantic_observations", 0, len(sections))
+    _report_progress(state, "semantic_extraction", 0, len(sections))
 
     def process_section(indexed_section):
         index, section = indexed_section
@@ -1520,6 +1570,9 @@ def extract_section_observations(state: GraphState) -> GraphState:
             payload = {
                 "summary": candidate.summary,
                 "aliases": candidate.aliases,
+                "roles": candidate.roles,
+                "facet_kind": candidate.facet_kind,
+                "facet": candidate.facet,
                 "contribution": candidate.contribution,
                 "prominence": candidate.prominence,
                 "familiarity": candidate.familiarity,
@@ -1571,6 +1624,7 @@ def extract_section_observations(state: GraphState) -> GraphState:
                         "type": relation.type,
                         "source": candidate.label,
                         "target": relation.target,
+                        "qualifiers": relation.qualifiers,
                     },
                     confidence=relation.confidence,
                     source=relation_source,
@@ -1588,28 +1642,124 @@ def extract_section_observations(state: GraphState) -> GraphState:
             section_observations, section_errors = future.result()
             observations.extend(section_observations)
             errors.extend(section_errors)
-            _report_progress(state, "semantic_observations", completed, len(sections))
+            _report_progress(state, "semantic_extraction", completed, len(sections))
     return {"source_observations": observations, "errors": errors}
 
 
+def _equation_context(
+    observations: List[SourceObservation], sections: List[Dict[str, Any]]
+) -> str:
+    section_ids = {item.source.section_id for item in observations if item.source.section_id}
+    section_context = {
+        str(section.get("id")): {
+            "title": str(section.get("title") or ""),
+            "text": strip_html_tags(section.get("content_html", ""))[:1500],
+        }
+        for section in sections
+        if section.get("id") in section_ids
+    }
+    return json.dumps({
+        "equations": [
+            {
+                "equation_id": item.source.equation_id,
+                "latex": item.payload.get("latex"),
+                "section_id": item.source.section_id,
+            }
+            for item in observations
+        ],
+        "sections": section_context,
+    }, ensure_ascii=False)
+
+
+def _analyze_equation_observations(
+    state: GraphState, observations: List[SourceObservation]
+) -> tuple[List[SourceObservation], List[str]]:
+    if not observations:
+        return observations, []
+    try:
+        llm = get_llm("kg_extraction")
+        structured_llm = get_structured_llm(llm, EquationAnalysisOutput)
+        chain = ChatPromptTemplate.from_messages([
+            ("system", EQUATION_ANALYSIS_SYSTEM_PROMPT),
+            ("user", EQUATION_ANALYSIS_USER_PROMPT),
+        ]) | structured_llm
+        response = run_with_retry(
+            func=chain.invoke,
+            max_retries=3,
+            base_delay=2.0,
+            timeout_seconds=180,
+            func_args=({"equation_context": _equation_context(observations, state["sections"])},),
+            profile=state.setdefault("llm_profile", {}),
+            profile_stage="kg.equation_analysis",
+        )
+    except Exception as error:
+        return observations, [f"Equation analysis failed: {type(error).__name__}: {error}"]
+
+    analysis_by_id = {item.equation_id: item for item in response.equations}
+    enriched = []
+    for observation in observations:
+        equation_id = str(observation.source.equation_id or observation.payload.get("equation_id") or "")
+        analysis = analysis_by_id.get(equation_id)
+        if analysis is None:
+            enriched.append(observation)
+            continue
+        latex = str(observation.payload.get("latex", ""))
+        notation = []
+        for item in analysis.notation:
+            symbol = item.symbol.strip().strip("$")
+            if not symbol or _normalize_latex(symbol) in {"i", "j", "k"}:
+                continue
+            if symbol not in latex:
+                continue
+            notation.append({
+                "symbol": symbol,
+                "meaning": item.meaning,
+                "scope_id": item.scope_id or observation.payload.get("scope_id") or equation_id,
+                "units": item.units,
+                "constraints": item.constraints,
+                "object_labels": item.object_labels,
+            })
+        payload = {
+            **observation.payload,
+            "summary": analysis.summary,
+            "paper_role": analysis.paper_role,
+            "symbols": notation,
+            "object_labels": analysis.object_labels,
+        }
+        enriched.append(observation.model_copy(update={"payload": payload}))
+    return enriched, []
+
+
 def anchor_equations(state: GraphState) -> GraphState:
-    """Anchor significant formula observations to deterministic compiler equation IDs."""
+    """Anchor compiler equations and enrich the bounded batch in one analysis call."""
+    _report_progress(state, "equation_analysis", 0, 1)
     observations = anchor_equation_observations(
         state["paper_id"], state["sections"], state["equations"]
     )
-    _report_progress(state, "equations", len(state["equations"]), len(state["equations"]))
+    observations, errors = _analyze_equation_observations(state, observations)
+    _report_progress(state, "equation_analysis", 1, 1)
     return {
         "source_observations": [observation.model_dump(mode="json") for observation in observations],
-        "errors": [],
+        "errors": errors,
     }
 
 
 def build_canonical_document(state: GraphState) -> GraphState:
     """Canonicalize all source observations and emit the persisted document contract."""
+    _report_progress(state, "canonicalization", 0, 1)
     document = canonicalize_observations(
         state["paper_id"],
         state["source_observations"],
-        models={"section_observations": "kg_extraction"},
+        models={"section_observations": "kg_extraction", "equation_analysis": "kg_extraction"},
+        sections=state["sections"],
+    )
+    _report_progress(state, "canonicalization", 1, 1)
+    occurrence_total = len(document.occurrences)
+    _report_progress(
+        state,
+        "occurrence_anchoring",
+        occurrence_total,
+        occurrence_total,
     )
     return {"graph_data": document.model_dump(mode="json")}
 

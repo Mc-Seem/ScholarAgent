@@ -1,8 +1,8 @@
 """
-AI-powered HTML Span Injection Agent
+Deterministic semantic occurrence injection with a legacy AI compatibility path.
 
-Uses LangGraph workflow with Claude to inject <span class="kg-entity"> tags into HTML.
-This agent processes sections in sequence, using structured outputs for reliable span placement.
+Validated semantic documents use :func:`inject_validated_occurrences`. The old LangGraph
+workflow remains only for compatibility with pre-v3 callers and is not used by the reader API.
 
 Pipeline:
 1. Initialize - Parse HTML and prepare entity list
@@ -19,7 +19,7 @@ try:
 except ImportError:
     from typing_extensions import NotRequired
 from pydantic import BaseModel, Field
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString, Tag
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from dotenv import load_dotenv
@@ -100,6 +100,85 @@ class SectionInjectionOutput(BaseModel):
     reasoning: str = Field(
         description="Brief explanation of which terms were found and wrapped"
     )
+
+
+def inject_validated_occurrences(
+    html_content: str,
+    occurrences: List[Dict[str, Any]],
+    progress_callback: Any = None,
+) -> str:
+    """Inject prevalidated semantic anchors without rediscovering spans with an LLM."""
+    soup = BeautifulSoup(html_content, "html.parser")
+    existing_ids = {
+        str(element.get("data-occurrence-id"))
+        for element in soup.select("span.kg-entity[data-occurrence-id]")
+    }
+    pending = [item for item in occurrences if str(item.get("stable_id")) not in existing_ids]
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
+    for occurrence in pending:
+        dom_node_id = occurrence.get("dom_node_id")
+        if not dom_node_id:
+            continue
+        grouped.setdefault(str(dom_node_id), []).append(occurrence)
+
+    completed = 0
+    for dom_node_id, node_occurrences in sorted(grouped.items()):
+        target = soup.find(attrs={"data-id": dom_node_id})
+        if target is None:
+            raise ValueError(f"occurrence target does not exist: {dom_node_id}")
+        for occurrence in sorted(node_occurrences, key=lambda item: int(item["start"]), reverse=True):
+            start, end = int(occurrence["start"]), int(occurrence["end"])
+            expected = str(occurrence["text"])
+            strings = [
+                item
+                for item in target.descendants
+                if isinstance(item, NavigableString)
+                and not any(
+                    isinstance(parent, Tag)
+                    and (
+                        parent.name in {"script", "style"}
+                        or "kg-entity" in parent.get("class", [])
+                    )
+                    for parent in item.parents
+                    if parent is not target
+                )
+            ]
+            cursor = 0
+            matched = None
+            for text_node in strings:
+                node_end = cursor + len(str(text_node))
+                if cursor <= start and end <= node_end:
+                    matched = (text_node, start - cursor, end - cursor)
+                    break
+                cursor = node_end
+            if matched is None:
+                raise ValueError(
+                    f"occurrence {occurrence.get('stable_id')} crosses markup or has invalid offsets"
+                )
+            text_node, local_start, local_end = matched
+            actual = str(text_node)[local_start:local_end]
+            if actual != expected:
+                raise ValueError(
+                    f"occurrence {occurrence.get('stable_id')} text mismatch: {actual!r} != {expected!r}"
+                )
+            span = soup.new_tag("span")
+            span["class"] = ["kg-entity"]
+            span["data-occurrence-id"] = str(occurrence["stable_id"])
+            span["data-subject-id"] = str(occurrence["subject_id"])
+            span["data-entity-id"] = str(occurrence["subject_id"])
+            before, after = str(text_node)[:local_start], str(text_node)[local_end:]
+            replacement = []
+            if before:
+                replacement.append(NavigableString(before))
+            span.append(NavigableString(actual))
+            replacement.append(span)
+            if after:
+                replacement.append(NavigableString(after))
+            text_node.replace_with(*replacement)
+            completed += 1
+            if progress_callback:
+                progress_callback(completed, len(pending))
+    return str(soup)
 
 
 # =============================================================================

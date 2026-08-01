@@ -7,7 +7,7 @@ def _canonical_tooltip_graph(count=35):
     observations = [
         SourceObservation(
             id=f"obs-{index}",
-            kind="concept",
+            kind="topic",
             label=f"Concept {index}",
             payload={"summary": f"Definition for concept {index}.", "contribution": index / count},
             confidence=0.9,
@@ -23,7 +23,7 @@ def _canonical_tooltip_graph(count=35):
     return canonicalize_observations("paper-1", observations).model_dump(mode="json")
 
 
-def test_tooltip_suggestions_use_bounded_canonical_projection_with_evidence(monkeypatch):
+def test_tooltip_suggestions_use_all_explanation_subjects_with_occurrences(monkeypatch):
     captured = []
 
     def select_all(entities, _expertise, _progress_callback=None):
@@ -38,18 +38,18 @@ def test_tooltip_suggestions_use_bounded_canonical_projection_with_evidence(monk
     )
 
     assert result["total_entities"] == 35
-    assert result["suggested_count"] == 30
-    assert len(captured) == 30
+    assert result["suggested_count"] == 35
+    assert len(captured) == 35
     assert all(entity["evidence"] for entity in captured)
     assert all(suggestion["occurrences"] for suggestion in result["suggestions"])
-    assert all(suggestion["entity_type"] == "concept" for suggestion in result["suggestions"])
+    assert all(suggestion["entity_type"] == "topic" for suggestion in result["suggestions"])
 
 
 def test_canonical_facets_generate_tooltip_content():
     entity = {
-        "type": "method",
+        "type": "procedure",
         "label": "Coordinate ascent",
-        "facets": [{"kind": "method", "payload": {"text": "Alternates variational updates."}}],
+        "facets": [{"kind": "procedure", "payload": {"text": "Alternates variational updates."}}],
     }
 
     assert tooltip_suggestion.generate_tooltip_content(entity) == "Alternates variational updates."

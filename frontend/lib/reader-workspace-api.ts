@@ -7,6 +7,8 @@ import type {
   ReaderWorkspaceApi,
   TooltipUpdate,
 } from './reader-workspace-store'
+import { HttpSemanticApi } from './semantic-api'
+import type { EquationDetails, SectionAnnotationsResponse, SemanticSubjectDetails } from './semantic-api'
 
 interface PaperListResponse {
   papers: Paper[]
@@ -21,11 +23,15 @@ interface ApiErrorBody {
 }
 
 export interface TooltipSuggestionOccurrence {
-  section_id: string
-  dom_node_id: string
-  char_offset: number
-  length: number
-  snippet: string
+  stable_id: string
+  subject_id: string
+  dom_node_id: string | null
+  equation_id: string | null
+  start: number
+  end: number
+  text: string
+  scope_id: string
+  local_override_id: string | null
 }
 
 export interface GeneratedTooltipSuggestion {
@@ -201,7 +207,11 @@ function parseApplyTooltipSuggestionsResponse(value: unknown): ApplyTooltipSugge
 }
 
 export class HttpReaderWorkspaceApi implements ReaderWorkspaceApi, TooltipSuggestionApi {
-  constructor(private readonly apiBase = API_BASE) {}
+  private readonly semanticApi: HttpSemanticApi
+
+  constructor(private readonly apiBase = API_BASE) {
+    this.semanticApi = new HttpSemanticApi(apiBase)
+  }
 
   async listPapers(): Promise<Paper[]> {
     const data = await this.request<Paper[] | PaperListResponse>('/api/papers')
@@ -297,6 +307,18 @@ export class HttpReaderWorkspaceApi implements ReaderWorkspaceApi, TooltipSugges
       { method: 'DELETE' },
       false,
     )
+  }
+
+  getSectionAnnotations(paperId: string, sectionId: string): Promise<SectionAnnotationsResponse> {
+    return this.semanticApi.sectionAnnotations(paperId, sectionId)
+  }
+
+  getSemanticSubject(paperId: string, subjectId: string): Promise<SemanticSubjectDetails> {
+    return this.semanticApi.subjectDetails(paperId, subjectId)
+  }
+
+  getEquationDetails(paperId: string, equationId: string): Promise<EquationDetails> {
+    return this.semanticApi.equationDetails(paperId, equationId)
   }
 
   async listTooltipSuggestions(paperId: string): Promise<TooltipSuggestion[]> {

@@ -99,22 +99,34 @@ def test_measure_canonical_document_reports_full_and_overview_connectivity():
     assert metrics["overview"]["isolate_count"] == 0
     assert metrics["overview"]["connected_component_count"] == 1
     assert metrics["overview"]["largest_component_rate"] == pytest.approx(1.0)
+    assert metrics["ontology"]["coverage_rate"] == pytest.approx(1.0)
+    assert metrics["relations"]["vocabulary_miss_count"] == 0
+    assert metrics["overview"]["degree_distribution"]["ordinary_mean_degree"] <= 2
 
 
 def test_measure_canonical_corpus_aggregates_domains_and_flags_sparse_graphs():
     documents = [
         ("physics", _canonical_document("paper-physics", "physics", 6)),
         ("biology", _canonical_document("paper-biology", "biology", 2)),
+        ("social-science", _canonical_document("paper-social", "social science", 5)),
         ("computer-science", _canonical_document("paper-cs", "computer science", 7)),
     ]
 
     report = measure_canonical_corpus(documents, limit=6)
 
-    assert report["paper_count"] == 3
-    assert report["domain_counts"] == {"biology": 1, "computer-science": 1, "physics": 1}
+    assert report["paper_count"] == 4
+    assert report["domain_counts"] == {
+        "biology": 1,
+        "computer-science": 1,
+        "physics": 1,
+        "social-science": 1,
+    }
     assert report["aggregate"]["overview_isolate_rate"] > 0
     assert report["aggregate"]["overview_largest_component_rate"] < 1
     assert report["papers"][1]["connectivity_gate_passed"] is False
+    assert report["aggregate"]["ontology_coverage_rate"] == pytest.approx(1.0)
+    assert all(paper["ontology_gate_passed"] for paper in report["papers"])
+    assert report["gates"]["min_ontology_coverage_rate"] == pytest.approx(0.9)
 
 
 def test_measure_canonical_document_detects_name_collisions_from_existing_entities():
@@ -142,3 +154,37 @@ def test_measure_canonical_document_detects_name_collisions_from_existing_entiti
 
     assert metrics["cross_type_label_collision_count"] == 1
     assert metrics["cross_type_label_collisions"][0]["label"] == "SLIME"
+
+
+def test_measure_canonical_document_reports_notation_scope_and_diagnostic_misses():
+    document = _canonical_document("paper-physics", "physics", 4)
+    document.metrics.diagnostics.update({
+        "ontology_unclassified_count": 1,
+        "relation_vocabulary_misses": ["measures"],
+    })
+    from backend.app.agents.knowledge_graph_models import NotationRecord
+
+    evidence_id = document.observations[0].id
+    document.notation = [
+        NotationRecord(
+            stable_id="notation:tau-supg",
+            symbol="tau",
+            meaning="stabilization parameter",
+            scope_id="supg",
+            evidence_ids=[evidence_id],
+        ),
+        NotationRecord(
+            stable_id="notation:tau-decay",
+            symbol="tau",
+            meaning="decay lifetime",
+            scope_id="decay",
+            evidence_ids=[evidence_id],
+        ),
+    ]
+
+    metrics = measure_canonical_document(document)
+
+    assert metrics["ontology"]["coverage_rate"] == pytest.approx(8 / 9)
+    assert metrics["relations"]["vocabulary_misses"] == ["measures"]
+    assert metrics["notation"]["same_glyph_distinct_scope_count"] == 1
+    assert metrics["notation"]["duplicate_signature_count"] == 0
