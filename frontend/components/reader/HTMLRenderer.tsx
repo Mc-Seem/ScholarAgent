@@ -114,6 +114,9 @@ export function HTMLRenderer({
             data-entity-type={domNode.attribs['data-entity-type']}
             data-occurrence-id={occurrenceId}
             data-subject-id={subjectId}
+            // A term split by inline markup arrives as several anchors; the
+            // stylesheet uses this to keep the word visually whole.
+            data-occurrence-part={domNode.attribs['data-occurrence-part']}
             role="button"
             tabIndex={0}
             onClick={(e) => {

@@ -6,7 +6,11 @@ Provides utility functions for managing tooltip spans in compiled HTML:
 - remove_single_tooltip_span: Remove a specific span occurrence by dom_node_id
 - validate_html_integrity: Validate HTML structure after modification
 
-Note: Span injection is now handled by ai_html_injection.py using LLM-based approach.
+Note: Span injection is handled by ai_html_injection.inject_validated_occurrences,
+which anchors the occurrences stored in the paper's semantic document. The LLM path
+in that module is legacy and unused by the reader API. One occurrence may become
+several adjacent spans when inline markup splits the term, so removal unwraps every
+span carrying the entity id rather than assuming a single one.
 """
 
 from typing import Tuple

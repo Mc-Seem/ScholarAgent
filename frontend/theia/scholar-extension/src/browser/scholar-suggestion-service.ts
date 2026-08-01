@@ -387,7 +387,6 @@ export class ScholarSuggestionService {
           tooltip_content: state.editedContent.has(suggestion.id)
             ? state.editedContent.get(suggestion.id) ?? ''
             : suggestion.tooltip_content,
-          occurrences: [],
         })),
       })
       if (result.success) {

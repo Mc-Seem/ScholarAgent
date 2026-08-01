@@ -10,11 +10,15 @@ export interface TooltipSuggestion {
   entity_type: string;
   tooltip_content: string;
   occurrences: Array<{
-    section_id: string;
-    dom_node_id: string;
-    char_offset: number;
-    length: number;
-    snippet: string;
+    stable_id: string;
+    subject_id: string;
+    dom_node_id: string | null;
+    equation_id: string | null;
+    start: number;
+    end: number;
+    text: string;
+    scope_id: string;
+    local_override_id: string | null;
   }>;
 }
 
@@ -213,9 +217,9 @@ export default function TooltipSuggestionModal({
                                 Example Occurrences
                               </div>
                               <div className="space-y-1">
-                                {suggestion.occurrences.slice(0, 3).map((occ, idx) => (
-                                  <div key={idx} className="text-xs text-slate-500 bg-slate-50 px-2 py-1 rounded">
-                                    {occ.snippet}
+                                {suggestion.occurrences.slice(0, 3).map(occ => (
+                                  <div key={occ.stable_id} className="text-xs text-slate-500 bg-slate-50 px-2 py-1 rounded">
+                                    {occ.text} · {occ.scope_id}
                                   </div>
                                 ))}
                                 {suggestion.occurrences.length > 3 && (

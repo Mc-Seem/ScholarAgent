@@ -52,6 +52,20 @@ body {
   border-bottom-color: rgb(99, 102, 241);
 }
 
+/* A term split by inline markup becomes several anchors; side padding between
+   the pieces would open gaps inside one word. */
+.kg-entity[data-occurrence-part] {
+  padding: 0;
+}
+
+.kg-entity[data-occurrence-part="first"] {
+  padding-left: 1px;
+}
+
+.kg-entity[data-occurrence-part="last"] {
+  padding-right: 1px;
+}
+
 /* Entity type-specific colors */
 .kg-entity[data-entity-type="symbol"] {
   border-bottom-color: rgba(59, 130, 246, 0.5);

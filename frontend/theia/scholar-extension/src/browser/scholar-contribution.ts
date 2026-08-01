@@ -1122,7 +1122,13 @@ export class ScholarContribution implements
     }
     try {
       const result = await this.suggestions.applySuggestions(paperId)
-      if (result.success) {
+      if (result.success && result.spans_injected === 0) {
+        // Notes without anchors are invisible in the paper, so this is a failure
+        // to report rather than a quiet success.
+        await this.messageService.warn(
+          `Applied ${result.tooltips_created} tooltips but highlighted no occurrences`,
+        )
+      } else if (result.success) {
         await this.messageService.info(
           `Applied ${result.tooltips_created} tooltips to ${result.spans_injected} occurrences`,
         )

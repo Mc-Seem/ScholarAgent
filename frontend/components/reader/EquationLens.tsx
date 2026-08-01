@@ -2,22 +2,35 @@
 
 import { toMathSource, wrapBareMath } from '../../lib/inline-math'
 import type { EquationDetails } from '../../lib/semantic-api'
+import { EditableSemanticText } from './EditableSemanticText'
+import type { SemanticTextEditor } from './EditableSemanticText'
 import { EvidenceLocations } from './EvidenceLocations'
 import { LatexText } from './LatexText'
 
 interface EquationLensProps {
   details: EquationDetails
   onNavigate?: (domNodeId: string) => void
+  /** Enables replacing the agent's wording for the equation and its symbols. */
+  editor?: SemanticTextEditor
 }
 
-export function EquationLens({ details, onNavigate }: EquationLensProps) {
+const renderMath = (text: string) => <LatexText text={wrapBareMath(text)} />
+
+export function EquationLens({ details, onNavigate, editor }: EquationLensProps) {
   const { equation, notation, objects, evidence } = details
   return (
     <div className="equation-lens" data-testid="equation-lens">
       <header className="equation-lens-header">
-        <h3 className="equation-lens-title">
-          <LatexText text={wrapBareMath(equation.summary)} />
-        </h3>
+        <EditableSemanticText
+          as="h3"
+          className="equation-lens-title"
+          subjectId={equation.stable_id}
+          agentText={equation.summary}
+          label="equation name"
+          targetText={equation.summary}
+          renderText={renderMath}
+          editor={editor}
+        />
       </header>
       <div className="equation-lens-formula" data-testid="equation-math">
         <LatexText text={toMathSource(equation.latex, true)} />
@@ -36,8 +49,16 @@ export function EquationLens({ details, onNavigate }: EquationLensProps) {
                 >
                   <LatexText text={toMathSource(item.symbol)} />
                 </dt>
-                <dd className="equation-lens-meaning">
-                  <LatexText text={wrapBareMath(item.meaning)} />
+                <EditableSemanticText
+                  as="dd"
+                  className="equation-lens-meaning"
+                  subjectId={item.stable_id}
+                  agentText={item.meaning}
+                  label={`meaning of ${item.symbol}`}
+                  targetText={item.symbol}
+                  renderText={renderMath}
+                  editor={editor}
+                >
                   {(item.units || item.constraints.length > 0) && (
                     <span className="equation-lens-notation-meta">
                       {item.units && <LatexText text={wrapBareMath(item.units)} />}
@@ -46,7 +67,7 @@ export function EquationLens({ details, onNavigate }: EquationLensProps) {
                       ))}
                     </span>
                   )}
-                </dd>
+                </EditableSemanticText>
               </div>
             ))}
           </dl>

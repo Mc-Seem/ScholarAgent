@@ -74,8 +74,16 @@ export interface DeleteTooltipSuggestionResponse {
   status: 'success'
 }
 
+/**
+ * A draft being applied. Occurrences are deliberately absent: the drafts panel
+ * lists rows of `tooltip_suggestions`, which stores only label and text, so the
+ * client has no anchor positions to send. The apply endpoint reads them from the
+ * paper's semantic document instead.
+ */
+export type AppliedTooltipSuggestion = Omit<GeneratedTooltipSuggestion, 'occurrences'>
+
 export interface ApplyTooltipSuggestionsRequest {
-  suggestions: GeneratedTooltipSuggestion[]
+  suggestions: AppliedTooltipSuggestion[]
 }
 
 export interface ApplyTooltipSuggestionsResponse {
@@ -130,13 +138,27 @@ function isNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value)
 }
 
+function isNullableString(value: unknown): value is string | null {
+  return value === null || value === undefined || isString(value)
+}
+
+/**
+ * Occurrences follow the schema-v3 anchor shape: a stable id, the subject they
+ * belong to, either a DOM node or an equation, and character offsets into the
+ * node text. The pre-rework shape (`section_id`, `char_offset`, `snippet`) is
+ * gone, and validating against it rejected every generated suggestion.
+ */
 function isTooltipSuggestionOccurrence(value: unknown): value is TooltipSuggestionOccurrence {
   return isRecord(value)
-    && isString(value.section_id)
-    && isString(value.dom_node_id)
-    && isNumber(value.char_offset)
-    && isNumber(value.length)
-    && isString(value.snippet)
+    && isString(value.stable_id)
+    && isString(value.subject_id)
+    && isNullableString(value.dom_node_id)
+    && isNullableString(value.equation_id)
+    && isNumber(value.start)
+    && isNumber(value.end)
+    && isString(value.text)
+    && isString(value.scope_id)
+    && isNullableString(value.local_override_id)
 }
 
 function isGeneratedTooltipSuggestion(value: unknown): value is GeneratedTooltipSuggestion {
@@ -304,6 +326,30 @@ export class HttpReaderWorkspaceApi implements ReaderWorkspaceApi, TooltipSugges
   ): Promise<void> {
     await this.request(
       `/api/papers/${paperId}/tooltips/${tooltipId}/occurrences/${domNodeId}`,
+      { method: 'DELETE' },
+      false,
+    )
+  }
+
+  saveSemanticNote(
+    paperId: string,
+    subjectId: string,
+    content: string,
+    targetText?: string | null,
+  ): Promise<Tooltip> {
+    return this.request(
+      `/api/papers/${encodeURIComponent(paperId)}/semantic-notes/${encodeURIComponent(subjectId)}`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content, target_text: targetText ?? null }),
+      },
+    )
+  }
+
+  async deleteSemanticNote(paperId: string, subjectId: string): Promise<void> {
+    await this.request(
+      `/api/papers/${encodeURIComponent(paperId)}/semantic-notes/${encodeURIComponent(subjectId)}`,
       { method: 'DELETE' },
       false,
     )

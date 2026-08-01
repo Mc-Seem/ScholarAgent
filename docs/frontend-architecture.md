@@ -111,7 +111,8 @@ frontend/theia/
         ├── scholar-paper-find-toolbar.tsx # Native expandable find action
         ├── scholar-paper-graph-widget.tsx # Dynamic central knowledge-graph tab per paper
         ├── scholar-graph-selection.ts  # Source-aware Theia graph selection
-        ├── scholar-graph-property-view.tsx # Native Property View provider
+        ├── scholar-graph-property-view.tsx # Native Property View provider (fallback)
+        ├── scholar-semantic-lens-widget.tsx # Right-sidebar Semantic/Equation Lens
         ├── scholar-side-widgets.tsx    # Papers library
         ├── scholar-native-widgets.tsx  # Native trees, annotation detail/editor
         ├── scholar-annotation-preview.tsx # LaTeX-aware comment tree rows
@@ -162,8 +163,75 @@ tokens. The knowledge graph is not part of this side container: `Open
 Knowledge Graph` opens a dedicated central tab per paper (one
 `ScholarPaperGraphWidget` per `paperId`, reused on repeat opens), split to the
 right of the paper it belongs to. Selecting a graph node or edge publishes a
-source-aware value through Theia's `SelectionService`; the standard bottom
-`Property View` displays its paper, entity or relation details and connections.
+source-aware value through Theia's `SelectionService`. The paper widget uses the
+same selection channel for focusable inline semantic anchors and equations.
+Explicit click, `Enter`, or `Space` loads the shared semantic details or
+Equation Lens; hover still does nothing.
+
+`ScholarSemanticLensWidget` is the primary surface for those details. It is a
+standalone right-sidebar view (`Semantic Lens`, rank 90, ahead of `Annotations`
+and `Tooltip Drafts`) that renders the same `SemanticDetails`/`EquationLens`
+components as the web reader. A reading pane must not compete with the article
+for vertical space, so the lens deliberately lives beside the text instead of
+below it: the bottom `Property View` grows over the centre of the screen, which
+is exactly where the paper is read.
+
+The widget subscribes to `SelectionService` itself, so it shows the current
+subject even when it is created late. A semantic selection is revealed through
+`ApplicationShell.revealWidget`, never `activateWidget`: the tab becomes visible
+while focus and keyboard navigation stay in the paper. The reveal calls are
+serialised so repeated selections cannot dock the view twice. Only an explicit
+empty selection clears the lens; selecting a library or outline row leaves the
+last reading context on screen. Stale responses are dropped by an update
+counter, and a failed lookup renders the error instead of an endless spinner.
+The widget is bound transiently, because closing the tab disposes it and a
+singleton binding would return a disposed instance to the widget factory.
+
+The lens is also where the reader corrects the agent. Every text it shows is
+rendered through `EditableSemanticText`: the description of a term, the name of
+an equation, and the meaning of each notation row. Editing happens inline —
+pencil turns the text into a textarea with `Save`/`Cancel`, `Escape` cancels and
+`Ctrl`/`Cmd+Enter` saves — so a correction never moves the reader out of the
+panel where the text is read.
+
+There is exactly one text per subject, not an agent card plus a reader card: two
+competing explanations of the same symbol only force the reader to decide which
+one to trust. A reader edit is stored as a `Tooltip` keyed by the subject stable
+id (`entity:…`, `notation:…`, `equation:…`), which means an applied tooltip draft
+and a hand-typed correction are the same record. The lens shows the reader's
+wording when it differs from the agent's, marks it `edited`, and offers
+`Show original` and `Restore`. Restore deletes only the note; the injected
+anchors stay, so the term remains clickable in the paper. Paragraph comments
+(`dom_node_id` without `entity_id`) are not treated as subject wording — they
+belong to the block they annotate and stay in `Annotations`.
+
+`View → Semantic Lens` and `Alt+Shift+L` reopen the view. The native bottom
+`Property View` provider stays registered as a secondary, flat-table channel for
+the same selections. This makes the Theia Desktop reader the primary
+semantic-reading surface while retaining the Next.js reader as a compatible
+reference client.
+
+Everything the lens shows goes through MathJax: notation meanings, units,
+constraints, related labels, explanations, and note content. Because extracted
+meanings historically stored bare fragments such as `y_l`, `lib/inline-math.ts`
+wraps those tokens in `$...$` before rendering. The heuristic is narrow on
+purpose — a token is wrapped only when the whole token is a symbol with a
+sub/superscript or a LaTeX command, so prose, `snake_case` identifiers, and
+already-delimited math are untouched. `toMathSource` normalizes standalone
+expressions so stored `$x$` and `x` render identically.
+
+An equation card opens with its name and nothing above it. The header used to
+carry the extracted `paper_role` in small caps, but nothing constrained that
+field, so it usually repeated the summary as a full sentence; the field is gone
+from the schema rather than narrowed to a vocabulary that no field of study
+shares.
+
+Evidence is presented as places, not quotes. `EvidenceLocations` names the
+section (or the displayed equation when no section is known) plus the
+observation kind, and shows the supporting quote only when it adds something.
+Equation observations are anchored with the equation LaTeX as their quote, so
+repeating it under the rendered formula would be pure duplication; that
+self-quote is dropped and only the location remains clickable.
 
 `KnowledgeGraphView` remains the sole owner of graph loading, React Flow nodes
 and edges, filters, selection, focus, and dagre layout. A stable
@@ -263,22 +331,15 @@ npm run dev:theia:desktop     # Electron + backend
 
 ### Knowledge Graph Node Types
 
-The canonical presentation uses `concept`, `claim`, `method`, significant `formula`, and promoted `symbol` nodes. Formula-local symbols render inside collapsed formula facets rather than as peer nodes. Concept cards include aliases, decomposed ranking signals, scoped formula/symbol facets, and source evidence.
+The graph presents `topic`, `claim`, `procedure`, `artifact`, and `quantity` objects. Equations and scoped notation are separate reader records shown through Equation Lens and glossary lookup rather than peer graph nodes. Cards include aliases, roles/facets, decomposed signals, evidence, and omitted-link counts.
 
-The initial request is a 20-node overview and the server hard cap is 30. One-hop/source-focused responses merge by stable ID up to a client-visible cap of 50. Search results remain outside React Flow until explicitly revealed; Dagre runs only when topology changes, and the minimap is disabled above 30 visible nodes.
+The initial request is a 20-node sparse overview and the server hard cap is 30. One-hop/source-focused responses merge by stable ID up to a client-visible cap of 50. Search results remain outside React Flow until explicitly revealed; Dagre runs only when topology changes, and omitted relations are loaded only through explicit expansion.
 
 ### In-Paper Entity Spans
 
-```css
-/* From globals.css */
-.kg-entity {
-  border-bottom: 1px dotted;
-  cursor: help;
-}
-.kg-entity[data-entity-type="symbol"]     { border-color: rgb(59, 130, 246); }
-.kg-entity[data-entity-type="definition"] { border-color: rgb(16, 185, 129); }
-.kg-entity[data-entity-type="theorem"]    { border-color: rgb(139, 92, 246); }
-```
+Injected `.kg-entity` spans carry `data-occurrence-id` and `data-subject-id`, are keyboard-focusable, and activate only on click, Enter, or Space. There are no hover cards or hover-triggered details. Explicit term or equation selection opens the existing navigation sidebar; split-layout integrations retain selection without auto-opening a panel.
+
+`SemanticDetails` and `EquationLens` share one framework-neutral `SemanticSelection` union across Next.js and Theia. `reader-workspace-store.ts` caches bounded section annotations, subject details, and equation details per paper. Glossary search never inserts results into React Flow.
 
 ## API Integration
 
@@ -294,6 +355,15 @@ GET /api/papers/{paperId}/knowledge-graph            # export/debug only
 ```
 
 The controller exposes server search, one-hop expansion, source focus, dynamic filters, selection evidence, and bounded snapshots. `NavigationPanel` passes the current section as a source focus. Legacy unversioned graphs render a rebuild-required state.
+
+### Semantic Endpoints
+
+```text
+GET /api/papers/{paperId}/semantic/sections/{sectionId}/annotations
+GET /api/papers/{paperId}/semantic/subjects/{subjectId}
+GET /api/papers/{paperId}/semantic/equations/{equationId}
+GET /api/papers/{paperId}/semantic/glossary
+```
 
 ### Tooltip Endpoints
 
@@ -312,7 +382,28 @@ POST /api/papers/{paperId}/tooltips/suggest
 // Apply suggestions (injects <span> tags)
 POST /api/papers/{paperId}/tooltips/apply
 { suggestions: [...] }
+
+// Replace or restore the agent's wording for one subject
+PUT    /api/papers/{paperId}/semantic-notes/{subjectId}
+DELETE /api/papers/{paperId}/semantic-notes/{subjectId}
 ```
+
+Suggestion payloads are validated at the client boundary, and that validator is
+part of the contract: it checked the pre-rework occurrence shape
+(`section_id`, `char_offset`, `snippet`) long after the backend moved to
+schema-v3 anchors, so every generated suggestion was rejected as
+`Malformed response from server`. `ReaderWorkspaceSuggestionApi.test.ts` now
+pins both directions — the new shape parses, the old one is rejected.
+
+Apply sends drafts without occurrences (`AppliedTooltipSuggestion`). The drafts
+panel lists stored suggestions, which keep only label, type and text, so sending
+`occurrences: []` claimed the term occurs nowhere and produced `Applied N
+tooltips to 0 occurrences`: notes existed but nothing was highlighted. The
+backend resolves anchors from the paper's semantic document instead. Because a
+note without highlights is invisible, `spans_injected === 0` is reported as a
+warning rather than success, and backend skip reasons are surfaced as warnings.
+One term may arrive as several adjacent `.kg-entity` spans when inline markup
+splits it; `data-occurrence-part` keeps such a word visually whole.
 
 ### LLM Settings Endpoints
 
@@ -338,7 +429,7 @@ Knowledge graph build uses Server-Sent Events:
 const eventSource = new EventSource(`/api/papers/${paperId}/knowledge-graph/build/progress`);
 eventSource.onmessage = (e) => {
   const data = JSON.parse(e.data);
-  // data: { stage, progress, node_count?, edge_count?, error? }
+  // progress: { stage, label, current, total }
 };
 ```
 

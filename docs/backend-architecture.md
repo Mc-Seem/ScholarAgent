@@ -5,7 +5,8 @@
 ```
 backend/
 ├── app/
-│   ├── api/main.py           # FastAPI endpoints
+│   ├── api/main.py           # FastAPI paper/KG/tooltip endpoints
+│   ├── api/semantic_routes.py # Bounded semantic reader projections
 │   ├── api/settings_routes.py # Draft-aware LLM settings endpoints
 │   ├── agents/               # LangGraph pipelines
 │   │   ├── knowledge_graph.py    # Coordinated section extraction workflow
@@ -13,12 +14,12 @@ backend/
 │   │   ├── knowledge_graph_canonical.py # Equation anchoring and stable canonicalization
 │   │   ├── knowledge_graph_projection.py # Bounded ranking/search/subgraphs
 │   │   ├── knowledge_graph_retrieval.py # Offline passage/hybrid evaluation
-│   │   ├── tooltip_suggestion.py # Bounded canonical expertise filtering
+│   │   ├── tooltip_suggestion.py # Explanation-subject expertise filtering
 │   │   └── utils.py              # Shared utilities (retry, strip_html)
 │   ├── compiler/
 │   │   ├── latexml_compiler.py   # LaTeX → HTML via Docker
 │   │   ├── html_injection.py     # Inject <span> tags for tooltips
-│   │   └── ai_html_injection.py  # AI-assisted injection fallback
+│   │   └── ai_html_injection.py  # Deterministic occurrence injection + legacy fallback
 │   ├── utils/
 │   │   ├── crypto.py             # Fernet encryption for stored API keys
 │   │   ├── llm_factory.py        # Runtime and transient LangChain builders
@@ -38,7 +39,7 @@ class Paper(Base):
     id: str                    # SHA256 of uploaded file
     filename: str
     html_content: Text         # Compiled HTML with data-id attributes
-    knowledge_graph: JSON      # {nodes: [...], edges: [...]}
+    knowledge_graph: JSON      # Versioned schema-v3 semantic document
     sections_data: JSON        # Extracted at compile time
     equations_data: JSON
     # ...
@@ -77,10 +78,10 @@ no explicit or compatible legacy model fail clearly.
 LangGraph StateGraph:
 
 load_paper_data → extract_section_observations ─┐
-                → anchor_equations ─────────────┼→ build_canonical_document
+                → anchor_equations + analysis ──┼→ canonicalize → anchor occurrences
 ```
 
-The semantic branch makes one coordinated concept/claim/method extraction per section. The equation branch anchors significant display formulas to compiler `equations_data`; formula-local symbols remain facets unless promotion criteria pass. `_run_kg_build_task()` validates the complete `KnowledgeGraphDocument` before replacing `Paper.knowledge_graph`.
+The semantic branch extracts universal objects (`topic`, `claim`, `procedure`, `artifact`, `quantity`) with separate roles/facets. The equation branch anchors display equations to compiler IDs and performs one bounded analysis for purpose, notation, scope, units, constraints, and linked objects. `_run_kg_build_task()` validates the complete schema-v3 document before replacing `Paper.knowledge_graph`.
 
 ### Canonical Document
 
@@ -89,22 +90,25 @@ KnowledgeGraphDocument
   schema_version
   build { pipeline_version, prompt_versions, models, created_at }
   observations[] { id, kind, label, payload, confidence, source }
-  entities[] { stable_id, type, label, aliases, observation_ids, facets, signals }
-  relations[] { stable_id, type, source_id, target_id, evidence_ids, confidence }
+  objects[] { stable_id, kind, label, aliases, roles, facets, signals, evidence_ids }
+  relations[] { stable_id, type, source_id, target_id, qualifiers, evidence_ids, confidence }
+  equations[] { equation_id, latex, summary, notation_ids, object_ids, evidence_ids }
+  notation[] { symbol, meaning, scope_id, units, constraints, object_ids, evidence_ids }
+  explanations[] { subject_id, base_content, expertise, evidence_ids }
+  occurrences[] { subject_id, dom_node_id/equation_id, start, end, text, scope_id, local_override_id }
   metrics
 ```
 
 ### Occurrence Tracking
 
-Evidence locations are immutable source observations rather than fields duplicated onto every entity:
+Evidence remains immutable source observations. Rendering uses separate exact occurrences, so repeated mentions share one explanation without one LLM call per mention:
 ```python
 {
-    "section_id": "sec_3_2",
     "dom_node_id": "p_456",
-    "equation_id": None,
-    "char_start": 45,
-    "char_end": 48,
-    "quote": "α_t"
+    "start": 45,
+    "end": 48,
+    "text": "SUPG",
+    "scope_id": "sec_3_2"
 }
 ```
 
@@ -130,6 +134,14 @@ Evidence locations are immutable source observations rather than fields duplicat
 | GET | `/api/papers/{id}/knowledge-graph` | Complete versioned export/debug document |
 | DELETE | `/api/papers/{id}/knowledge-graph` | Delete for rebuilding |
 
+### Semantic Reader
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/papers/{id}/semantic/sections/{section}/annotations` | Bounded exact DOM anchors |
+| GET | `/api/papers/{id}/semantic/subjects/{subject}` | Shared explanation, occurrences, and evidence |
+| GET | `/api/papers/{id}/semantic/equations/{equation}` | Equation Lens purpose, notation, objects, and evidence |
+| GET | `/api/papers/{id}/semantic/glossary` | Bounded object/notation search without graph insertion |
+
 ### Tooltips
 | Method | Path | Description |
 |--------|------|-------------|
@@ -139,6 +151,21 @@ Evidence locations are immutable source observations rather than fields duplicat
 | DELETE | `/api/papers/{id}/tooltips/{tid}` | Delete |
 | POST | `/api/papers/{id}/tooltips/suggest` | AI suggestions |
 | POST | `/api/papers/{id}/tooltips/apply` | Apply (inject spans) |
+| PUT | `/api/papers/{id}/semantic-notes/{subject}` | Upsert the reader's wording for one subject |
+| DELETE | `/api/papers/{id}/semantic-notes/{subject}` | Drop it so the agent's text shows again |
+
+Semantic notes are `Tooltip` rows keyed by `entity_id`, where the subject is an
+object, a notation entry, or an equation record. `POST /tooltips` cannot serve
+them: it anchors to a DOM node and never sets `entity_id`. The delete route is
+deliberately not `DELETE /tooltips/{tid}` either, because that route also strips
+the injected `span.kg-entity` anchors for the entity; restoring a wording must
+not un-highlight the term in the paper.
+
+`POST /tooltips/suggest` returns occurrences in the schema-v3 anchor shape
+(`stable_id`, `subject_id`, `dom_node_id`/`equation_id`, `start`, `end`, `text`,
+`scope_id`). Its `entity_types` filter validates against object kinds plus
+`notation`; the pre-rework code read a `nodes` key that schema-v3 does not have,
+so any non-empty filter returned 400.
 
 ### LLM Settings
 
@@ -166,21 +193,29 @@ When tooltips are applied, `<span>` tags are injected:
 
 <!-- After -->
 <p data-id="p_123">The parameter <span class="kg-entity"
-   data-entity-id="symbol_alpha_t"
-   data-entity-type="symbol">α_t</span> controls noise.</p>
+   data-occurrence-id="occurrence_123"
+   data-subject-id="notation_alpha_t">α_t</span> controls noise.</p>
 ```
 
-### Character Offset Sync
+### Deterministic Occurrence Injection
 
-**Critical**: Both extraction and injection use the same text normalization:
-```python
-# In utils.py
-def strip_html_tags(html: str) -> str:
-    soup = BeautifulSoup(html, 'html.parser')
-    return soup.get_text(separator=' ', strip=True)
-```
+Validated occurrences are injected directly from exact DOM offsets. The active apply path does not ask an LLM to rediscover each mention.
 
-The `separator=' '` is essential - it ensures offsets match.
+`/tooltips/apply` resolves the anchors itself, from `Paper.knowledge_graph`, keyed by
+subject id. Stored drafts (`tooltip_suggestions`) hold only label, type and text, so a
+client has no positions to send; requiring them in the request produced notes with zero
+highlighted occurrences. Requests may still carry occurrences explicitly, which wins over
+the graph.
+
+`inject_validated_occurrences` returns `OccurrenceInjectionResult(html, anchored, skipped)`,
+so `spans_injected` reports what the reader will actually see. An occurrence that crosses
+inline markup is wrapped piecewise: LaTeXML renders acronym expansions and emphasis as nested
+tags, so one term becomes several adjacent spans sharing `data-occurrence-id`, each marked
+`data-occurrence-part="first|inner|last"` for styling. Occurrences whose text moved, whose node
+disappeared, or whose range another subject already annotated are reported in `skipped`
+instead of aborting the whole apply. Injection is idempotent per `stable_id`, and entities
+that already carry a note are still anchored — only duplicate `Tooltip` rows are skipped, so
+a note without highlights is repairable by applying again.
 
 ## Environment Variables
 
@@ -235,12 +270,11 @@ alembic downgrade -1
 2. Add Pydantic models for request/response
 3. Write test in `tests/test_api.py`
 
-### Add new entity type to KG
+### Extend semantic specialization
 
-1. Add Pydantic model in `agents/knowledge_graph.py`
-2. Add extraction agent function
-3. Update `build_graph()` to convert to nodes
-4. Add to parallel execution in `extract_all_entities()`
+1. Prefer a role, facet, or relation qualifier over a new top-level kind.
+2. Update strict contracts and the coordinated extraction prompt when a universal change is justified.
+3. Extend cross-domain ontology fixtures and projection/UI tests.
 
 ### Modify tooltip behavior
 

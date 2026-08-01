@@ -1,13 +1,11 @@
 import * as React from 'react'
-import { CommandService, Disposable, Emitter, Event, SelectionService } from '@theia/core'
+import { Disposable, Emitter, Event, SelectionService } from '@theia/core'
 import { ReactWidget } from '@theia/core/lib/browser'
 import { inject, injectable } from '@theia/core/shared/inversify'
 
-import type { SemanticNote } from '../../../../components/reader/SemanticDetails'
+import type { SemanticTextEditor } from '../../../../components/reader/EditableSemanticText'
 import { SemanticDetails } from '../../../../components/reader/SemanticDetails'
-import type { Tooltip } from '../../../../hooks/useTooltips'
 import type { EquationDetails, SemanticSubjectDetails } from '../../../../lib/semantic-api'
-import { ScholarCommands } from './scholar-commands'
 import { ScholarGraphSelection } from './scholar-graph-selection'
 import { navigateToPaperElement } from './scholar-react'
 import { ScholarWorkspaceService } from './scholar-workspace-service'
@@ -32,7 +30,6 @@ export class ScholarSemanticLensWidget extends ReactWidget {
   constructor(
     @inject(ScholarWorkspaceService) private readonly store: ScholarWorkspaceService,
     @inject(SelectionService) private readonly selectionService: SelectionService,
-    @inject(CommandService) private readonly commands: CommandService,
   ) {
     super()
     this.id = SCHOLAR_SEMANTIC_LENS_WIDGET_ID
@@ -45,8 +42,8 @@ export class ScholarSemanticLensWidget extends ReactWidget {
     this.toDispose.push(
       this.selectionService.onSelectionChanged(selection => this.applySelection(selection)),
     )
-    // Saved notes are rendered inside the lens, so edits made in the annotation
-    // editor have to repaint it.
+    // Reader wording is rendered inside the lens, so saving or restoring a note
+    // anywhere has to repaint it.
     this.toDispose.push(Disposable.create(this.store.subscribe(() => this.update())))
     this.applySelection(this.selectionService.selection, false)
     this.update()
@@ -121,31 +118,26 @@ export class ScholarSemanticLensWidget extends ReactWidget {
   }
 
   /**
-   * Finds the reader's own explanation of the current subject: an entity-wide
-   * tooltip for a term, or the comment anchored to the equation node.
+   * Collects the reader's own wording for every subject of the active paper.
+   *
+   * Notes are keyed by semantic subject, so an applied tooltip for a term and a
+   * correction typed into a notation row are the same record; the lens shows one
+   * text per subject instead of stacking the agent's and the reader's versions.
    */
-  private resolveNote(selection: ScholarGraphSelection): Tooltip | undefined {
-    const tooltips = this.store.getSnapshot().tooltipsByPaperId[selection.paperId] ?? []
-    const payload = selection.payload
-    if (payload.kind === 'equation') {
-      return tooltips.find(tooltip => tooltip.dom_node_id === payload.equationId)
+  private semanticEditor(paperId: string): SemanticTextEditor {
+    const tooltips = this.store.getSnapshot().tooltipsByPaperId[paperId] ?? []
+    const notesBySubjectId: Record<string, string> = {}
+    for (const tooltip of tooltips) {
+      if (tooltip.entity_id) {
+        notesBySubjectId[tooltip.entity_id] = tooltip.content
+      }
     }
-    const subjectId = payload.kind === 'node'
-      ? payload.id
-      : payload.kind === 'occurrence'
-        ? payload.subjectId
-        : undefined
-    return subjectId ? tooltips.find(tooltip => tooltip.entity_id === subjectId) : undefined
-  }
-
-  private editNote(paperId: string, tooltip: Tooltip): void {
-    // Reuse the annotation editor rather than duplicating an editing surface:
-    // the contribution reveals it as soon as a draft appears.
-    void this.commands.executeCommand(ScholarCommands.EDIT_ANNOTATION.id, {
-      paperId,
-      domNodeId: tooltip.dom_node_id ?? '',
-      tooltipIds: [tooltip.id],
-    })
+    return {
+      notesBySubjectId,
+      onSave: (subjectId, content, targetText) =>
+        this.store.saveSemanticNote(paperId, subjectId, content, targetText).then(() => undefined),
+      onRestore: subjectId => this.store.clearSemanticNote(paperId, subjectId),
+    }
   }
 
   protected override render(): React.ReactNode {
@@ -157,10 +149,6 @@ export class ScholarSemanticLensWidget extends ReactWidget {
         </div>
       )
     }
-    const tooltip = this.resolveNote(selection)
-    const note: SemanticNote | null = tooltip
-      ? { id: tooltip.id, content: tooltip.content, targetText: tooltip.target_text }
-      : null
     return (
       <SemanticDetails
         selection={selection.payload}
@@ -168,8 +156,7 @@ export class ScholarSemanticLensWidget extends ReactWidget {
         equationDetails={this.equationDetails}
         loading={this.detailsLoading}
         error={this.detailsError}
-        note={note}
-        onEditNote={tooltip ? () => this.editNote(selection.paperId, tooltip) : undefined}
+        editor={this.semanticEditor(selection.paperId)}
         onNavigate={dataId => navigateToPaperElement(selection.paperId, dataId)}
       />
     )

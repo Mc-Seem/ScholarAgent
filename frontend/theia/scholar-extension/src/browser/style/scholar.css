@@ -229,6 +229,12 @@
   background-color: rgba(99, 102, 241, 0.1);
 }
 
+/* A term split by inline markup becomes several anchors; side padding between
+   the pieces would open gaps inside one word. */
+.kg-entity[data-occurrence-part] { padding: 0; }
+.kg-entity[data-occurrence-part="first"] { padding-left: 1px; }
+.kg-entity[data-occurrence-part="last"] { padding-right: 1px; }
+
 .kg-entity[data-entity-type="symbol"] { border-bottom-color: rgba(59, 130, 246, 0.5); }
 .kg-entity[data-entity-type="definition"] { border-bottom-color: rgba(16, 185, 129, 0.5); }
 .kg-entity[data-entity-type="theorem"] { border-bottom-color: rgba(139, 92, 246, 0.5); }

@@ -86,21 +86,24 @@ function createLens(store: LensStore) {
       return { dispose: () => undefined }
     },
   }
-  const commands = { executeCommand: vi.fn().mockResolvedValue(undefined) }
+  const saveSemanticNote = vi.fn().mockResolvedValue({ id: 'tooltip-new' })
+  const clearSemanticNote = vi.fn().mockResolvedValue(undefined)
   const fullStore = {
     ...store,
+    saveSemanticNote,
+    clearSemanticNote,
     getSnapshot: () => ({ tooltipsByPaperId: { 'paper-a': store.tooltips ?? [] } }),
     subscribe: () => () => undefined,
   }
   const WidgetCtor = ScholarSemanticLensWidget as unknown as new (
     store: unknown,
     selectionService: unknown,
-    commands: unknown,
   ) => ScholarSemanticLensWidgetClass
-  const widget = new WidgetCtor(fullStore, selectionService, commands)
+  const widget = new WidgetCtor(fullStore, selectionService)
   return {
     widget,
-    commands,
+    saveSemanticNote,
+    clearSemanticNote,
     publish: (selection: unknown) => {
       selectionService.selection = selection
       listener?.(selection)
@@ -218,49 +221,16 @@ describe('ScholarSemanticLensWidget', () => {
     expect(source).toMatch(/id: SCHOLAR_SEMANTIC_LENS_WIDGET_ID/)
   })
 
-  it('shows the reader note next to the equation and edits it through the annotation editor', async () => {
+  it('shows the reader wording in place of the agent text and keeps the original reachable', async () => {
     const store = {
       loadEquationDetails: vi.fn().mockResolvedValue(equationDetails('Stabilization parameter.')),
       loadSemanticSubject: vi.fn(),
       tooltips: [{
         id: 'tooltip-1',
         paper_id: 'paper-a',
-        dom_node_id: 'eq-7',
-        entity_id: null,
-        content: 'Remember: h is the local element size.',
-        is_pinned: false,
-      }],
-    }
-    const { widget, commands, publish } = createLens(store)
-
-    await act(async () => {
-      publish(equationSelection())
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-    renderLens(widget)
-
-    expect(screen.getByTestId('semantic-note')).toHaveTextContent(
-      'Remember: h is the local element size.',
-    )
-    await userEvent.click(screen.getByTestId('semantic-note-edit'))
-    expect(commands.executeCommand).toHaveBeenCalledWith('scholar-agent.edit-annotation', {
-      paperId: 'paper-a',
-      domNodeId: 'eq-7',
-      tooltipIds: ['tooltip-1'],
-    })
-  })
-
-  it('leaves the note card out when nothing is saved for the subject', async () => {
-    const store = {
-      loadEquationDetails: vi.fn().mockResolvedValue(equationDetails('No note yet.')),
-      loadSemanticSubject: vi.fn(),
-      tooltips: [{
-        id: 'tooltip-2',
-        paper_id: 'paper-a',
-        dom_node_id: 'p-3',
-        entity_id: null,
-        content: 'A comment on an unrelated paragraph.',
+        dom_node_id: null,
+        entity_id: 'equation:eq-7',
+        content: 'Element-size limiter.',
         is_pinned: false,
       }],
     }
@@ -273,7 +243,97 @@ describe('ScholarSemanticLensWidget', () => {
     })
     renderLens(widget)
 
-    expect(screen.queryByTestId('semantic-note')).not.toBeInTheDocument()
+    const header = document.querySelector('.equation-lens-header')
+    expect(header).toHaveTextContent('Element-size limiter.')
+    expect(header).not.toHaveTextContent('Stabilization parameter.')
+    expect(screen.getAllByTestId('semantic-editable-badge').length).toBeGreaterThan(0)
+
+    await userEvent.click(screen.getAllByTestId('semantic-editable-original')[0])
+    expect(screen.getByTestId('semantic-editable-agent-text')).toHaveTextContent(
+      'Stabilization parameter.',
+    )
+  })
+
+  it('stores an edited symbol meaning against its notation subject', async () => {
+    const store = {
+      loadEquationDetails: vi.fn().mockResolvedValue(equationDetails('Stabilization parameter.')),
+      loadSemanticSubject: vi.fn(),
+    }
+    const { widget, saveSemanticNote, publish } = createLens(store)
+
+    await act(async () => {
+      publish(equationSelection())
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    renderLens(widget)
+
+    const row = document.querySelector('[data-subject-id="notation:tau"]') as HTMLElement
+    await userEvent.click(row.querySelector('[data-testid="semantic-editable-edit"]')!)
+    const input = screen.getByTestId('semantic-editable-input')
+    await userEvent.clear(input)
+    await userEvent.type(input, 'Element size over twice the speed.')
+    await userEvent.click(screen.getByTestId('semantic-editable-save'))
+
+    expect(saveSemanticNote).toHaveBeenCalledWith(
+      'paper-a',
+      'notation:tau',
+      'Element size over twice the speed.',
+      'τ',
+    )
+  })
+
+  it('restores the agent wording without deleting the paper anchors', async () => {
+    const store = {
+      loadEquationDetails: vi.fn().mockResolvedValue(equationDetails('Stabilization parameter.')),
+      loadSemanticSubject: vi.fn(),
+      tooltips: [{
+        id: 'tooltip-1',
+        paper_id: 'paper-a',
+        dom_node_id: null,
+        entity_id: 'equation:eq-7',
+        content: 'Element-size limiter.',
+        is_pinned: false,
+      }],
+    }
+    const { widget, clearSemanticNote, publish } = createLens(store)
+
+    await act(async () => {
+      publish(equationSelection())
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    renderLens(widget)
+
+    await userEvent.click(screen.getAllByTestId('semantic-editable-restore')[0])
+
+    expect(clearSemanticNote).toHaveBeenCalledWith('paper-a', 'equation:eq-7')
+  })
+
+  it('does not treat a paragraph comment as the wording of the equation', async () => {
+    const store = {
+      loadEquationDetails: vi.fn().mockResolvedValue(equationDetails('Agent wording.')),
+      loadSemanticSubject: vi.fn(),
+      tooltips: [{
+        id: 'tooltip-2',
+        paper_id: 'paper-a',
+        dom_node_id: 'eq-7',
+        entity_id: null,
+        content: 'A comment anchored to the equation block.',
+        is_pinned: false,
+      }],
+    }
+    const { widget, publish } = createLens(store)
+
+    await act(async () => {
+      publish(equationSelection())
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    renderLens(widget)
+
+    expect(document.querySelector('.equation-lens-header')).toHaveTextContent('Agent wording.')
+    expect(screen.queryByTestId('semantic-editable-badge')).not.toBeInTheDocument()
   })
 
   it('surfaces a failed lookup instead of an endless spinner', async () => {

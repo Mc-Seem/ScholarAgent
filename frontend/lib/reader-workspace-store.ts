@@ -54,6 +54,13 @@ export interface ReaderWorkspaceApi {
   updateTooltip?(paperId: string, tooltipId: string, update: TooltipUpdate): Promise<Tooltip>
   deleteTooltip?(paperId: string, tooltipId: string): Promise<void>
   removeTooltipOccurrence?(paperId: string, tooltipId: string, domNodeId: string): Promise<void>
+  saveSemanticNote?(
+    paperId: string,
+    subjectId: string,
+    content: string,
+    targetText?: string | null,
+  ): Promise<Tooltip>
+  deleteSemanticNote?(paperId: string, subjectId: string): Promise<void>
   watchCompilation?(
     paperId: string,
     onProgress: (progress: CompilationProgress) => void,
@@ -359,6 +366,36 @@ export class ReaderWorkspaceStore {
     const remove = this.requireOperation('removeTooltipOccurrence')
     await remove.call(this.api, paperId, tooltipId, domNodeId)
     await this.refreshPaper(paperId)
+  }
+
+  /**
+   * Replaces the agent's text about one semantic subject with the reader's own.
+   * The paper HTML is untouched: anchors stay where the graph put them, only the
+   * text behind them changes, so there is no need to reload the paper.
+   */
+  async saveSemanticNote(
+    paperId: string,
+    subjectId: string,
+    content: string,
+    targetText?: string | null,
+  ): Promise<Tooltip> {
+    const save = this.requireOperation('saveSemanticNote')
+    const tooltip = await save.call(this.api, paperId, subjectId, content, targetText)
+    this.updateTooltipState(paperId, tooltip)
+    return tooltip
+  }
+
+  /** Drops the reader's text for a subject so the agent's own text shows again. */
+  async clearSemanticNote(paperId: string, subjectId: string): Promise<void> {
+    const remove = this.requireOperation('deleteSemanticNote')
+    await remove.call(this.api, paperId, subjectId)
+    this.update({
+      tooltipsByPaperId: {
+        ...this.snapshot.tooltipsByPaperId,
+        [paperId]: (this.snapshot.tooltipsByPaperId[paperId] ?? [])
+          .filter(tooltip => tooltip.entity_id !== subjectId),
+      },
+    })
   }
 
   activatePaper(paperId: string): void {

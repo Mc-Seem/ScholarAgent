@@ -10,7 +10,7 @@ import httpx
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Depends, BackgroundTasks, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 import asyncio
 import json
@@ -141,6 +141,12 @@ class TooltipResponse(BaseModel):
         from_attributes = True
 
 
+class SemanticNoteRequest(BaseModel):
+    """Reader's own wording for one semantic subject, replacing the agent's text"""
+    content: str
+    target_text: Optional[str] = None
+
+
 # Tooltip Suggestion Models (Phase 2)
 
 class TooltipSuggestionRequest(BaseModel):
@@ -163,12 +169,17 @@ class OccurrenceData(BaseModel):
 
 
 class TooltipSuggestion(BaseModel):
-    """A suggested tooltip for an entity"""
+    """A suggested tooltip for an entity.
+
+    ``occurrences`` is filled in by the suggestion endpoint. Clients applying a
+    draft may omit it: the apply endpoint resolves anchors from the paper's
+    semantic document, which is the only place they are persisted.
+    """
     entity_id: str
     entity_label: str
     entity_type: str
     tooltip_content: str
-    occurrences: List[OccurrenceData]
+    occurrences: List[OccurrenceData] = Field(default_factory=list)
 
 
 class TooltipSuggestionResponse(BaseModel):
@@ -583,6 +594,80 @@ async def delete_tooltip(paper_id: str, tooltip_id: str, db: Session = Depends(g
     return {"status": "success", "tooltip_id": tooltip_id}
 
 
+@app.put("/api/papers/{paper_id}/semantic-notes/{subject_id}", response_model=TooltipResponse)
+async def upsert_semantic_note(
+    paper_id: str,
+    subject_id: str,
+    note: SemanticNoteRequest,
+    db: Session = Depends(get_db)
+):
+    """Store the reader's replacement for the agent's text about one subject.
+
+    ``subject_id`` is a semantic stable id: an object, a notation entry, or an
+    equation record. The reader edits exactly one text per subject, so the note
+    is upserted rather than appended. ``POST /tooltips`` cannot serve this: it
+    only anchors to a DOM node and never sets ``entity_id``.
+    """
+    paper = db.query(Paper).filter(Paper.id == paper_id).first()
+    if not paper:
+        raise HTTPException(status_code=404, detail="Paper not found")
+
+    content = note.content.strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="Note content must not be empty")
+
+    existing = db.query(Tooltip).filter(
+        Tooltip.paper_id == paper_id,
+        Tooltip.entity_id == subject_id
+    ).order_by(Tooltip.created_at).first()
+
+    if existing:
+        existing.content = content
+        if note.target_text is not None:
+            existing.target_text = note.target_text
+        existing.updated_at = datetime.now(UTC)
+        db.commit()
+        db.refresh(existing)
+        return existing
+
+    created = Tooltip(
+        id=str(uuid.uuid4()),
+        paper_id=paper_id,
+        entity_id=subject_id,
+        target_text=note.target_text,
+        content=content,
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC)
+    )
+    db.add(created)
+    db.commit()
+    db.refresh(created)
+    return created
+
+
+@app.delete("/api/papers/{paper_id}/semantic-notes/{subject_id}")
+async def delete_semantic_note(paper_id: str, subject_id: str, db: Session = Depends(get_db)):
+    """Drop the reader's text for a subject so the agent's own text shows again.
+
+    Deliberately unlike ``DELETE /tooltips/{tooltip_id}``: that route also strips
+    the injected ``span.kg-entity`` anchors for the entity. Restoring a wording
+    must not un-highlight the term in the paper, so the HTML is left alone.
+    """
+    notes = db.query(Tooltip).filter(
+        Tooltip.paper_id == paper_id,
+        Tooltip.entity_id == subject_id
+    ).all()
+
+    if not notes:
+        raise HTTPException(status_code=404, detail="Semantic note not found")
+
+    for note in notes:
+        db.delete(note)
+    db.commit()
+
+    return {"status": "success", "subject_id": subject_id}
+
+
 @app.delete("/api/papers/{paper_id}/tooltips/{tooltip_id}/occurrences/{dom_node_id}")
 async def remove_tooltip_occurrence(
     paper_id: str,
@@ -674,9 +759,14 @@ async def suggest_tooltips_endpoint(
 
     # user_expertise is free-form text passed to LLM - no validation needed
 
-    # Validate entity types filter if provided
+    # Validate entity types filter if provided. Schema-v3 documents have no
+    # "nodes" key: kinds live on objects, plus the synthetic "notation" kind the
+    # suggestion agent filters on.
     if request.entity_types:
-        valid_types = sorted({node.get("type") for node in paper.knowledge_graph.get("nodes", []) if node.get("type")})
+        valid_types = sorted(
+            {str(item.get("kind")) for item in paper.knowledge_graph.get("objects", []) if item.get("kind")}
+            | {"notation"}
+        )
         invalid_types = [t for t in request.entity_types if t not in valid_types]
         if invalid_types:
             raise HTTPException(
@@ -892,30 +982,15 @@ async def apply_tooltips_endpoint(
 
         print(f"\n[Tooltip Apply] Received request to apply {len(suggestions_dict)} tooltip suggestions for paper {paper_id}")
 
-        # Check for duplicates - skip entities that already have tooltips
+        # Entities that already carry a note. Their anchors are still injected:
+        # a note can exist without highlights (created from the lens, or applied
+        # before anchoring worked), and injection is idempotent per occurrence.
         existing_entity_ids = {
             t.entity_id for t in db.query(Tooltip).filter(
                 Tooltip.paper_id == paper_id,
                 Tooltip.entity_id.isnot(None)
             ).all()
         }
-
-        # Filter out already-applied entities
-        original_count = len(suggestions_dict)
-        suggestions_dict = [s for s in suggestions_dict if s.get('entity_id') not in existing_entity_ids]
-
-        if len(suggestions_dict) < original_count:
-            skipped = original_count - len(suggestions_dict)
-            print(f"[Tooltip Apply] Skipped {skipped} entities that already have tooltips")
-
-        if not suggestions_dict:
-            tooltip_apply_progress[paper_id] = {"stage": "complete", "current": 0, "total": 0}
-            return TooltipApplicationResponse(
-                success=True,
-                spans_injected=0,
-                tooltips_created=0,
-                errors=["All selected entities already have tooltips applied"]
-            )
 
         print("[Tooltip Apply] Injecting validated semantic occurrences...")
 
@@ -928,19 +1003,47 @@ async def apply_tooltips_endpoint(
                 "total": total,
             }
 
-        occurrences = [
-            occurrence
-            for suggestion in suggestions_dict
-            for occurrence in suggestion.get("occurrences", [])
-            if occurrence.get("dom_node_id")
-        ]
-        modified_html = await asyncio.to_thread(
+        # Occurrences come from the semantic document, not from the request: the
+        # drafts panel lists rows of ``tooltip_suggestions``, which stores only
+        # label and text, so a client can never send anchor positions back.
+        graph_occurrences: Dict[str, List[Dict[str, Any]]] = {}
+        for occurrence in (paper.knowledge_graph or {}).get("occurrences", []):
+            if occurrence.get("dom_node_id"):
+                graph_occurrences.setdefault(str(occurrence.get("subject_id")), []).append(occurrence)
+
+        occurrences = []
+        seen_occurrence_ids = set()
+        entities_without_occurrences = []
+        for suggestion in suggestions_dict:
+            entity_id = str(suggestion.get("entity_id"))
+            requested = [
+                occurrence
+                for occurrence in suggestion.get("occurrences") or []
+                if occurrence.get("dom_node_id")
+            ]
+            resolved = requested or graph_occurrences.get(entity_id, [])
+            if not resolved:
+                entities_without_occurrences.append(suggestion.get("entity_label") or entity_id)
+            for occurrence in resolved:
+                stable_id = str(occurrence.get("stable_id"))
+                if stable_id in seen_occurrence_ids:
+                    continue
+                seen_occurrence_ids.add(stable_id)
+                occurrences.append(occurrence)
+
+        injection = await asyncio.to_thread(
             inject_validated_occurrences,
             paper.html_content,
             occurrences,
             report_progress,
         )
-        injection_errors = []
+        modified_html = injection.html
+        injection_errors = list(injection.skipped)
+        if entities_without_occurrences:
+            injection_errors.append(
+                "No occurrences in the knowledge graph for: "
+                + ", ".join(sorted(set(entities_without_occurrences)))
+            )
 
         if not modified_html:
             raise ValueError("Semantic occurrence injection failed to produce modified HTML")
@@ -953,9 +1056,12 @@ async def apply_tooltips_endpoint(
         # Persist modified HTML
         paper.html_content = modified_html
 
-        # Create Tooltip records for each suggestion (use suggestions_dict which is already filtered)
+        # Create Tooltip records, skipping entities that already carry a note so
+        # that a rerun does not duplicate texts the reader may have edited.
         tooltips_created = 0
         for suggestion in suggestions_dict:
+            if suggestion.get('entity_id') in existing_entity_ids:
+                continue
             # Create semantic tooltip (entity_id is set, dom_node_id is None)
             new_tooltip = Tooltip(
                 id=str(uuid.uuid4()),
@@ -973,9 +1079,8 @@ async def apply_tooltips_endpoint(
         # Commit all changes
         db.commit()
 
-        # Calculate successful spans (use suggestions_dict which has the populated occurrences)
-        total_occurrences = sum(len(s.get('occurrences', [])) for s in suggestions_dict)
-        spans_injected = total_occurrences - len(injection_errors)
+        # Report what the reader will actually see, not how many anchors were requested.
+        spans_injected = injection.anchored
 
         print(f"[Tooltip Apply] Complete: {spans_injected} spans injected, {tooltips_created} tooltips created")
         previous_progress = tooltip_apply_progress.get(paper_id, {})

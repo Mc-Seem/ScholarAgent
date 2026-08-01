@@ -302,6 +302,26 @@ describe('Scholar suggestion commands', () => {
     expect(messageService.warn).toHaveBeenCalledWith('One occurrence was skipped')
   })
 
+  it('warns instead of reporting success when nothing was highlighted', async () => {
+    // Notes without anchors are invisible in the paper: reporting "Applied 8
+    // tooltips to 0 occurrences" as information hid a broken apply.
+    const { commands, suggestions, messageService } = createContext()
+    const tree = Object.create(ScholarSuggestionsTreeWidget.prototype)
+    suggestions.applySuggestions.mockResolvedValueOnce({
+      success: true,
+      tooltips_created: 8,
+      spans_injected: 0,
+      errors: [],
+    })
+
+    await commands.handlerFor(ScholarCommands.APPLY_SUGGESTIONS).execute(tree)
+
+    expect(messageService.info).not.toHaveBeenCalledWith(expect.stringContaining('Applied 8'))
+    expect(messageService.warn).toHaveBeenCalledWith(
+      'Applied 8 tooltips but highlighted no occurrences',
+    )
+  })
+
   it('starts manual creation and confirms deletion of only a concrete suggestion', async () => {
     const { commands, suggestions } = createContext()
     const tree = Object.create(ScholarSuggestionsTreeWidget.prototype)

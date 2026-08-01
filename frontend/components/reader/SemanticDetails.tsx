@@ -1,22 +1,17 @@
 'use client'
 
-import { ArrowLeft, Pencil } from 'lucide-react'
+import { ArrowLeft } from 'lucide-react'
 import { wrapBareMath } from '../../lib/inline-math'
 import type {
   EquationDetails,
   SemanticSelection,
   SemanticSubjectDetails,
 } from '../../lib/semantic-api'
+import { EditableSemanticText } from './EditableSemanticText'
+import type { SemanticTextEditor } from './EditableSemanticText'
 import { EquationLens } from './EquationLens'
 import { EvidenceLocations } from './EvidenceLocations'
 import { LatexText } from './LatexText'
-
-/** A saved tooltip shown next to the semantic details of the same subject. */
-export interface SemanticNote {
-  id: string
-  content: string
-  targetText?: string | null
-}
 
 interface SemanticDetailsProps {
   selection: SemanticSelection
@@ -25,37 +20,16 @@ interface SemanticDetailsProps {
   loading?: boolean
   error?: string | null
   /**
-   * The reader's own explanation of the selected term or equation. Rendered in
-   * the same card so that both kinds of explanation live in one place.
+   * Enables replacing the agent's wording with the reader's own, in place. The
+   * agent can misread a symbol, and the correction belongs where the text is
+   * read rather than in a second card next to it.
    */
-  note?: SemanticNote | null
-  onEditNote?: (note: SemanticNote) => void
+  editor?: SemanticTextEditor
   onBack?: () => void
   onNavigate?: (domNodeId: string) => void
 }
 
-function NoteCard({ note, onEditNote }: { note: SemanticNote; onEditNote?: (note: SemanticNote) => void }) {
-  return (
-    <section className="semantic-note" data-testid="semantic-note">
-      <h4 className="semantic-note-title">
-        Your note
-        {onEditNote && (
-          <button
-            type="button"
-            className="semantic-note-edit"
-            data-testid="semantic-note-edit"
-            onClick={() => onEditNote(note)}
-          >
-            <Pencil size={12} /> Edit
-          </button>
-        )}
-      </h4>
-      <div className="semantic-note-content">
-        <LatexText text={wrapBareMath(note.content)} />
-      </div>
-    </section>
-  )
-}
+const renderMath = (text: string) => <LatexText text={wrapBareMath(text)} />
 
 export function SemanticDetails({
   selection,
@@ -63,8 +37,7 @@ export function SemanticDetails({
   equationDetails,
   loading = false,
   error,
-  note,
-  onEditNote,
+  editor,
   onBack,
   onNavigate,
 }: SemanticDetailsProps) {
@@ -78,10 +51,7 @@ export function SemanticDetails({
       {loading && <p className="text-sm text-slate-500">Loading details…</p>}
       {error && <p className="text-sm text-red-600">{error}</p>}
       {!loading && !error && selection.kind === 'equation' && equationDetails && (
-        <>
-          <EquationLens details={equationDetails} onNavigate={onNavigate} />
-          {note && <NoteCard note={note} onEditNote={onEditNote} />}
-        </>
+        <EquationLens details={equationDetails} onNavigate={onNavigate} editor={editor} />
       )}
       {!loading && !error && (selection.kind === 'occurrence' || selection.kind === 'node') && subjectDetails && (
         <div className="space-y-4">
@@ -92,13 +62,19 @@ export function SemanticDetails({
             <h3 className="mt-1 text-lg font-semibold text-slate-900">
               <LatexText text={wrapBareMath(subjectDetails.subject.label)} />
             </h3>
-            {subjectDetails.explanation && (
-              <p className="mt-2 text-sm leading-6 text-slate-700">
-                <LatexText text={wrapBareMath(subjectDetails.explanation.base_content)} />
-              </p>
+            {(subjectDetails.explanation || editor) && (
+              <EditableSemanticText
+                as="p"
+                className="mt-2 text-sm leading-6 text-slate-700"
+                subjectId={subjectDetails.subject.stable_id}
+                agentText={subjectDetails.explanation?.base_content ?? ''}
+                label={`description of ${subjectDetails.subject.label}`}
+                targetText={subjectDetails.subject.label}
+                renderText={renderMath}
+                editor={editor}
+              />
             )}
           </div>
-          {note && <NoteCard note={note} onEditNote={onEditNote} />}
           {subjectDetails.subject.roles.length > 0 && (
             <div className="flex flex-wrap gap-1">
               {subjectDetails.subject.roles.map(role => (

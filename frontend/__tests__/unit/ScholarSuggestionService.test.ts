@@ -446,6 +446,9 @@ describe('ScholarSuggestionService', () => {
       .toBe('Applying tooltip drafts…')
     await expect(resultPromise).resolves.toMatchObject({ tooltips_created: 2 })
 
+    // No `occurrences` key: stored drafts hold only label and text, so sending an
+    // empty array told the backend "this entity occurs nowhere" and produced notes
+    // without a single highlight. Anchors are resolved from the graph server-side.
     expect(api.applyTooltipSuggestions).toHaveBeenCalledWith('paper-a', {
       suggestions: [
         {
@@ -453,14 +456,12 @@ describe('ScholarSuggestionService', () => {
           entity_label: 'manual',
           entity_type: 'definition',
           tooltip_content: 'Content for manual',
-          occurrences: [],
         },
         {
           entity_id: 'entity-ai',
           entity_label: 'ai',
           entity_type: 'definition',
           tooltip_content: 'Edited AI content',
-          occurrences: [],
         },
       ],
     })

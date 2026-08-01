@@ -391,6 +391,98 @@ class TestTooltipsEndpoints:
         assert update_response.json()["display_order"] == 5
 
 
+class TestSemanticNotes:
+    """Tests for reader wording stored against a semantic subject."""
+
+    @pytest.fixture
+    def paper_with_id(self, api_client, simple_tex_file):
+        """Create a paper and return its ID."""
+        tar_buffer = io.BytesIO()
+        with tarfile.open(fileobj=tar_buffer, mode="w:gz") as tar:
+            tar.add(simple_tex_file, arcname="paper.tex")
+        tar_buffer.seek(0)
+
+        files = {"file": ("paper.tar.gz", tar_buffer, "application/gzip")}
+        data = {"compile_now": "false"}
+        response = api_client.post("/api/papers/upload", files=files, data=data)
+        return response.json().get("id") or response.json().get("paper_id")
+
+    def test_note_is_anchored_to_the_subject_not_to_a_dom_node(self, api_client, paper_with_id):
+        """The lens edits texts about subjects, including notation and equations."""
+        response = api_client.put(
+            f"/api/papers/{paper_with_id}/semantic-notes/notation:tau",
+            json={"content": "  Local element size.  ", "target_text": "τ"}
+        )
+
+        assert response.status_code == 200
+        result = response.json()
+        assert result["entity_id"] == "notation:tau"
+        assert result["dom_node_id"] is None
+        assert result["content"] == "Local element size."
+        assert result["target_text"] == "τ"
+
+    def test_second_edit_replaces_the_first_instead_of_stacking(self, api_client, paper_with_id):
+        """One subject carries one text, so the reader never sees two versions."""
+        first = api_client.put(
+            f"/api/papers/{paper_with_id}/semantic-notes/entity:slime",
+            json={"content": "First wording."}
+        )
+        second = api_client.put(
+            f"/api/papers/{paper_with_id}/semantic-notes/entity:slime",
+            json={"content": "Corrected wording."}
+        )
+
+        assert first.json()["id"] == second.json()["id"]
+        assert second.json()["content"] == "Corrected wording."
+        stored = api_client.get(f"/api/papers/{paper_with_id}/tooltips").json()
+        assert [item["content"] for item in stored] == ["Corrected wording."]
+
+    def test_blank_content_is_rejected(self, api_client, paper_with_id):
+        """An empty edit would silently erase the agent's text."""
+        response = api_client.put(
+            f"/api/papers/{paper_with_id}/semantic-notes/entity:slime",
+            json={"content": "   "}
+        )
+
+        assert response.status_code == 400
+
+    def test_restoring_keeps_the_injected_anchors(self, api_client, paper_with_id):
+        """Restoring a wording must not un-highlight the term in the paper."""
+        from backend.app.api.main import app
+        from backend.app.database.connection import get_db
+        from backend.app.database.models import Paper as PaperModel
+
+        html = (
+            '<p data-id="p-1">A <span class="kg-entity" '
+            'data-entity-id="entity:slime">SLIME</span> step.</p>'
+        )
+        db = next(app.dependency_overrides[get_db]())
+        db.query(PaperModel).filter(PaperModel.id == paper_with_id).first().html_content = html
+        db.commit()
+        api_client.put(
+            f"/api/papers/{paper_with_id}/semantic-notes/entity:slime",
+            json={"content": "My own wording."}
+        )
+
+        response = api_client.delete(
+            f"/api/papers/{paper_with_id}/semantic-notes/entity:slime"
+        )
+
+        assert response.status_code == 200
+        reloaded = next(app.dependency_overrides[get_db]()).query(PaperModel).filter(
+            PaperModel.id == paper_with_id
+        ).first()
+        assert 'data-entity-id="entity:slime"' in reloaded.html_content
+        assert api_client.get(f"/api/papers/{paper_with_id}/tooltips").json() == []
+
+    def test_restoring_a_missing_note_reports_not_found(self, api_client, paper_with_id):
+        response = api_client.delete(
+            f"/api/papers/{paper_with_id}/semantic-notes/entity:unknown"
+        )
+
+        assert response.status_code == 404
+
+
 class TestArxivUploadEndpoint:
     """Tests for POST /api/papers/upload/arxiv."""
 

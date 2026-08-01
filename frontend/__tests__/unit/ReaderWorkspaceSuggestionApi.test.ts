@@ -64,11 +64,15 @@ describe('HttpReaderWorkspaceApi tooltip suggestions', () => {
         entity_type: 'symbol',
         tooltip_content: 'A parameter.',
         occurrences: [{
-          section_id: 'section-1',
+          stable_id: 'occurrence:1',
+          subject_id: 'entity-1',
           dom_node_id: 'node-1',
-          char_offset: 5,
-          length: 5,
-          snippet: 'Let Alpha be...',
+          equation_id: null,
+          start: 4,
+          end: 9,
+          text: 'Alpha',
+          scope_id: 'section-1',
+          local_override_id: null,
         }],
       }],
       total_entities: 4,
@@ -127,7 +131,6 @@ describe('HttpReaderWorkspaceApi tooltip suggestions', () => {
         entity_label: 'Alpha',
         entity_type: 'symbol',
         tooltip_content: 'Edited content.',
-        occurrences: [],
       }],
     }
     const response = {
@@ -214,6 +217,31 @@ describe('HttpReaderWorkspaceApi tooltip suggestions', () => {
       .mockResolvedValueOnce(jsonResponse({ suggestions: 'not-an-array' }))
 
     await expect(api.listTooltipSuggestions('paper')).rejects.toThrow('Malformed response')
+    await expect(api.generateTooltipSuggestions('paper', {
+      user_expertise: 'Researcher',
+      entity_types: null,
+    })).rejects.toThrow('Malformed response')
+  })
+
+  it('rejects the pre-rework occurrence shape instead of accepting both', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({
+      suggestions: [{
+        entity_id: 'entity-1',
+        entity_label: 'Alpha',
+        entity_type: 'symbol',
+        tooltip_content: 'A parameter.',
+        occurrences: [{
+          section_id: 'section-1',
+          dom_node_id: 'node-1',
+          char_offset: 5,
+          length: 5,
+          snippet: 'Let Alpha be...',
+        }],
+      }],
+      total_entities: 4,
+      suggested_count: 1,
+    }))
+
     await expect(api.generateTooltipSuggestions('paper', {
       user_expertise: 'Researcher',
       entity_types: null,

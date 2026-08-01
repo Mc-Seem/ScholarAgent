@@ -13,7 +13,7 @@ Pipeline:
 
 import os
 import re
-from typing import TypedDict, List, Dict, Any, Tuple
+from typing import TypedDict, List, Dict, Any, NamedTuple, Tuple
 try:
     from typing import NotRequired
 except ImportError:
@@ -102,12 +102,80 @@ class SectionInjectionOutput(BaseModel):
     )
 
 
+class OccurrenceInjectionResult(NamedTuple):
+    """Outcome of anchoring semantic occurrences into paper HTML.
+
+    ``anchored`` is the number of occurrences that actually became
+    ``span.kg-entity`` anchors, so callers can report what the reader will see
+    instead of assuming every requested occurrence landed.
+    """
+    html: str
+    anchored: int
+    skipped: List[str]
+
+
+def _annotatable_strings(target: Tag) -> List[NavigableString]:
+    """Text nodes of ``target`` that may still receive an anchor.
+
+    Text already wrapped in ``span.kg-entity`` is excluded so that reruns never
+    nest anchors. Offsets in the semantic document are measured over exactly
+    this concatenation, which is why it is recomputed after every insertion.
+    """
+    return [
+        item
+        for item in target.descendants
+        if isinstance(item, NavigableString)
+        and not any(
+            isinstance(parent, Tag)
+            and (
+                parent.name in {"script", "style"}
+                or "kg-entity" in parent.get("class", [])
+            )
+            for parent in item.parents
+            if parent is not target
+        )
+    ]
+
+
+def _locate_segments(
+    strings: List[NavigableString],
+    start: int,
+    end: int,
+) -> List[Tuple[NavigableString, int, int]]:
+    """Split the ``[start, end)`` range into per-text-node slices.
+
+    An occurrence routinely straddles inline markup: LaTeXML renders acronym
+    expansions and emphasis as nested tags, so ``Stabilized Likelihood Implicit
+    Margin Enforcement`` arrives as ``S`` + ``tabilized `` + ``L`` + ... A single
+    anchor cannot cross tag boundaries, so the range is wrapped piecewise.
+    """
+    segments: List[Tuple[NavigableString, int, int]] = []
+    cursor = 0
+    for text_node in strings:
+        node_end = cursor + len(str(text_node))
+        if node_end > start and cursor < end:
+            segments.append((
+                text_node,
+                max(start, cursor) - cursor,
+                min(end, node_end) - cursor,
+            ))
+        cursor = node_end
+        if cursor >= end:
+            break
+    return segments
+
+
 def inject_validated_occurrences(
     html_content: str,
     occurrences: List[Dict[str, Any]],
     progress_callback: Any = None,
-) -> str:
-    """Inject prevalidated semantic anchors without rediscovering spans with an LLM."""
+) -> OccurrenceInjectionResult:
+    """Inject prevalidated semantic anchors without rediscovering spans with an LLM.
+
+    A single unusable occurrence must not cost the reader all the others: stale
+    offsets, a vanished node or a range already covered by another subject are
+    reported in ``skipped`` while the rest are anchored.
+    """
     soup = BeautifulSoup(html_content, "html.parser")
     existing_ids = {
         str(element.get("data-occurrence-id"))
@@ -121,64 +189,66 @@ def inject_validated_occurrences(
             continue
         grouped.setdefault(str(dom_node_id), []).append(occurrence)
 
+    total = sum(len(items) for items in grouped.values())
     completed = 0
+    skipped: List[str] = []
     for dom_node_id, node_occurrences in sorted(grouped.items()):
         target = soup.find(attrs={"data-id": dom_node_id})
         if target is None:
-            raise ValueError(f"occurrence target does not exist: {dom_node_id}")
+            skipped.extend(
+                f"{occurrence.get('stable_id')}: node {dom_node_id} is no longer in the HTML"
+                for occurrence in node_occurrences
+            )
+            continue
+        # Descending order keeps the offsets of the not-yet-processed occurrences
+        # valid: insertions only ever change text after their own start.
         for occurrence in sorted(node_occurrences, key=lambda item: int(item["start"]), reverse=True):
             start, end = int(occurrence["start"]), int(occurrence["end"])
             expected = str(occurrence["text"])
-            strings = [
-                item
-                for item in target.descendants
-                if isinstance(item, NavigableString)
-                and not any(
-                    isinstance(parent, Tag)
-                    and (
-                        parent.name in {"script", "style"}
-                        or "kg-entity" in parent.get("class", [])
-                    )
-                    for parent in item.parents
-                    if parent is not target
-                )
-            ]
-            cursor = 0
-            matched = None
-            for text_node in strings:
-                node_end = cursor + len(str(text_node))
-                if cursor <= start and end <= node_end:
-                    matched = (text_node, start - cursor, end - cursor)
-                    break
-                cursor = node_end
-            if matched is None:
-                raise ValueError(
-                    f"occurrence {occurrence.get('stable_id')} crosses markup or has invalid offsets"
-                )
-            text_node, local_start, local_end = matched
-            actual = str(text_node)[local_start:local_end]
+            stable_id = str(occurrence.get("stable_id"))
+            segments = _locate_segments(_annotatable_strings(target), start, end)
+            actual = "".join(str(node)[left:right] for node, left, right in segments)
             if actual != expected:
-                raise ValueError(
-                    f"occurrence {occurrence.get('stable_id')} text mismatch: {actual!r} != {expected!r}"
+                covered = _locate_segments(
+                    [item for item in target.descendants if isinstance(item, NavigableString)],
+                    start,
+                    end,
                 )
-            span = soup.new_tag("span")
-            span["class"] = ["kg-entity"]
-            span["data-occurrence-id"] = str(occurrence["stable_id"])
-            span["data-subject-id"] = str(occurrence["subject_id"])
-            span["data-entity-id"] = str(occurrence["subject_id"])
-            before, after = str(text_node)[:local_start], str(text_node)[local_end:]
-            replacement = []
-            if before:
-                replacement.append(NavigableString(before))
-            span.append(NavigableString(actual))
-            replacement.append(span)
-            if after:
-                replacement.append(NavigableString(after))
-            text_node.replace_with(*replacement)
+                if "".join(str(node)[left:right] for node, left, right in covered) == expected:
+                    skipped.append(f"{stable_id}: already annotated for another subject")
+                else:
+                    skipped.append(
+                        f"{stable_id}: text moved, expected {expected!r} but found {actual!r}"
+                    )
+                continue
+            for index, (text_node, local_start, local_end) in reversed(list(enumerate(segments))):
+                raw = str(text_node)
+                span = soup.new_tag("span")
+                span["class"] = ["kg-entity"]
+                span["data-occurrence-id"] = stable_id
+                span["data-subject-id"] = str(occurrence["subject_id"])
+                span["data-entity-id"] = str(occurrence["subject_id"])
+                if len(segments) > 1:
+                    # Marks a piece of a term split by inline markup, so the
+                    # stylesheet can drop the side padding that would otherwise
+                    # open gaps inside a single word.
+                    span["data-occurrence-part"] = (
+                        "first" if index == 0
+                        else "last" if index == len(segments) - 1
+                        else "inner"
+                    )
+                span.append(NavigableString(raw[local_start:local_end]))
+                replacement: List[Any] = []
+                if raw[:local_start]:
+                    replacement.append(NavigableString(raw[:local_start]))
+                replacement.append(span)
+                if raw[local_end:]:
+                    replacement.append(NavigableString(raw[local_end:]))
+                text_node.replace_with(*replacement)
             completed += 1
             if progress_callback:
-                progress_callback(completed, len(pending))
-    return str(soup)
+                progress_callback(completed, total)
+    return OccurrenceInjectionResult(html=str(soup), anchored=completed, skipped=skipped)
 
 
 # =============================================================================
