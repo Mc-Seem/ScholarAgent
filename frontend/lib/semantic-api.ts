@@ -55,13 +55,17 @@ export interface SectionAnnotationsResponse {
   limit: number
 }
 
-export interface SemanticSubjectDetails {
-  schema_version: string
+export interface DefinedSubjectDetails {
   subject: SemanticSubject
   explanation: SemanticExplanation | null
   occurrences: SemanticOccurrence[]
   evidence: SemanticEvidence[]
   occurrence_total: number
+}
+
+export interface SemanticSubjectDetails extends DefinedSubjectDetails {
+  schema_version: string
+  defining_equation: EquationDetails | null
 }
 
 export interface EquationRecord {
@@ -71,6 +75,7 @@ export interface EquationRecord {
   summary: string
   notation_ids: string[]
   object_ids: string[]
+  defined_object_id: string | null
   evidence_ids: string[]
 }
 
@@ -91,6 +96,7 @@ export interface EquationDetails {
   notation: NotationRecord[]
   objects: SemanticSubject[]
   evidence: SemanticEvidence[]
+  defined_subject: DefinedSubjectDetails | null
 }
 
 export interface SemanticEvidence {

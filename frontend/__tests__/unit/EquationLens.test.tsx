@@ -17,6 +17,7 @@ const details: EquationDetails = {
     summary: 'KTO loss function',
     notation_ids: ['notation:loss', 'notation:weight'],
     object_ids: [],
+    defined_object_id: null,
     evidence_ids: ['obs-1'],
   },
   notation: [
@@ -59,6 +60,7 @@ const details: EquationDetails = {
       char_end: null,
     },
   }],
+  defined_subject: null,
 }
 
 describe('EquationLens', () => {
@@ -86,7 +88,7 @@ describe('EquationLens', () => {
   it('heads the lens with the equation name and nothing above it', () => {
     const { container } = render(<EquationLens details={details} />)
 
-    const header = container.querySelector('.equation-lens-header')
+    const header = container.querySelector('.semantic-lens-header')
     expect(header?.children).toHaveLength(1)
     expect(header).toHaveTextContent('KTO loss function')
   })

@@ -22,7 +22,6 @@ interface EvidenceLocationsProps {
 interface LocationEntry {
   key: string
   place: string
-  kind: string
   quote: string | null
   domNodeId: string | null
 }
@@ -57,11 +56,10 @@ export function toLocationEntries(
     const entry: LocationEntry = {
       key: 'id' in item ? item.id : item.observation_id,
       place: placeLabel(source),
-      kind: (item.kind ?? '').replaceAll('_', ' '),
       quote: visibleQuote,
       domNodeId: source.dom_node_id,
     }
-    const identity = `${entry.place}|${entry.kind}|${entry.quote ?? ''}|${entry.domNodeId ?? ''}`
+    const identity = `${entry.place}|${entry.quote ?? ''}|${entry.domNodeId ?? ''}`
     if (seen.has(identity)) {
       continue
     }
@@ -78,6 +76,10 @@ export function toLocationEntries(
  * Every entry names its place first (section, or the displayed equation when a
  * section is unknown) and only then the supporting quote, if that quote adds
  * anything beyond the subject itself.
+ *
+ * The observation kind is deliberately absent: an observation always carries the
+ * kind of the subject it grounds, so printing it once per location repeated the
+ * same word (`artifact` for most anchored terms) down the whole list.
  */
 export function EvidenceLocations({
   evidence,
@@ -106,7 +108,6 @@ export function EvidenceLocations({
               onClick={() => entry.domNodeId && onNavigate?.(entry.domNodeId)}
             >
               <span className="semantic-location-place">{entry.place}</span>
-              {entry.kind && <span className="semantic-location-kind">{entry.kind}</span>}
               {entry.quote && (
                 <span className="semantic-location-quote">
                   <LatexText text={wrapBareMath(entry.quote)} />

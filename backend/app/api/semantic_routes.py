@@ -60,8 +60,7 @@ class SectionAnnotationsResponse(SemanticResponseModel):
     limit: int
 
 
-class SubjectDetailResponse(SemanticResponseModel):
-    schema_version: str
+class DefinedSubjectDetails(SemanticResponseModel):
     subject: SemanticSubject
     explanation: SemanticExplanation | None = None
     occurrences: list[SemanticOccurrence]
@@ -75,6 +74,12 @@ class EquationDetailResponse(SemanticResponseModel):
     notation: list[NotationRecord]
     objects: list[SemanticSubject]
     evidence: list[SourceObservation]
+    defined_subject: DefinedSubjectDetails | None = None
+
+
+class SubjectDetailResponse(DefinedSubjectDetails):
+    schema_version: str
+    defining_equation: EquationDetailResponse | None = None
 
 
 class GlossaryResult(SemanticResponseModel):
@@ -155,6 +160,57 @@ def _evidence(
     return [observation_index[item_id] for item_id in evidence_ids if item_id in observation_index]
 
 
+def _defined_subject_details(
+    document: KnowledgeGraphDocument,
+    subject_id: str,
+    *,
+    occurrence_limit: int,
+) -> DefinedSubjectDetails:
+    subjects = _subject_index(document)
+    explanations = _explanation_index(document)
+    semantic_object = next(
+        (item for item in document.objects if item.stable_id == subject_id), None
+    )
+    notation = next((item for item in document.notation if item.stable_id == subject_id), None)
+    evidence_ids = semantic_object.observation_ids if semantic_object else notation.evidence_ids
+    occurrences = sorted(
+        (item for item in document.occurrences if item.subject_id == subject_id),
+        key=lambda item: (item.dom_node_id or item.equation_id or "", item.start),
+    )
+    return DefinedSubjectDetails(
+        subject=subjects[subject_id],
+        explanation=explanations.get(subject_id),
+        occurrences=occurrences[:occurrence_limit],
+        occurrence_total=len(occurrences),
+        evidence=_evidence(document, evidence_ids),
+    )
+
+
+def _equation_details(
+    document: KnowledgeGraphDocument,
+    equation: EquationRecord,
+    *,
+    include_defined_subject: bool,
+) -> EquationDetailResponse:
+    notation_index = {item.stable_id: item for item in document.notation}
+    subject_index = _subject_index(document)
+    defined_subject = None
+    if include_defined_subject and equation.defined_object_id:
+        defined_subject = _defined_subject_details(
+            document,
+            equation.defined_object_id,
+            occurrence_limit=100,
+        )
+    return EquationDetailResponse(
+        schema_version=document.schema_version,
+        equation=equation,
+        notation=[notation_index[item_id] for item_id in equation.notation_ids],
+        objects=[subject_index[item_id] for item_id in equation.object_ids],
+        evidence=_evidence(document, equation.evidence_ids),
+        defined_subject=defined_subject,
+    )
+
+
 @router.get(
     "/sections/{section_id}/annotations",
     response_model=SectionAnnotationsResponse,
@@ -210,23 +266,31 @@ def subject_details(
     subjects = _subject_index(document)
     if subject_id not in subjects:
         raise HTTPException(status_code=404, detail="Semantic subject not found")
-    explanations = _explanation_index(document)
-    semantic_object = next(
-        (item for item in document.objects if item.stable_id == subject_id), None
+    details = _defined_subject_details(
+        document,
+        subject_id,
+        occurrence_limit=occurrence_limit,
     )
-    notation = next((item for item in document.notation if item.stable_id == subject_id), None)
-    evidence_ids = semantic_object.observation_ids if semantic_object else notation.evidence_ids
-    occurrences = sorted(
-        (item for item in document.occurrences if item.subject_id == subject_id),
-        key=lambda item: (item.dom_node_id or item.equation_id or "", item.start),
+    defining_equation = next(
+        (
+            item
+            for item in document.equations
+            if item.defined_object_id == subject_id
+        ),
+        None,
     )
     return SubjectDetailResponse(
         schema_version=document.schema_version,
-        subject=subjects[subject_id],
-        explanation=explanations.get(subject_id),
-        occurrences=occurrences[:occurrence_limit],
-        occurrence_total=len(occurrences),
-        evidence=_evidence(document, evidence_ids),
+        **details.model_dump(),
+        defining_equation=(
+            _equation_details(
+                document,
+                defining_equation,
+                include_defined_subject=False,
+            )
+            if defining_equation
+            else None
+        ),
     )
 
 
@@ -242,14 +306,10 @@ def equation_details(
     )
     if equation is None:
         raise HTTPException(status_code=404, detail="Equation not found")
-    notation_index = {item.stable_id: item for item in document.notation}
-    subject_index = _subject_index(document)
-    return EquationDetailResponse(
-        schema_version=document.schema_version,
-        equation=equation,
-        notation=[notation_index[item_id] for item_id in equation.notation_ids],
-        objects=[subject_index[item_id] for item_id in equation.object_ids],
-        evidence=_evidence(document, equation.evidence_ids),
+    return _equation_details(
+        document,
+        equation,
+        include_defined_subject=True,
     )
 
 

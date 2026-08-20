@@ -243,7 +243,7 @@ describe('ScholarSemanticLensWidget', () => {
     })
     renderLens(widget)
 
-    const header = document.querySelector('.equation-lens-header')
+    const header = document.querySelector('.semantic-lens-header')
     expect(header).toHaveTextContent('Element-size limiter.')
     expect(header).not.toHaveTextContent('Stabilization parameter.')
     expect(screen.getAllByTestId('semantic-editable-badge').length).toBeGreaterThan(0)
@@ -332,7 +332,7 @@ describe('ScholarSemanticLensWidget', () => {
     })
     renderLens(widget)
 
-    expect(document.querySelector('.equation-lens-header')).toHaveTextContent('Agent wording.')
+    expect(document.querySelector('.semantic-lens-header')).toHaveTextContent('Agent wording.')
     expect(screen.queryByTestId('semantic-editable-badge')).not.toBeInTheDocument()
   })
 

@@ -85,6 +85,7 @@ def _document_data():
         summary="Defines the optimization objective.",
         notation_ids=[notation.stable_id],
         object_ids=[entity.stable_id],
+        defined_object_id=entity.stable_id,
         evidence_ids=[observation.id],
     )
     explanation = SemanticExplanation(
@@ -145,7 +146,15 @@ def test_canonical_document_rejects_missing_schema_version():
 
 @pytest.mark.parametrize(
     "mutation",
-    ["relation_type", "endpoint", "evidence", "notation", "subject", "occurrence_location"],
+    [
+        "relation_type",
+        "endpoint",
+        "evidence",
+        "notation",
+        "defined_object",
+        "subject",
+        "occurrence_location",
+    ],
 )
 def test_canonical_document_rejects_invalid_relations(mutation):
     data = deepcopy(KnowledgeGraphDocument.model_validate(_document_data()).model_dump(mode="json"))
@@ -157,6 +166,8 @@ def test_canonical_document_rejects_invalid_relations(mutation):
         data["relations"][0]["evidence_ids"] = ["missing"]
     elif mutation == "notation":
         data["equations"][0]["notation_ids"] = ["missing"]
+    elif mutation == "defined_object":
+        data["equations"][0]["defined_object_id"] = "missing"
     elif mutation == "subject":
         data["explanations"][0]["subject_id"] = "missing"
     else:

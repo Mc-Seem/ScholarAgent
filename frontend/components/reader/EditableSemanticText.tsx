@@ -28,7 +28,7 @@ interface EditableSemanticTextProps {
   label: string
   editor?: SemanticTextEditor
   /** Wrapper element, so the text keeps its place in headings and definition lists. */
-  as?: 'div' | 'h3' | 'dd' | 'p'
+  as?: 'div' | 'h3' | 'h4' | 'dd' | 'p'
   className?: string
   /** Renders the text, typically through MathJax. Defaults to plain text. */
   renderText?: (text: string) => ReactNode

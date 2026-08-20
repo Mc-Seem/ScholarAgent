@@ -8,8 +8,10 @@ Reference for the LangGraph-based knowledge graph extraction pipeline.
 
 ```text
 load_paper_data
-  ├─ extract_section_observations  (topic/claim/procedure/artifact/quantity)
-  └─ anchor_equations              (compiler IDs + one bounded equation analysis)
+  ↓
+extract_section_observations       (topic/claim/procedure/artifact/quantity)
+  ↓
+anchor_equations                   (compiler IDs + one bounded equation analysis)
              ↓
 build_canonical_document           (objects, relations, notation, explanations)
              ↓
@@ -21,6 +23,8 @@ Paper.knowledge_graph              (validated schema-v3 JSON document)
 `KnowledgeGraphDocument` is defined in `backend/app/agents/knowledge_graph_models.py`. It contains build metadata, immutable observations, semantic objects, evidence-backed relations, equations, scoped notation, reusable explanations, exact occurrences, and diagnostics. Persistence reparses the document before committing it; schema v1/v2 documents require a rebuild.
 
 Graph object kinds are `topic`, `claim`, `procedure`, `artifact`, and `quantity`. Paper roles and domain-specific kinds are independent roles/facets. Equations and notation are representations used by Equation Lens and glossary lookup, not automatic graph peers. Allowed relations are `is_a`, `part_of`, `uses`, `depends_on`, `applies_to`, `produces`, `supports`, `challenges`, and `compares_with`; qualifiers carry context such as `evaluation`, `measurement`, or `limitation`.
+
+An equation may additionally carry one `defined_object_id`. This is an identity-level link for a formula that directly defines or mathematically represents the object, not a generic related-object edge: KTO loss may define KTO, while seven equations used throughout SLIME must not all attach to SLIME. Equation analysis therefore receives the extracted object-observation catalog and may copy one exact observation ID; canonicalization maps it to the stable object ID. One object can have at most one defining equation. Unknown IDs and every member of a conflicting multi-equation assignment are dropped conservatively. Older graphs remain valid with no link and require a KG rebuild to discover one.
 
 Stable IDs derive from normalized semantic/math signatures and paper scope rather than extraction order. Every relation requires canonical endpoints and source-observation evidence. Documents without `schema_version` are legacy and return a rebuild-required state from projection endpoints.
 
@@ -37,7 +41,7 @@ Stable IDs derive from normalized semantic/math signatures and paper scope rathe
 - `semantic_routes.py` serves bounded section annotations, subject/evidence details, Equation Lens data, and glossary results.
 - Equation observations are anchored deterministically from compiler records, so their `quote` is the equation LaTeX itself rather than a supporting sentence. Only text-derived observations carry a real quote; clients present equation evidence as a location (section plus anchored node) instead of echoing the formula.
 - Notation meanings are requested as inline LaTeX between single dollar signs. Documents built before that rule stored bare fragments, so the reader wraps them client-side rather than rewriting stored graphs.
-- Equation analysis returns an identifying noun phrase and notation only. The former free-form `paper_role` label had no vocabulary and no length bound, so it collected whole sentences and duplicated the summary above it; no closed vocabulary covers every field honestly, so the field was retired instead of narrowed. `EquationRecord` drops the key from already stored documents so they keep loading.
+- Equation analysis returns an identifying noun phrase, notation, and the optional strict defining-object observation ID. The former free-form `paper_role` label had no vocabulary and no length bound, so it collected whole sentences and duplicated the summary above it; no closed vocabulary covers every field honestly, so the field was retired instead of narrowed. `EquationRecord` drops the key from already stored documents so they keep loading.
 - `knowledge_graph_retrieval.py` is an offline experiment only. The measured decision in `docs/kg-retrieval-evaluation.md` keeps passage-only retrieval as the runtime default.
 
 Canonicalization records same-name cross-kind collisions such as a `topic` and `procedure` both named `SLIME` as diagnostics. It deliberately does not merge them automatically: a shared label is review evidence, not proof of identity.

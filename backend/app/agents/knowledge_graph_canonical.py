@@ -32,7 +32,7 @@ from backend.app.agents.knowledge_graph_models import (
 
 
 PIPELINE_VERSION = "3.0"
-PROMPT_VERSIONS = {"section_observations": "2.0", "equation_analysis": "1.1"}
+PROMPT_VERSIONS = {"section_observations": "2.0", "equation_analysis": "1.2"}
 RELATION_TYPES = {
     "is_a", "part_of", "uses", "depends_on", "applies_to", "produces", "supports",
     "challenges", "compares_with",
@@ -354,8 +354,15 @@ def _equations_and_notation(
         for entity in entities
         for value in [entity.label, *entity.aliases]
     }
+    observation_entities = {
+        observation_id: entity.stable_id
+        for entity in entities
+        for observation_id in entity.observation_ids
+    }
     notation_by_signature: dict[tuple[str, str, str], NotationRecord] = {}
-    equation_rows: list[tuple[SourceObservation, str, list[str], list[str]]] = []
+    equation_rows: list[
+        tuple[SourceObservation, str, list[str], list[str], str | None]
+    ] = []
     for observation in observations:
         if observation.kind != "equation":
             continue
@@ -401,7 +408,26 @@ def _equations_and_notation(
             for label in observation.payload.get("object_labels", [])
             if _normalize_text(str(label)) in aliases
         })
-        equation_rows.append((observation, equation_id, sorted(set(equation_notation_ids)), object_ids))
+        defined_object_id = observation_entities.get(
+            str(observation.payload.get("defined_object_observation_id") or "")
+        )
+        equation_rows.append((
+            observation,
+            equation_id,
+            sorted(set(equation_notation_ids)),
+            object_ids,
+            defined_object_id,
+        ))
+
+    # The model sees the whole equation batch and is instructed to choose at
+    # most one defining equation per object. If it violates that contract, do
+    # not turn extraction order into a semantic decision: reject every
+    # conflicting attachment and leave the term without a primary formula.
+    defining_counts = Counter(
+        defined_object_id
+        for *_, defined_object_id in equation_rows
+        if defined_object_id
+    )
 
     equations = [
         EquationRecord(
@@ -411,9 +437,14 @@ def _equations_and_notation(
             summary=str(observation.payload.get("summary") or f"Displayed equation {equation_id}"),
             notation_ids=notation_ids,
             object_ids=object_ids,
+            defined_object_id=(
+                defined_object_id
+                if defined_object_id and defining_counts[defined_object_id] == 1
+                else None
+            ),
             evidence_ids=[observation.id],
         )
-        for observation, equation_id, notation_ids, object_ids in equation_rows
+        for observation, equation_id, notation_ids, object_ids, defined_object_id in equation_rows
         if str(observation.payload.get("latex", "")).strip()
     ]
     return sorted(equations, key=lambda item: item.stable_id), sorted(

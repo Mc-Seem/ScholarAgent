@@ -7,6 +7,7 @@ canonical document. Legacy helper functions remain covered during migration.
 
 import json
 import os
+from collections import Counter
 from typing import TypedDict, List, Dict, Any, Optional, Annotated, Literal
 try:
     from typing import NotRequired
@@ -210,6 +211,10 @@ class EquationAnalysisCandidate(BaseModel):
     summary: str = Field(description="Short identifying noun phrase for the equation, at most 8 words")
     notation: List[EquationNotationCandidate] = Field(default_factory=list)
     object_labels: List[str] = Field(default_factory=list)
+    defined_object_observation_id: Optional[str] = Field(
+        default=None,
+        description="Exact observation ID of the one object directly defined by this equation",
+    )
 
 
 class EquationAnalysisOutput(BaseModel):
@@ -470,6 +475,14 @@ For each supplied equation ID:
 - preserve scope: reuse a meaning only when the supplied context supports it;
 - include units and constraints only when stated by the context;
 - link to semantic objects only by labels explicitly present in the supplied context.
+
+The input also contains a catalog of extracted semantic objects. An equation may
+set `defined_object_observation_id` only when it directly defines or is the
+mathematical representation of that exact object. A formula that merely uses,
+measures, contributes to, or is needed to understand an object is not its
+defining equation. Each object may have at most one defining equation in the
+entire batch. Prefer null whenever the identity is not explicit; never choose a
+candidate from name overlap alone. Copy the selected observation ID exactly.
 
 Never return an equation ID or symbol that is absent from the input."""
 
@@ -1646,7 +1659,9 @@ def extract_section_observations(state: GraphState) -> GraphState:
 
 
 def _equation_context(
-    observations: List[SourceObservation], sections: List[Dict[str, Any]]
+    observations: List[SourceObservation],
+    sections: List[Dict[str, Any]],
+    object_observations: List[SourceObservation],
 ) -> str:
     section_ids = {item.source.section_id for item in observations if item.source.section_id}
     section_context = {
@@ -1667,6 +1682,18 @@ def _equation_context(
             for item in observations
         ],
         "sections": section_context,
+        "semantic_objects": [
+            {
+                "observation_id": item.id,
+                "kind": item.kind,
+                "label": item.label,
+                "aliases": item.payload.get("aliases", []),
+                "summary": item.payload.get("summary", ""),
+                "section_id": item.source.section_id,
+            }
+            for item in object_observations
+            if item.kind in {"topic", "procedure", "artifact", "quantity"}
+        ],
     }, ensure_ascii=False)
 
 
@@ -1682,19 +1709,52 @@ def _analyze_equation_observations(
             ("system", EQUATION_ANALYSIS_SYSTEM_PROMPT),
             ("user", EQUATION_ANALYSIS_USER_PROMPT),
         ]) | structured_llm
+
+        def invoke_equation_analysis(args: Dict[str, str]) -> EquationAnalysisOutput:
+            result = chain.invoke(args)
+            if result is None:
+                raise ValueError("model returned no structured output")
+            return EquationAnalysisOutput.model_validate(result)
+
+        object_observations = [
+            item if isinstance(item, SourceObservation) else SourceObservation.model_validate(item)
+            for item in state.get("source_observations", [])
+        ]
         response = run_with_retry(
-            func=chain.invoke,
+            func=invoke_equation_analysis,
             max_retries=3,
             base_delay=2.0,
             timeout_seconds=180,
-            func_args=({"equation_context": _equation_context(observations, state["sections"])},),
+            func_args=({
+                "equation_context": _equation_context(
+                    observations,
+                    state["sections"],
+                    object_observations,
+                )
+            },),
             profile=state.setdefault("llm_profile", {}),
             profile_stage="kg.equation_analysis",
         )
+        if response is None:
+            return observations, [
+                "Equation analysis failed: model returned no structured output"
+            ]
+        response = EquationAnalysisOutput.model_validate(response)
     except Exception as error:
         return observations, [f"Equation analysis failed: {type(error).__name__}: {error}"]
 
     analysis_by_id = {item.equation_id: item for item in response.equations}
+    candidate_ids = {
+        item.id
+        for item in object_observations
+        if item.kind in {"topic", "procedure", "artifact", "quantity"}
+    }
+    requested_definitions = Counter(
+        item.defined_object_observation_id
+        for item in response.equations
+        if item.defined_object_observation_id in candidate_ids
+    )
+    validation_errors = []
     enriched = []
     for observation in observations:
         equation_id = str(observation.source.equation_id or observation.payload.get("equation_id") or "")
@@ -1718,14 +1778,27 @@ def _analyze_equation_observations(
                 "constraints": item.constraints,
                 "object_labels": item.object_labels,
             })
+        defined_object_observation_id = analysis.defined_object_observation_id
+        if defined_object_observation_id not in candidate_ids:
+            if defined_object_observation_id:
+                validation_errors.append(
+                    f"Discarded unknown defining object {defined_object_observation_id} for equation {equation_id}"
+                )
+            defined_object_observation_id = None
+        elif requested_definitions[defined_object_observation_id] > 1:
+            validation_errors.append(
+                f"Discarded ambiguous defining equation link for object {defined_object_observation_id}"
+            )
+            defined_object_observation_id = None
         payload = {
             **observation.payload,
             "summary": analysis.summary,
             "symbols": notation,
             "object_labels": analysis.object_labels,
+            "defined_object_observation_id": defined_object_observation_id,
         }
         enriched.append(observation.model_copy(update={"payload": payload}))
-    return enriched, []
+    return enriched, sorted(set(validation_errors))
 
 
 def anchor_equations(state: GraphState) -> GraphState:
@@ -2859,8 +2932,9 @@ def create_knowledge_graph_workflow() -> StateGraph:
 
     workflow.set_entry_point("load_data")
     workflow.add_edge("load_data", "extract_section_observations")
-    workflow.add_edge("load_data", "anchor_equations")
-    workflow.add_edge("extract_section_observations", "build_canonical_document")
+    # Equation identity can only be decided after the semantic object catalog
+    # exists. Running these branches in parallel left every object link empty.
+    workflow.add_edge("extract_section_observations", "anchor_equations")
     workflow.add_edge("anchor_equations", "build_canonical_document")
     workflow.add_edge("build_canonical_document", END)
 

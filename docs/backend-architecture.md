@@ -77,11 +77,12 @@ no explicit or compatible legacy model fail clearly.
 ```
 LangGraph StateGraph:
 
-load_paper_data → extract_section_observations ─┐
-                → anchor_equations + analysis ──┼→ canonicalize → anchor occurrences
+load_paper_data → extract_section_observations
+                → anchor_equations + analysis
+                → canonicalize → anchor occurrences
 ```
 
-The semantic branch extracts universal objects (`topic`, `claim`, `procedure`, `artifact`, `quantity`) with separate roles/facets. The equation branch anchors display equations to compiler IDs and performs one bounded analysis for purpose, notation, scope, units, constraints, and linked objects. `_run_kg_build_task()` validates the complete schema-v3 document before replacing `Paper.knowledge_graph`.
+The semantic stage extracts universal objects (`topic`, `claim`, `procedure`, `artifact`, `quantity`) with separate roles/facets. Equation analysis runs after it so the bounded call can choose an exact object observation when, and only when, one equation directly defines that object. The link is singular and optional; equations that merely use or contribute to an object stay unlinked, and conflicting assignments are all discarded rather than resolved by extraction order. `_run_kg_build_task()` validates the complete schema-v3 document before replacing `Paper.knowledge_graph`.
 
 ### Canonical Document
 
@@ -92,7 +93,7 @@ KnowledgeGraphDocument
   observations[] { id, kind, label, payload, confidence, source }
   objects[] { stable_id, kind, label, aliases, roles, facets, signals, evidence_ids }
   relations[] { stable_id, type, source_id, target_id, qualifiers, evidence_ids, confidence }
-  equations[] { equation_id, latex, summary, notation_ids, object_ids, evidence_ids }
+  equations[] { equation_id, latex, summary, notation_ids, object_ids, defined_object_id?, evidence_ids }
   notation[] { symbol, meaning, scope_id, units, constraints, object_ids, evidence_ids }
   explanations[] { subject_id, base_content, expertise, evidence_ids }
   occurrences[] { subject_id, dom_node_id/equation_id, start, end, text, scope_id, local_override_id }
@@ -139,8 +140,8 @@ Evidence remains immutable source observations. Rendering uses separate exact oc
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/papers/{id}/semantic/sections/{section}/annotations` | Bounded exact DOM anchors |
-| GET | `/api/papers/{id}/semantic/subjects/{subject}` | Shared explanation, occurrences, and evidence |
-| GET | `/api/papers/{id}/semantic/equations/{equation}` | Equation Lens purpose, notation, objects, and evidence |
+| GET | `/api/papers/{id}/semantic/subjects/{subject}` | Explanation, occurrences, evidence, and optional defining equation with notation |
+| GET | `/api/papers/{id}/semantic/equations/{equation}` | Equation, notation, evidence, and optional defined-subject details |
 | GET | `/api/papers/{id}/semantic/glossary` | Bounded object/notation search without graph insertion |
 
 ### Tooltips

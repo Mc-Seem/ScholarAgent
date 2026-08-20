@@ -1,3 +1,5 @@
+import json
+
 from backend.app.agents.knowledge_graph_canonical import (
     anchor_equation_observations,
     canonicalize_observations,
@@ -75,6 +77,52 @@ def test_canonicalization_preserves_aliases_evidence_and_demotes_local_symbols()
     assert not any(entity.kind in {"formula", "symbol"} for entity in document.objects)
     assert {item.symbol for item in document.notation} == {"q", "L"}
     assert len(document.explanations) == 3
+
+
+def test_equation_links_to_exactly_one_defining_object_by_observation_id():
+    observations = [
+        _observation("obs-kto", "procedure", "KTO", {
+            "summary": "A preference optimization method.",
+        }),
+        _observation("obs-kto-loss", "equation", "KTO loss function", {
+            "equation_id": "eq-kto",
+            "latex": "L_{KTO}=E[w(y)]",
+            "summary": "KTO loss function",
+            "defined_object_observation_id": "obs-kto",
+            "symbols": [],
+        }),
+    ]
+
+    document = canonicalize_observations("paper-1", observations)
+
+    assert document.equations[0].defined_object_id == document.objects[0].stable_id
+    assert document.equations[0].object_ids == []
+
+
+def test_ambiguous_multiple_defining_equations_are_not_attached_arbitrarily():
+    observations = [
+        _observation("obs-slime", "procedure", "SLIME", {
+            "summary": "A sequence-level preference optimization method.",
+        }),
+        _observation("obs-loss", "equation", "SLIME composite loss", {
+            "equation_id": "eq-loss",
+            "latex": "L=L_a+L_s+L_d",
+            "summary": "SLIME composite loss function",
+            "defined_object_observation_id": "obs-slime",
+            "symbols": [],
+        }),
+        _observation("obs-ratio", "equation", "SLIME importance ratio", {
+            "equation_id": "eq-ratio",
+            "latex": "r=p/q",
+            "summary": "SLIME importance ratio",
+            "defined_object_observation_id": "obs-slime",
+            "symbols": [],
+        }),
+    ]
+
+    document = canonicalize_observations("paper-1", observations)
+
+    assert all(equation.defined_object_id is None for equation in document.equations)
 
 
 def test_recurrent_symbol_is_promoted_only_across_important_formulas():
@@ -309,6 +357,7 @@ def test_equation_analysis_is_batched_and_reports_one_named_stage(monkeypatch):
         knowledge_graph_module.EquationAnalysisCandidate(
             equation_id="eq-supg",
             summary="Adds residual-based streamline stabilization.",
+            defined_object_observation_id="obs-supg",
             notation=[
                 knowledge_graph_module.EquationNotationCandidate(
                     symbol="\\tau",
@@ -356,6 +405,13 @@ def test_equation_analysis_is_batched_and_reports_one_named_stage(monkeypatch):
             "is_display": True,
             "mathml": "<math data-id='eq-supg' />",
         }],
+        "source_observations": [_observation(
+            "obs-supg",
+            "procedure",
+            "SUPG",
+            {"summary": "A stabilized finite element procedure."},
+            section="sec-method",
+        ).model_dump(mode="json")],
         "llm_profile": {},
         "progress_callback": lambda stage, current, total: progress.append((stage, current, total)),
         "errors": [],
@@ -369,6 +425,7 @@ def test_equation_analysis_is_batched_and_reports_one_named_stage(monkeypatch):
         ("equation_analysis", 1, 1),
     ]
     assert observation.payload["summary"] == "Adds residual-based streamline stabilization."
+    assert observation.payload["defined_object_observation_id"] == "obs-supg"
     assert "paper_role" not in observation.payload
     assert observation.payload["symbols"] == [{
         "symbol": "\\tau",
@@ -380,9 +437,101 @@ def test_equation_analysis_is_batched_and_reports_one_named_stage(monkeypatch):
     }]
 
 
+def test_equation_analysis_preserves_equations_when_model_returns_no_output(monkeypatch):
+    invocations = []
+
+    class FakePrompt:
+        def __or__(self, other):
+            return other
+
+    class FakeStructuredModel:
+        def invoke(self, _args):
+            invocations.append(_args)
+            return None
+
+    def exhaust_retries(**kwargs):
+        for attempt in range(kwargs["max_retries"] + 1):
+            try:
+                return kwargs["func"](*kwargs["func_args"])
+            except ValueError:
+                if attempt == kwargs["max_retries"]:
+                    raise
+
+    monkeypatch.setattr(knowledge_graph_module, "get_llm", lambda _workflow: object())
+    monkeypatch.setattr(
+        knowledge_graph_module,
+        "get_structured_llm",
+        lambda _llm, _model: FakeStructuredModel(),
+    )
+    monkeypatch.setattr(
+        knowledge_graph_module.ChatPromptTemplate,
+        "from_messages",
+        lambda _messages: FakePrompt(),
+    )
+    monkeypatch.setattr(knowledge_graph_module, "run_with_retry", exhaust_retries)
+    state = {
+        "paper_id": "paper-1",
+        "sections": [{
+            "id": "sec-method",
+            "title": "Method",
+            "content_html": "<math data-id='eq-loss'></math>",
+        }],
+        "equations": [{
+            "id": "eq-loss",
+            "latex": "L = L_a + L_b",
+            "is_display": True,
+            "mathml": "<math data-id='eq-loss' />",
+        }],
+        "source_observations": [],
+        "llm_profile": {},
+        "errors": [],
+    }
+
+    result = knowledge_graph_module.anchor_equations(state)
+
+    observation = SourceObservation.model_validate(result["source_observations"][0])
+    assert observation.payload["latex"] == "L = L_a + L_b"
+    assert len(invocations) == 4
+    assert result["errors"] == [
+        "Equation analysis failed: ValueError: model returned no structured output"
+    ]
+
+
+def test_equation_context_exposes_exact_semantic_observation_ids():
+    equation = _observation(
+        "obs-equation",
+        "equation",
+        "KTO loss function",
+        {"equation_id": "eq-kto", "latex": "L_{KTO}=1", "summary": "KTO loss function"},
+    )
+    kto = _observation(
+        "obs-kto",
+        "procedure",
+        "KTO",
+        {"summary": "A preference optimization method.", "aliases": ["Kahneman-Tversky Optimization"]},
+    )
+
+    context = json.loads(knowledge_graph_module._equation_context(
+        [equation],
+        [{"id": "sec-1", "title": "Method", "content_html": "<p>KTO loss.</p>"}],
+        [kto],
+    ))
+
+    assert context["semantic_objects"] == [{
+        "observation_id": "obs-kto",
+        "kind": "procedure",
+        "label": "KTO",
+        "aliases": ["Kahneman-Tversky Optimization"],
+        "summary": "A preference optimization method.",
+        "section_id": "sec-1",
+    }]
+
+
 def test_equation_analysis_prompt_requests_a_short_identifying_summary():
     prompt = knowledge_graph_module.EQUATION_ANALYSIS_SYSTEM_PROMPT
 
     assert "noun phrase" in prompt
     assert "at most 8 words" in prompt
     assert "Do not start it with verbs" in prompt
+    assert "at most one defining equation" in prompt
+    assert "directly defines" in prompt

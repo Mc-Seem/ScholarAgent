@@ -183,6 +183,9 @@ class EquationRecord(StrictModel):
     summary: str = Field(min_length=1)
     notation_ids: list[str] = Field(default_factory=list)
     object_ids: list[str] = Field(default_factory=list)
+    # A strict identity link, not a bag of thematically related objects. It is
+    # absent unless this equation directly formalizes one semantic object.
+    defined_object_id: str | None = None
     evidence_ids: list[str] = Field(min_length=1)
 
     @model_validator(mode="before")
@@ -306,8 +309,17 @@ class KnowledgeGraphDocument(StrictModel):
                 raise ValueError(f"equation {equation.stable_id} references unknown notation")
             if set(equation.object_ids) - known_entities:
                 raise ValueError(f"equation {equation.stable_id} references unknown objects")
+            if equation.defined_object_id and equation.defined_object_id not in known_entities:
+                raise ValueError(f"equation {equation.stable_id} references unknown defined object")
             if set(equation.evidence_ids) - known_observations:
                 raise ValueError(f"equation {equation.stable_id} references unknown evidence")
+        defined_object_ids = [
+            equation.defined_object_id
+            for equation in self.equations
+            if equation.defined_object_id
+        ]
+        if len(defined_object_ids) != len(set(defined_object_ids)):
+            raise ValueError("an object may have at most one defining equation")
         for item in self.notation:
             if set(item.object_ids) - known_entities:
                 raise ValueError(f"notation {item.stable_id} references unknown objects")

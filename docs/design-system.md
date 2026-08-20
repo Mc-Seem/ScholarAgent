@@ -266,6 +266,39 @@ import { TEXT, BG, BORDER, INPUT, BUTTON } from '@/lib/colors';
 .kg-entity[data-entity-type="theorem"]    { border-color: rgb(139, 92, 246); }
 ```
 
+### The Semantic Lens shell
+
+Everything the lens renders — a term, an equation, a relation, a quote — is
+dressed by one set of classes in `styles/reader-interactions.css`:
+`.semantic-lens-panel` for the scroll container, `.semantic-lens` for the stack,
+`.semantic-lens-header` / `.semantic-lens-title` for the heading,
+`.semantic-lens-text` for a body paragraph or a notation meaning,
+`.semantic-lens-section-title` for a section heading, `.semantic-chip` for a tag.
+
+Do not restyle a branch with Tailwind utilities. Two reasons, both observed:
+a utility-dressed branch drifts away from its neighbour in heading size,
+spacing, and colour, which a reader sees the moment they open a term after an
+equation; and the Theia bundle imports Tailwind's theme and utilities without
+its preflight, so a `h3`, `p`, or `dd` that does not set its own margin keeps
+the browser default there while looking fine in the Next.js reader. Every rule
+in the shared file therefore states its own margin and takes colour from a
+`--theia-*` token with a light-theme fallback.
+
+Role tags, notation units, and constraints use `.semantic-chip` and its siblings
+in the same file: a transparent background with a `--theia-widget-border`
+outline, never a tinted fill.
+
+The outline is not decoration. A pale fill such as `bg-slate-100` (`#f1f5f9`) sits within a couple
+of percent of the panel surface in both the light Theia theme and the web
+reader, so the chip reads as loose text and it is impossible to tell whether
+there is a chip at all. And a fill that is visible only by hue excludes readers
+with colour vision deficiency; an outline states the boundary through shape.
+
+The same file is imported by `app/globals.css` and by the Theia extension's
+`scholar.css`, so both clients inherit any change made there. Inside the lens,
+prefer these classes over Tailwind colour utilities: only the shared file can
+resolve Theia theme tokens and follow a dark theme.
+
 ---
 
 ## 7. Quick Reference

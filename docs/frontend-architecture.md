@@ -187,12 +187,31 @@ counter, and a failed lookup renders the error instead of an endless spinner.
 The widget is bound transiently, because closing the tab disposes it and a
 singleton binding would return a disposed instance to the widget factory.
 
+Definitions and their strict mathematical representation form one card. When
+an object has a `defining_equation`, selecting either the highlighted term or
+the displayed equation renders the same order: `SemanticSubjectSummary` with
+the term and explanation, the editable equation name and formula, all notation
+rows expanded, the term's evidence locations, and the equation location. The
+defined object is excluded from the ordinary `Related` list because repeating
+it there would weaken an identity link into a generic association. Objects may
+have no defining equation and never receive more than one; the client does not
+infer this relation from labels.
+
 The lens is also where the reader corrects the agent. Every text it shows is
 rendered through `EditableSemanticText`: the description of a term, the name of
 an equation, and the meaning of each notation row. Editing happens inline —
 pencil turns the text into a textarea with `Save`/`Cancel`, `Escape` cancels and
 `Ctrl`/`Cmd+Enter` saves — so a correction never moves the reader out of the
 panel where the text is read.
+
+The edit controls stay out of the way until they are wanted: they are
+transparent until the pointer enters the text they belong to, and become visible
+again on keyboard focus, on a pointer-less device, and whenever the subject has
+no text at all (otherwise `Add` would be undiscoverable). A notation table has
+one row per symbol, so always-visible buttons produced a ragged column of `Edit`
+labels next to the meanings they were supposed to serve. They are hidden with
+`opacity`, not `display`, so they keep their place in the tab order and the row
+never reflows; a busy button is dimmed by colour for the same reason.
 
 There is exactly one text per subject, not an agent card plus a reader card: two
 competing explanations of the same symbol only force the reader to decide which
@@ -220,18 +239,40 @@ sub/superscript or a LaTeX command, so prose, `snake_case` identifiers, and
 already-delimited math are untouched. `toMathSource` normalizes standalone
 expressions so stored `$x$` and `x` render identically.
 
-An equation card opens with its name and nothing above it. The header used to
+A term and an equation are dressed by one shell. Both branches of
+`SemanticDetails` render `.semantic-lens` with a `.semantic-lens-header`, a
+`.semantic-lens-title`, `.semantic-lens-text` bodies, shared section headings,
+and `.semantic-chip` tags, all defined once in `styles/reader-interactions.css`
+and coloured from Theia theme tokens. The term branch used to be written in
+Tailwind utilities instead, which produced exactly what a reader notices when
+the two halves are compared: a larger heading, wider spacing, and slate text
+that ignores the active theme. In Theia it went further — the extension bundle
+imports `tailwindcss/theme.css` and `tailwindcss/utilities.css` but not
+preflight, so an unreset `h3` kept the browser's own `1em` margin and showed up
+as an unexplained gap above the term name. Every element of the lens therefore
+states its own margin, and no Tailwind colour or spacing utility is used inside
+the panel.
+
+An unlinked equation card opens with its name and nothing above it. The header used to
 carry the extracted `paper_role` in small caps, but nothing constrained that
 field, so it usually repeated the summary as a full sentence; the field is gone
 from the schema rather than narrowed to a vocabulary that no field of study
 shares.
 
 Evidence is presented as places, not quotes. `EvidenceLocations` names the
-section (or the displayed equation when no section is known) plus the
-observation kind, and shows the supporting quote only when it adds something.
-Equation observations are anchored with the equation LaTeX as their quote, so
-repeating it under the rendered formula would be pure duplication; that
-self-quote is dropped and only the location remains clickable.
+section (or the displayed equation when no section is known) and shows the
+supporting quote only when it adds something. Equation observations are anchored
+with the equation LaTeX as their quote, so repeating it under the rendered
+formula would be pure duplication; that self-quote is dropped and only the
+location remains clickable.
+
+Neither the locations nor the header carry a subject kind. An observation always
+reports the kind of the subject it grounds, so the line printed the same word
+once per location, and the header printed it again above the title. The word
+itself is our taxonomy (`topic`, `claim`, `procedure`, `artifact`, `quantity`),
+and about two thirds of the anchored terms in a paper fall into `artifact`, so it
+distinguished almost nothing. The kind stays in the graph for ranking and
+filtering; the roles below the title carry what a reader can act on.
 
 `KnowledgeGraphView` remains the sole owner of graph loading, React Flow nodes
 and edges, filters, selection, focus, and dagre layout. A stable

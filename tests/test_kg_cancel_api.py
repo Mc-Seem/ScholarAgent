@@ -182,6 +182,7 @@ def _semantic_graph():
                 "latex": "u = tau R",
                 "summary": "Adds residual-based stabilization.",
                 "scope_id": "sec-1",
+                "defined_object_observation_id": "obs-supg",
                 "object_labels": ["SUPG"],
                 "symbols": [{
                     "symbol": "tau",
@@ -467,9 +468,14 @@ class TestSemanticEndpoints:
         assert subject.status_code == 200
         assert subject.json()["subject"]["roles"] == ["main_contribution"]
         assert subject.json()["evidence"][0]["source"]["dom_node_id"] == "p-1"
+        assert subject.json()["defining_equation"]["equation"]["equation_id"] == "eq-supg"
+        assert subject.json()["defining_equation"]["notation"][0]["symbol"] == "tau"
         assert equation.status_code == 200
         assert equation.json()["equation"]["equation_id"] == "eq-supg"
         assert equation.json()["notation"][0]["constraints"] == ["positive"]
+        assert equation.json()["defined_subject"]["subject"]["label"] == "SUPG"
+        assert equation.json()["defined_subject"]["explanation"]["base_content"]
+        assert equation.json()["defined_subject"]["occurrence_total"] >= 2
         assert equation.json()["evidence"]
         assert glossary.status_code == 200
         assert glossary.json()["results"][0]["kind"] == "notation"
