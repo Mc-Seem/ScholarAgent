@@ -56,10 +56,11 @@ export function SemanticDetails({
       {!loading && !error && (selection.kind === 'occurrence' || selection.kind === 'node') && subjectDetails && (
         <div className="space-y-4">
           <div>
-            <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-              {subjectDetails.subject.kind}
-            </div>
-            <h3 className="mt-1 text-lg font-semibold text-slate-900">
+            {/* The subject kind (topic, claim, procedure, artifact, quantity) is our
+                internal taxonomy: it reads as jargon, and two thirds of the
+                anchored terms in a paper land in one bucket, so it told the
+                reader nothing. The roles below carry the useful part. */}
+            <h3 className="text-lg font-semibold text-slate-900">
               <LatexText text={wrapBareMath(subjectDetails.subject.label)} />
             </h3>
             {(subjectDetails.explanation || editor) && (
@@ -76,9 +77,9 @@ export function SemanticDetails({
             )}
           </div>
           {subjectDetails.subject.roles.length > 0 && (
-            <div className="flex flex-wrap gap-1">
+            <div className="semantic-chips">
               {subjectDetails.subject.roles.map(role => (
-                <span key={role} className="rounded bg-slate-100 px-2 py-1 text-xs text-slate-600">
+                <span key={role} className="semantic-chip">
                   {role.replaceAll('_', ' ')}
                 </span>
               ))}

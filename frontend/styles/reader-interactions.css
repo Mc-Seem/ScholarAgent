@@ -134,8 +134,28 @@
   color: var(--theia-descriptionForeground, #64748b);
   font-size: 0.67rem;
   line-height: 1.2;
-  background: var(--theia-badge-background, #f1f5f9);
+  background: transparent;
+  border: 1px solid var(--theia-widget-border, #cbd5e1);
   border-radius: 0.2rem;
+}
+
+/* Chips carry their meaning in the outline, not in a hue: a pale fill of the
+   kind Tailwind's slate-100 gives is indistinguishable from the panel surface,
+   and colour alone is not readable for every reader anyway. */
+.semantic-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.semantic-chip {
+  padding: 0.1rem 0.4rem;
+  color: var(--theia-descriptionForeground, #475569);
+  font-size: 0.7rem;
+  line-height: 1.35;
+  background: transparent;
+  border: 1px solid var(--theia-widget-border, #cbd5e1);
+  border-radius: 0.65rem;
 }
 
 .equation-lens-related {
@@ -219,12 +239,6 @@
   font-weight: 600;
 }
 
-.semantic-location-kind {
-  font-size: 0.67rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
 .semantic-location-quote {
   color: var(--theia-foreground, #334155);
 }
@@ -257,6 +271,11 @@
   gap: 0.15rem;
   padding: 0 0.25rem;
   cursor: pointer;
+  /* Hidden until the reader points at the text it edits. A notation table has a
+     row per symbol, so permanently visible buttons meant a column of ragged
+     `Edit` labels competing with the meanings they belong to. Opacity rather
+     than `display` keeps the button in the tab order. */
+  opacity: 0;
   color: var(--theia-textLink-foreground, #4338ca);
   font-family: inherit;
   font-size: 0.7rem;
@@ -264,17 +283,40 @@
   letter-spacing: normal;
   text-transform: none;
   background: transparent;
-  border: 1px solid transparent;
+  border: 1px solid var(--theia-widget-border, #cbd5e1);
   border-radius: 0.25rem;
+  transition: opacity 0.12s ease;
+}
+
+.semantic-editable:hover .semantic-editable-action,
+.semantic-editable:focus-within .semantic-editable-action,
+.equation-lens-notation-item:hover .semantic-editable-action,
+.equation-lens-header:hover .semantic-editable-action {
+  opacity: 1;
+}
+
+/* A subject the agent said nothing about would otherwise offer no visible way
+   in, so its `Add` stays put. */
+.semantic-editable:has(.semantic-editable-empty) .semantic-editable-action {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .semantic-editable-action {
+    opacity: 1;
+  }
 }
 
 .semantic-editable-action:hover:not(:disabled) {
-  border-color: var(--theia-widget-border, #e2e8f0);
+  color: var(--theia-textLink-activeForeground, #312e81);
+  background: var(--theia-list-hoverBackground, #f1f5f9);
 }
 
+/* Dimmed through colour rather than opacity: opacity is what hides the button
+   until hover, and a disabled state must not override that. */
 .semantic-editable-action:disabled {
   cursor: default;
-  opacity: 0.6;
+  color: var(--theia-descriptionForeground, #94a3b8);
 }
 
 .semantic-editable-badge {

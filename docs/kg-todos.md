@@ -18,6 +18,8 @@
 - [x] MathJax rendering for meanings, units, constraints, labels, and notes, with bare fragments such as `y_l` wrapped before typesetting
 - [x] Evidence presented as named locations instead of a quote that only repeats the equation
 - [x] Free-form `paper_role` label retired from equation analysis, schema, and lens header; stored graphs drop the key on load
+- [x] Subject kind no longer printed in the lens: it repeated `artifact` above the title and once per location (an observation always carries the kind of its subject, and ~2/3 of anchored terms are artifacts); the kind stays in the graph for ranking and filtering
+- [x] Lens chrome legible without relying on hue: role/unit/constraint chips outlined instead of filled with a near-background tint, edit controls hidden until the pointer or keyboard reaches the text they belong to
 - [x] Applying drafts highlights terms again: anchors resolved from the graph by subject id (the drafts table stores no positions), terms split by inline markup wrapped piecewise, stale anchors skipped instead of aborting, and `spans_injected` counting real anchors
 - [x] Character references preserved during `data-id` injection so equations containing `<` keep their full LaTeX
 - [x] Anchorable text defined once for the builder and the injector: paragraphs holding an inline formula are annotated again (an acronym such as `KTO` was previously anchored nowhere), math is never annotated, and anchors left inside a formula by earlier builds are removed on the next apply

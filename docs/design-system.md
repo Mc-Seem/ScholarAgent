@@ -266,6 +266,23 @@ import { TEXT, BG, BORDER, INPUT, BUTTON } from '@/lib/colors';
 .kg-entity[data-entity-type="theorem"]    { border-color: rgb(139, 92, 246); }
 ```
 
+### Chips in the Semantic Lens
+
+Role tags, notation units, and constraints use `.semantic-chip` and its siblings
+in `styles/reader-interactions.css`: a transparent background with a
+`--theia-widget-border` outline, never a tinted fill.
+
+Two reasons. A pale fill such as `bg-slate-100` (`#f1f5f9`) sits within a couple
+of percent of the panel surface in both the light Theia theme and the web
+reader, so the chip reads as loose text and it is impossible to tell whether
+there is a chip at all. And a fill that is visible only by hue excludes readers
+with colour vision deficiency; an outline states the boundary through shape.
+
+The same file is imported by `app/globals.css` and by the Theia extension's
+`scholar.css`, so both clients inherit any change made there. Inside the lens,
+prefer these classes over Tailwind colour utilities: only the shared file can
+resolve Theia theme tokens and follow a dark theme.
+
 ---
 
 ## 7. Quick Reference
