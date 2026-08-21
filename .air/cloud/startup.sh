@@ -1,7 +1,18 @@
 #!/usr/bin/env bash
 #
 # Air cloud provisioning for Scholar Agent.
-# Runs after the repo clone, before the agent starts.
+#
+# Air runs this after cloning the repo and before the agent starts, every time
+# the cloud environment comes up - including on every task resume, which is why
+# idempotency is non-negotiable here.
+#
+# Things the Air contract guarantees, which this script relies on:
+#   - Starts in the project root, as the environment user, with sudo rights.
+#   - The checkout is shallow (latest commit only), so nothing here may depend
+#     on git history.
+#   - This runs in a separate process, so plain `export` does NOT reach the
+#     agent's session. Anything the agent needs on PATH must be appended to
+#     ~/.bashrc, guarded so resumes don't duplicate it. See persist_path below.
 #
 # Design notes:
 #   - Idempotent: safe to re-run. Expensive steps are stamped and skipped.
@@ -103,9 +114,13 @@ setup_node() {
 }
 run_step "Install Node $NODE_VERSION via mise" setup_node
 
-# Put mise shims on PATH for the agent's own shells. Shims (rather than
-# `mise activate`) are the supported route for non-interactive shells, which is
-# what the agent uses.
+# Put mise shims on PATH for the agent's own shells. Two reasons for doing it
+# this way rather than exporting PATH directly:
+#   - Air runs this script in its own process, so exports die with it. Appending
+#     to ~/.bashrc is the documented way to reach the agent's session.
+#   - Shims, rather than `mise activate`, are the supported route for the
+#     non-interactive shells the agent actually uses.
+# The marker guard keeps task resumes from appending duplicate blocks.
 persist_path() {
   local shim_dir="$HOME/.local/share/mise/shims"
   local marker="# >>> scholaragent air startup >>>"
@@ -246,24 +261,41 @@ cat <<'CONSTRAINTS'
 CONSTRAINTS - things this script cannot fix from the inside
 ============================================================================
 
+NOTE: this script has sudo rights, so it is tempting to assume the two big
+gaps below are fixable here. They are not. Both are blocked by the network
+allowlist, which root does not change. Verified by probing the hosts directly.
+
 1. No C/C++ toolchain (no make, gcc, g++).
    Breaks: native npm modules - @theia/ffmpeg, drivelist, native-keymap.
    Consequence: `npm run theia:build:electron` fails, so `mise run verify`
    fails on its last of four stages. Everything else builds.
-   Not fixable at runtime: apt cannot help because archive.ubuntu.com and
-   security.ubuntu.com both return 403 through the proxy.
+   Why sudo does not help: archive.ubuntu.com and security.ubuntu.com both
+   return 403 through the proxy, so apt cannot fetch build-essential no
+   matter who asks.
    Real fix: install build-essential in the base image.
 
 2. Docker cannot pull images, for two independent reasons.
-   a) dockerd runs without proxy config, and direct DNS is refused, so it
-      cannot resolve any registry. Fixing this needs root at image-build
-      time: a /etc/docker/daemon.json with a "proxies" block, then a daemon
-      restart.
-   b) index.docker.io and production.cloudflare.docker.com return 403
-      through the proxy, so even a proxy-aware puller is blocked.
+   a) dockerd runs with no proxy config while direct DNS is refused, so it
+      cannot resolve any registry. This one IS fixable with sudo - write a
+      "proxies" block into /etc/docker/daemon.json and restart the daemon -
+      but it is deliberately not done here, because (b) makes it pointless
+      and restarting dockerd from a provisioning script risks the container.
+   b) index.docker.io and production.cloudflare.docker.com are blocked by
+      the proxy, so even a proxy-aware puller cannot fetch a manifest or a
+      blob. Confirmed by testing crane, which needs no daemon and no root
+      and still fails.
    Consequence: no Postgres container and no latexml/ar5ivist container.
-   Postgres is worked around with SQLite (above). LaTeXML is not worked
-   around - LaTeX -> HTML compilation cannot run here at all.
+   Postgres is worked around with SQLite (above). LaTeXML is NOT worked
+   around - LaTeX -> HTML compilation cannot run here at all, which takes
+   the paper ingest pipeline offline.
+
+   If the two Docker Hub hosts are ever allowlisted, the clean unlock is
+   crane rather than a daemon restart, because it is proxy-aware in
+   userspace:
+       crane pull --platform linux/amd64 postgres:16-alpine pg.tar
+       docker load < pg.tar
+   then run the container from docker-compose-dev.yml and point
+   DATABASE_URL back at Postgres.
 
 3. Blocked hosts worth allowlisting, in priority order:
      index.docker.io, production.cloudflare.docker.com  -> Docker Hub pulls
