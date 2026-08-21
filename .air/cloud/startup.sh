@@ -16,21 +16,17 @@
 #
 # Design notes:
 #   - Idempotent: safe to re-run. Expensive steps are stamped and skipped.
-#   - Always exits 0. A half-provisioned environment with a live agent that can
-#     read this script's report is more useful than no agent at all. Read the
-#     SUMMARY block at the end of the log to see what actually succeeded.
-#   - Environment constraints (no compiler, no Docker pulls) are documented in
-#     the CONSTRAINTS section below rather than worked around, because they
-#     cannot be fixed from inside this script. See the notes there if you are
-#     editing the image or the network allowlist.
+#   - No step aborts the run. Optional steps degrade to a working fallback and
+#     say so; the SUMMARY block at the end reports what actually happened, and
+#     the exit code reflects it.
+#   - Capability gaps are probed, not assumed. Everything in the CONSTRAINTS
+#     section below is a consequence of the environment's "Internet access"
+#     setting, so the script adapts at runtime and tells you what to allow.
 
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-STAMP_DIR="$REPO_ROOT/.air-stamps"
 NODE_VERSION="24.18.0"   # must match [tools] node in mise.toml
-
-mkdir -p "$STAMP_DIR"
 
 # ---------------------------------------------------------------------------
 # Logging / step tracking
@@ -142,23 +138,70 @@ export PATH=\"\$HOME/.local/bin:$shim_dir:\$PATH\"
 run_step "Persist mise shims on PATH" persist_path
 
 # ---------------------------------------------------------------------------
-# 2. Skip native npm builds (see CONSTRAINTS: no compiler in this image)
+# 2. C/C++ toolchain, if the allowlist permits it
 # ---------------------------------------------------------------------------
-# This is set in the *user* npmrc, not the repo's, so the repo stays clean and
-# the setting travels with the environment that actually needs it. Without it a
-# plain `npm ci` / `npm install` dies on @theia/ffmpeg with "not found: make".
+# The default cloud image has no make/gcc/g++, which breaks the native npm
+# modules Theia's Electron target needs. Custom cloud images are not supported,
+# so apt inside this script is the only way to get a compiler.
+#
+# Whether that works depends entirely on the environment's "Internet access"
+# setting: archive.ubuntu.com and security.ubuntu.com must be reachable. Note
+# that allowlisting `ubuntu.com` is NOT enough - the apex domain does not cover
+# its subdomains, so list them explicitly or use `*.ubuntu.com`.
+#
+# This step probes first and adapts, so the environment upgrades itself as soon
+# as those domains are allowed, with no edit needed here.
+
+HAVE_TOOLCHAIN=0
+
+setup_toolchain() {
+  if command -v make >/dev/null 2>&1 && command -v g++ >/dev/null 2>&1; then
+    info "toolchain already present"
+    HAVE_TOOLCHAIN=1
+    return 0
+  fi
+
+  if ! curl -fsS -o /dev/null --max-time 15 \
+       http://archive.ubuntu.com/ubuntu/dists/noble/Release 2>/dev/null; then
+    warn "archive.ubuntu.com unreachable - skipping compiler install."
+    warn "Native npm modules will be skipped instead (Electron build stays broken)."
+    warn "To fix: allow archive.ubuntu.com + security.ubuntu.com in the"
+    warn "environment's Additional domains, then resume the task."
+    return 0   # not a failure: the fallback below is a working configuration
+  fi
+
+  info "apt reachable - installing build-essential"
+  sudo apt-get update -qq && sudo apt-get install -y -qq build-essential || return 1
+  command -v make >/dev/null 2>&1 && HAVE_TOOLCHAIN=1
+  info "toolchain installed: $(make --version 2>/dev/null | head -1)"
+}
+run_step "Provision C/C++ toolchain" setup_toolchain
+
+# With no compiler, `npm ci` dies on @theia/ffmpeg with "not found: make", so
+# native build scripts have to be skipped. This goes in the *user* npmrc rather
+# than the repo's, so the repo stays clean and the workaround travels with the
+# environment that actually needs it. With a compiler present the flag is
+# removed again, so npm behaves normally.
 
 configure_npm() {
   local npmrc="$HOME/.npmrc"
   touch "$npmrc"
-  if grep -qE '^ignore-scripts=' "$npmrc"; then
-    info "ignore-scripts already configured in $npmrc"
+  if [[ "$HAVE_TOOLCHAIN" == "1" ]]; then
+    if grep -qE '^ignore-scripts=' "$npmrc"; then
+      sed -i '/^ignore-scripts=/d' "$npmrc"
+      info "toolchain available - removed ignore-scripts from $npmrc"
+    else
+      info "toolchain available - npm left at defaults"
+    fi
+  elif grep -qE '^ignore-scripts=true' "$npmrc"; then
+    info "ignore-scripts already set in $npmrc"
   else
+    sed -i '/^ignore-scripts=/d' "$npmrc"
     printf 'ignore-scripts=true\n' >> "$npmrc"
-    info "set ignore-scripts=true in $npmrc"
+    info "no toolchain - set ignore-scripts=true in $npmrc"
   fi
 }
-run_step "Configure npm to skip native builds" configure_npm
+run_step "Configure npm for available toolchain" configure_npm
 
 # ---------------------------------------------------------------------------
 # 3. Python backend
@@ -174,19 +217,31 @@ run_step "Sync Python deps (uv sync)" bash -c "cd '$REPO_ROOT' && uv sync"
 
 bootstrap_frontend() {
   cd "$REPO_ROOT/frontend" || return 1
-  local stamp="$STAMP_DIR/npm-lock.sha256"
-  local current
-  current="$(sha256sum package-lock.json | cut -d' ' -f1)"
 
-  if [[ -d node_modules && -f "$stamp" && "$(cat "$stamp")" == "$current" ]]; then
+  # The stamp lives *inside* node_modules on purpose. Air re-syncs the
+  # repository fresh for each new task while preserving state outside it, so a
+  # stamp kept elsewhere could outlive the node_modules it describes and cause
+  # a skip with nothing installed. Inside, the two share a fate.
+  local stamp="node_modules/.air-bootstrap-stamp"
+  local want
+  want="$(sha256sum package-lock.json | cut -d' ' -f1)-toolchain:$HAVE_TOOLCHAIN"
+
+  if [[ -f "$stamp" && "$(cat "$stamp")" == "$want" ]]; then
     noop
     return 0
   fi
 
-  # --ignore-scripts is also in ~/.npmrc; passed explicitly so this step works
-  # even if that file is reset.
-  npm ci --ignore-scripts || return 1
-  printf '%s\n' "$current" > "$stamp"
+  # The stamp records the toolchain mode too, so gaining a compiler correctly
+  # forces a reinstall that actually builds the native modules.
+  if [[ "$HAVE_TOOLCHAIN" == "1" ]]; then
+    info "building with native modules"
+    npm ci || return 1
+  else
+    # Also set in ~/.npmrc; passed explicitly so this works even if that is reset.
+    info "building without native modules"
+    npm ci --ignore-scripts || return 1
+  fi
+  printf '%s\n' "$want" > "$stamp"
 }
 run_step "Bootstrap frontend (npm ci)" bootstrap_frontend
 
@@ -261,47 +316,57 @@ cat <<'CONSTRAINTS'
 CONSTRAINTS - things this script cannot fix from the inside
 ============================================================================
 
-NOTE: this script has sudo rights, so it is tempting to assume the two big
-gaps below are fixable here. They are not. Both are blocked by the network
-allowlist, which root does not change. Verified by probing the hosts directly.
+Everything below is a consequence of the environment's "Internet access"
+setting, not a hard limit. Fix it in the web app under
+Settings | Environments -> Additional domains, then resume the task.
 
-1. No C/C++ toolchain (no make, gcc, g++).
+IMPORTANT: an apex domain does NOT cover its subdomains. Verified here -
+`ubuntu.com` returns 200 while `archive.ubuntu.com` returns 403, and
+`hub.docker.com` returns 200 while `production.cloudflare.docker.com` returns
+403. List subdomains explicitly, or use a wildcard like `*.ubuntu.com`.
+
+Note also that custom Docker images are not supported for cloud environments
+and `.air/docker.json` is ignored there, so this script is the only place a
+missing system package can be installed.
+
+1. No C/C++ toolchain (no make, gcc, g++) in the default image.
    Breaks: native npm modules - @theia/ffmpeg, drivelist, native-keymap.
    Consequence: `npm run theia:build:electron` fails, so `mise run verify`
    fails on its last of four stages. Everything else builds.
-   Why sudo does not help: archive.ubuntu.com and security.ubuntu.com both
-   return 403 through the proxy, so apt cannot fetch build-essential no
-   matter who asks.
-   Real fix: install build-essential in the base image.
+   Fix: allow `archive.ubuntu.com` and `security.ubuntu.com` (or
+   `*.ubuntu.com`). This script then installs build-essential itself and
+   switches to a full `npm ci` automatically - no edit here required.
 
 2. Docker cannot pull images, for two independent reasons.
-   a) dockerd runs with no proxy config while direct DNS is refused, so it
-      cannot resolve any registry. This one IS fixable with sudo - write a
-      "proxies" block into /etc/docker/daemon.json and restart the daemon -
-      but it is deliberately not done here, because (b) makes it pointless
-      and restarting dockerd from a provisioning script risks the container.
-   b) index.docker.io and production.cloudflare.docker.com are blocked by
-      the proxy, so even a proxy-aware puller cannot fetch a manifest or a
-      blob. Confirmed by testing crane, which needs no daemon and no root
-      and still fails.
+   a) index.docker.io and production.cloudflare.docker.com (the manifest
+      endpoint and the blob CDN) are blocked, while auth.docker.io and
+      registry-1.docker.io are allowed - so Docker Hub is half-open and
+      fails partway. Confirmed with crane, which needs neither the daemon
+      nor root and still cannot fetch a manifest.
+   b) dockerd itself runs with no proxy config while direct DNS is refused,
+      so even once (a) is fixed `docker pull` cannot resolve a registry.
    Consequence: no Postgres container and no latexml/ar5ivist container.
    Postgres is worked around with SQLite (above). LaTeXML is NOT worked
    around - LaTeX -> HTML compilation cannot run here at all, which takes
    the paper ingest pipeline offline.
 
-   If the two Docker Hub hosts are ever allowlisted, the clean unlock is
-   crane rather than a daemon restart, because it is proxy-aware in
-   userspace:
+   To unlock: allow `index.docker.io` and `production.cloudflare.docker.com`
+   (or `*.docker.io` and `*.docker.com`). Then prefer crane over fixing the
+   daemon, since it is proxy-aware in userspace and needs no restart -
+   restarting dockerd from a provisioning script risks the container:
        crane pull --platform linux/amd64 postgres:16-alpine pg.tar
        docker load < pg.tar
    then run the container from docker-compose-dev.yml and point
-   DATABASE_URL back at Postgres.
+   DATABASE_URL back at Postgres. Mind the disk: a Small VM has 20 GB and
+   latexml/ar5ivist is multi-GB on top of a vfs storage driver.
 
-3. Blocked hosts worth allowlisting, in priority order:
-     index.docker.io, production.cloudflare.docker.com  -> Docker Hub pulls
-     archive.ubuntu.com, security.ubuntu.com            -> apt
-     mise-versions.jdx.dev                              -> silences a mise warning
-     astral.sh                                          -> only if uv is ever absent
+3. Domains worth adding, in priority order:
+     archive.ubuntu.com, security.ubuntu.com  -> apt, unlocks Electron build
+     index.docker.io,
+     production.cloudflare.docker.com         -> Docker Hub, unlocks Postgres
+                                                 and the LaTeXML pipeline
+     mise-versions.jdx.dev                    -> silences a mise warning only
+     astral.sh                                -> only if uv ever leaves the image
 
 CONSTRAINTS
 
@@ -322,10 +387,18 @@ Provisioning succeeded. Verified-working commands:
   uv run uvicorn backend.app.api.main:app --reload --port 8000
 
 Known-failing: `mise run verify` (Theia Electron stage - see CONSTRAINT 1).
+
+The knowledge-graph and tooltip features need a real ANTHROPIC_API_KEY. Add it
+as a "Personal secret" under Settings | Environments -> Environment Variables;
+this script picks it up from the environment on the next resume. Without it the
+app runs but every LLM-backed feature fails.
 VERIFY
 else
-  printf '\n%s step(s) failed. The agent still starts; see the log above.\n' "${#FAILED_STEPS[@]}"
+  printf '\n%s step(s) failed. The agent still starts regardless; see above.\n' "${#FAILED_STEPS[@]}"
 fi
 
-# Always succeed - a live agent can diagnose a partial environment.
+# Air does not block the task on a non-zero exit - the agent runs either way -
+# so report the real status rather than swallowing it. This surfaces failures in
+# the downloadable environment logs instead of hiding them behind a green exit.
+[[ ${#FAILED_STEPS[@]} -eq 0 ]] || exit 1
 exit 0
