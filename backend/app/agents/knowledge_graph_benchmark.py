@@ -4,13 +4,18 @@ from __future__ import annotations
 
 import argparse
 import json
-from collections import Counter
+import re
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Iterable, get_args
+
+from bs4 import BeautifulSoup
 
 from backend.app.agents.knowledge_graph_canonical import cross_type_label_collisions
 from backend.app.agents.knowledge_graph_models import EntityType, KnowledgeGraphDocument, RelationType
 from backend.app.agents.knowledge_graph_projection import overview_projection
+from backend.app.compiler.occurrence_text import annotatable_text, is_annotatable_target
+from backend.app.compiler.occurrence_text import conservative_plural_variants
 
 
 MAX_OVERVIEW_ISOLATE_RATE = 0.10
@@ -24,6 +29,167 @@ def _ids(items: list[dict[str, Any]]) -> set[str]:
 
 def _rate(numerator: int, denominator: int) -> float:
     return numerator / denominator if denominator else 0.0
+
+
+def _orthographic_variants(surface: str) -> set[str]:
+    variants = set()
+    if re.search(r"\s", surface):
+        variants.add(re.sub(r"\s+", "-", surface))
+    if "-" in surface:
+        variants.add(re.sub(r"-+", " ", surface))
+    return {value for value in variants if value.casefold() != surface.casefold()}
+
+
+def _select_non_overlapping(
+    matches: list[tuple[int, int, str, str]],
+) -> list[tuple[int, int, str, str]]:
+    selected = []
+    occupied: list[tuple[int, int]] = []
+    for item in sorted(matches, key=lambda value: (value[0], -(value[1] - value[0]), value[2])):
+        start, end = item[:2]
+        if any(start < used_end and end > used_start for used_start, used_end in occupied):
+            continue
+        occupied.append((start, end))
+        selected.append(item)
+    return selected
+
+
+def measure_occurrence_coverage(
+    document: KnowledgeGraphDocument | dict[str, Any],
+    sections_data: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Audit exact anchors against conservative unanchored surface variants.
+
+    The result is a lower-bound diagnostic, not human-labelled recall. Claims
+    and notation are excluded: long proposition labels are not tooltip terms,
+    while notation is anchored against equation LaTeX under a separate contract.
+    """
+    parsed = (
+        document
+        if isinstance(document, KnowledgeGraphDocument)
+        else KnowledgeGraphDocument.model_validate(document)
+    )
+    subjects = [item for item in parsed.objects if item.kind != "claim"]
+    subject_labels = {item.stable_id: item.label for item in subjects}
+    exact_forms: dict[str, set[str]] = defaultdict(set)
+    candidate_forms: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
+    candidate_display: dict[str, str] = {}
+
+    for subject in subjects:
+        surfaces = {
+            value.strip()
+            for value in [subject.label, *subject.aliases]
+            if len(value.strip()) >= 2
+        }
+        for surface in surfaces:
+            exact_forms[surface.casefold()].add(subject.stable_id)
+        for surface in surfaces:
+            for category, variants in (
+                ("inflection", conservative_plural_variants(surface)),
+                ("orthographic", _orthographic_variants(surface)),
+            ):
+                for variant in variants:
+                    normalized = variant.casefold()
+                    if subject.stable_id in exact_forms.get(normalized, set()):
+                        continue
+                    candidate_forms[normalized][subject.stable_id].add(category)
+                    candidate_display.setdefault(normalized, variant)
+
+    exact_count = 0
+    exact_subjects: set[str] = set()
+    additional_counts = Counter()
+    additional_subjects: set[str] = set()
+    ambiguous_count = 0
+    unanchored_forms: dict[tuple[str, str, str], int] = defaultdict(int)
+
+    for section in sections_data:
+        if not isinstance(section, dict):
+            continue
+        soup = BeautifulSoup(str(section.get("content_html") or ""), "html.parser")
+        for element in soup.find_all(attrs={"data-id": True}):
+            if not is_annotatable_target(element):
+                continue
+            text = annotatable_text(element)
+            exact_matches = []
+            for normalized, subject_ids in exact_forms.items():
+                display = next(
+                    value
+                    for subject_id in subject_ids
+                    for subject in subjects
+                    if subject.stable_id == subject_id
+                    for value in [subject.label, *subject.aliases]
+                    if value.casefold() == normalized
+                )
+                pattern = re.compile(rf"(?<!\w){re.escape(display)}(?!\w)", re.IGNORECASE)
+                for match in pattern.finditer(text):
+                    for subject_id in subject_ids:
+                        exact_matches.append((match.start(), match.end(), subject_id, match.group()))
+            selected_exact = _select_non_overlapping(exact_matches)
+            exact_count += len(selected_exact)
+            exact_subjects.update(item[2] for item in selected_exact)
+            exact_ranges = [(item[0], item[1]) for item in selected_exact]
+
+            candidate_matches = []
+            for normalized, subject_categories in candidate_forms.items():
+                display = candidate_display[normalized]
+                pattern = re.compile(rf"(?<!\w){re.escape(display)}(?!\w)", re.IGNORECASE)
+                for match in pattern.finditer(text):
+                    if any(
+                        match.start() < used_end and match.end() > used_start
+                        for used_start, used_end in exact_ranges
+                    ):
+                        continue
+                    candidate_matches.append((match.start(), match.end(), normalized, match.group()))
+
+            for start, end, normalized, matched_text in _select_non_overlapping(candidate_matches):
+                subject_categories = candidate_forms[normalized]
+                exact_owners = exact_forms.get(normalized, set())
+                owners = set(subject_categories) | exact_owners
+                if len(owners) != 1:
+                    ambiguous_count += 1
+                    continue
+                subject_id = next(iter(owners))
+                if exact_owners:
+                    continue
+                categories = subject_categories[subject_id]
+                category = "inflection" if "inflection" in categories else "orthographic"
+                additional_counts[category] += 1
+                additional_subjects.add(subject_id)
+                unanchored_forms[(matched_text, subject_id, category)] += 1
+
+    additional_total = sum(additional_counts.values())
+    stored_count = sum(
+        occurrence.dom_node_id is not None and occurrence.subject_id in subject_labels
+        for occurrence in parsed.occurrences
+    )
+    top_unanchored = [
+        {
+            "form": form,
+            "subject_id": subject_id,
+            "subject_label": subject_labels[subject_id],
+            "category": category,
+            "count": count,
+        }
+        for (form, subject_id, category), count in sorted(
+            unanchored_forms.items(),
+            key=lambda item: (-item[1], item[0][0].casefold(), item[0][1]),
+        )[:25]
+    ]
+    return {
+        "method": "conservative_surface_variant_lower_bound",
+        "eligible_subject_count": len(subjects),
+        "stored_exact_occurrence_count": stored_count,
+        "exact_occurrence_count": exact_count,
+        "additional_inflection_occurrence_count": additional_counts["inflection"],
+        "additional_orthographic_occurrence_count": additional_counts["orthographic"],
+        "ambiguous_candidate_occurrence_count": ambiguous_count,
+        "potential_occurrence_recall": _rate(exact_count, exact_count + additional_total),
+        "subject_exact_coverage_rate": _rate(len(exact_subjects), len(subjects)),
+        "subject_potential_coverage_rate": _rate(
+            len(exact_subjects | additional_subjects), len(subjects)
+        ),
+        "top_unanchored_forms": top_unanchored,
+    }
 
 
 def _connectivity_metrics(
@@ -156,6 +322,7 @@ def measure_canonical_document(
     document: KnowledgeGraphDocument | dict[str, Any],
     *,
     limit: int = 20,
+    sections_data: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Measure full-corpus and bounded-overview connectivity for one paper."""
     parsed = (
@@ -204,7 +371,7 @@ def measure_canonical_document(
     meanings_by_glyph: dict[str, set[tuple[str, str]]] = {}
     for glyph, meaning, scope in notation_signatures:
         meanings_by_glyph.setdefault(glyph, set()).add((meaning, scope))
-    return {
+    metrics = {
         "schema_version": parsed.schema_version,
         "full": full,
         "overview": overview,
@@ -235,6 +402,11 @@ def measure_canonical_document(
             ),
         },
     }
+    if sections_data is not None:
+        metrics["occurrence_coverage"] = measure_occurrence_coverage(
+            parsed, sections_data
+        )
+    return metrics
 
 
 def _paper_id(document: KnowledgeGraphDocument) -> str:
@@ -253,19 +425,28 @@ def _connectivity_gate(metrics: dict[str, Any]) -> bool:
 
 
 def measure_canonical_corpus(
-    documents: Iterable[tuple[str, KnowledgeGraphDocument | dict[str, Any]]],
+    documents: Iterable[
+        tuple[str, KnowledgeGraphDocument | dict[str, Any]]
+        | tuple[str, KnowledgeGraphDocument | dict[str, Any], list[dict[str, Any]] | None]
+    ],
     *,
     limit: int = 20,
 ) -> dict[str, Any]:
     """Aggregate comparable overview-connectivity metrics across paper domains."""
     papers = []
-    for domain, document in documents:
+    for entry in documents:
+        domain, document = entry[:2]
+        sections_data = entry[2] if len(entry) > 2 else None
         parsed = (
             document
             if isinstance(document, KnowledgeGraphDocument)
             else KnowledgeGraphDocument.model_validate(document)
         )
-        metrics = measure_canonical_document(parsed, limit=limit)
+        metrics = measure_canonical_document(
+            parsed,
+            limit=limit,
+            sections_data=sections_data,
+        )
         papers.append({
             "paper_id": _paper_id(parsed),
             "domain": domain,
@@ -282,7 +463,18 @@ def measure_canonical_corpus(
     largest_component_nodes = sum(paper["overview"]["largest_component_size"] for paper in papers)
     classified_objects = sum(paper["ontology"]["classified_count"] for paper in papers)
     unclassified_objects = sum(paper["ontology"]["unclassified_count"] for paper in papers)
-    return {
+    occurrence_reports = [
+        paper["occurrence_coverage"]
+        for paper in papers
+        if "occurrence_coverage" in paper
+    ]
+    exact_occurrences = sum(item["exact_occurrence_count"] for item in occurrence_reports)
+    additional_occurrences = sum(
+        item["additional_inflection_occurrence_count"]
+        + item["additional_orthographic_occurrence_count"]
+        for item in occurrence_reports
+    )
+    report = {
         "paper_count": len(papers),
         "domain_counts": dict(sorted(Counter(paper["domain"] for paper in papers).items())),
         "papers": papers,
@@ -310,6 +502,11 @@ def measure_canonical_corpus(
             "notation_scope_collision_count": sum(
                 paper["notation"]["same_glyph_distinct_scope_count"] for paper in papers
             ),
+            "occurrence_coverage_paper_count": len(occurrence_reports),
+            "potential_occurrence_recall": _rate(
+                exact_occurrences,
+                exact_occurrences + additional_occurrences,
+            ),
         },
         "gates": {
             "max_overview_isolate_rate": MAX_OVERVIEW_ISOLATE_RATE,
@@ -317,6 +514,7 @@ def measure_canonical_corpus(
             "min_ontology_coverage_rate": MIN_ONTOLOGY_COVERAGE_RATE,
         },
     }
+    return report
 
 
 def measure_fixture(fixture: dict[str, Any]) -> dict[str, Any]:
@@ -347,11 +545,19 @@ def main() -> None:
         for path, payload in zip(args.fixtures, loaded, strict=True):
             if "papers" in payload:
                 corpus_documents.extend(
-                    (paper.get("domain", "unspecified"), paper["document"])
+                    (
+                        paper.get("domain", "unspecified"),
+                        paper["document"],
+                        paper.get("sections_data"),
+                    )
                     for paper in payload["papers"]
                 )
             else:
-                corpus_documents.append((payload.get("domain", "unspecified"), payload.get("document", payload)))
+                corpus_documents.append((
+                    payload.get("domain", "unspecified"),
+                    payload.get("document", payload),
+                    payload.get("sections_data"),
+                ))
         report = measure_canonical_corpus(corpus_documents, limit=args.limit)
     rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
     if args.output:

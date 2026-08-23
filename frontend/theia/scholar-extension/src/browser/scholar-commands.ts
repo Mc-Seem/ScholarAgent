@@ -19,7 +19,7 @@ export const ScholarCommands = {
   } satisfies Command,
   SHOW_TOOLTIP_DRAFTS: {
     id: 'scholar-agent.show-tooltip-drafts',
-    label: 'Scholar Agent: Show Tooltip Drafts',
+    label: 'Scholar Agent: Show Term Highlights',
   } satisfies Command,
   OPEN_LLM_SETTINGS: {
     id: 'scholar-agent.open-llm-settings',
@@ -52,7 +52,7 @@ export const ScholarCommands = {
   } satisfies Command,
   TEST_LLM_TOOLTIP_SUGGESTION: {
     id: 'scholar-agent.test-llm-tooltip-suggestion',
-    label: 'Scholar Agent: Test Tooltip Suggestions LLM Connection',
+    label: 'Scholar Agent: Test Term Highlights LLM Connection',
     iconClass: 'codicon codicon-debug-start',
   } satisfies Command,
   REFRESH_LIBRARY: {
@@ -172,22 +172,22 @@ export const ScholarCommands = {
   } satisfies Command,
   GENERATE_SUGGESTIONS: {
     id: 'scholar-agent.generate-suggestions',
-    label: 'Generate AI Tooltip Suggestions',
+    label: 'Generate AI Term Highlights',
     iconClass: 'codicon codicon-sparkle',
   } satisfies Command,
   APPLY_SUGGESTIONS: {
     id: 'scholar-agent.apply-suggestions',
-    label: 'Apply Selected Tooltip Suggestions',
+    label: 'Apply Selected Term Highlights',
     iconClass: 'codicon codicon-check-all',
   } satisfies Command,
   CREATE_MANUAL_SUGGESTION: {
     id: 'scholar-agent.create-manual-suggestion',
-    label: 'Create Manual Suggestion',
+    label: 'Create Manual Term Highlight',
     iconClass: 'codicon codicon-add',
   } satisfies Command,
   DELETE_SUGGESTION: {
     id: 'scholar-agent.delete-suggestion',
-    label: 'Delete Suggestion',
+    label: 'Delete Term Highlight',
     iconClass: 'codicon codicon-trash',
   } satisfies Command,
 }

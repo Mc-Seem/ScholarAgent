@@ -6,6 +6,7 @@ Occurrence offsets are produced by the knowledge graph builder
 so the rule lives here instead of being spelled out twice.
 """
 
+import re
 from typing import List
 
 from bs4 import NavigableString, Tag
@@ -16,6 +17,40 @@ from bs4 import NavigableString, Tag
 # ``KTO`` in ``\mathcal{L}_{KTO}``. An anchor there rewrites the formula source.
 MATH_TAGS = {"math", "svg"}
 NON_CONTENT_TAGS = {"script", "style"}
+
+
+def conservative_plural_variants(surface: str) -> set[str]:
+    """Return productive singular/plural alternatives for a term surface.
+
+    The caller must still reject variants shared by multiple semantic subjects.
+    Irregular morphology is deliberately left out: this helper is a predictable
+    anchoring rule, not a general-purpose English lemmatizer.
+    """
+    match = re.search(r"([A-Za-z]+)([^A-Za-z]*)$", surface)
+    if match is None or len(match.group(1)) < 2:
+        return set()
+    word = match.group(1)
+    suffix = match.group(2)
+    lower = word.casefold()
+    alternatives = set()
+    if lower.endswith("ies") and len(word) > 3:
+        alternatives.add(f"{word[:-3]}y{suffix}")
+    elif lower.endswith("es") and lower[:-2].endswith(("s", "x", "z", "ch", "sh")):
+        alternatives.add(f"{word[:-2]}{suffix}")
+    elif lower.endswith("s") and not lower.endswith(("ss", "is", "us")):
+        alternatives.add(f"{word[:-1]}{suffix}")
+    elif lower.endswith("y") and len(word) > 1 and lower[-2] not in "aeiou":
+        alternatives.add(f"{word[:-1]}ies{suffix}")
+    elif lower.endswith(("s", "x", "z", "ch", "sh")):
+        alternatives.add(f"{word}es{suffix}")
+    else:
+        alternatives.add(f"{word}s{suffix}")
+    prefix = surface[:match.start(1)]
+    return {
+        f"{prefix}{value}"
+        for value in alternatives
+        if value.casefold() != surface.casefold()
+    }
 
 
 def is_annotatable_target(element: Tag) -> bool:

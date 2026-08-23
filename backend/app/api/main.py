@@ -133,6 +133,7 @@ class TooltipResponse(BaseModel):
     user_id: str
     target_text: Optional[str] = None
     content: str
+    is_user_override: bool
     is_pinned: bool
     display_order: Optional[int] = None
     created_at: datetime
@@ -552,6 +553,8 @@ async def update_tooltip(
     if tooltip.target_text is not None:
         existing.target_text = tooltip.target_text
     existing.content = tooltip.content
+    if existing.entity_id:
+        existing.is_user_override = True
     if tooltip.is_pinned is not None:
         existing.is_pinned = tooltip.is_pinned
     if tooltip.display_order is not None:
@@ -624,6 +627,7 @@ async def upsert_semantic_note(
 
     if existing:
         existing.content = content
+        existing.is_user_override = True
         if note.target_text is not None:
             existing.target_text = note.target_text
         existing.updated_at = datetime.now(UTC)
@@ -637,6 +641,7 @@ async def upsert_semantic_note(
         entity_id=subject_id,
         target_text=note.target_text,
         content=content,
+        is_user_override=True,
         created_at=datetime.now(UTC),
         updated_at=datetime.now(UTC)
     )
@@ -782,15 +787,6 @@ async def suggest_tooltips_endpoint(
             user_expertise=request.user_expertise,
             entity_type_filter=request.entity_types
         )
-
-        # Cache the suggestions for later use by the apply endpoint
-        paper.tooltip_suggestions_cache = {
-            "expertise": request.user_expertise,
-            "entity_types": request.entity_types,
-            "suggestions": result.get("suggestions", []),
-            "total_entities": result.get("total_entities", 0),
-            "generated_at": datetime.now(UTC).isoformat()
-        }
 
         # Clear existing AI suggestions for this paper (keep manual ones)
         db.query(TooltipSuggestionModel).filter(
@@ -1071,6 +1067,7 @@ async def apply_tooltips_endpoint(
                 dom_node_id=None,  # Semantic tooltips don't have single anchor
                 target_text=suggestion.get('entity_label'),  # Display label
                 content=suggestion.get('tooltip_content'),
+                is_user_override=False,
                 created_at=datetime.now(UTC),
                 updated_at=datetime.now(UTC)
             )

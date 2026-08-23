@@ -30,8 +30,8 @@ const WORKFLOWS: Readonly<Record<LlmWorkflow, { label: string; description: stri
     description: 'A smaller, lower-cost model is usually sufficient for this workflow.',
   },
   tooltip_suggestion: {
-    label: 'Tooltip Suggestions',
-    description: 'Choose the model used to filter entities and draft tooltip content.',
+    label: 'Term Highlights',
+    description: 'Choose the model used to select terms and draft highlight content.',
   },
 }
 

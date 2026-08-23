@@ -125,17 +125,17 @@ describe('ReaderWorkspaceStore', () => {
 
   it('scopes paper-operation statuses and ignores stale finish callbacks', () => {
     const store = new ReaderWorkspaceStore(api)
-    const finishGeneration = store.startPaperOperation('paper-a', 'Generating tooltip drafts…')
-    const finishOtherPaper = store.startPaperOperation('paper-b', 'Applying tooltip drafts…')
-    const finishApply = store.startPaperOperation('paper-a', 'Applying tooltip drafts…')
+    const finishGeneration = store.startPaperOperation('paper-a', 'Generating term highlights…')
+    const finishOtherPaper = store.startPaperOperation('paper-b', 'Applying term highlights…')
+    const finishApply = store.startPaperOperation('paper-a', 'Applying term highlights…')
 
     expect(store.getSnapshot().statusByPaperId).toEqual({
-      'paper-a': 'Applying tooltip drafts…',
-      'paper-b': 'Applying tooltip drafts…',
+      'paper-a': 'Applying term highlights…',
+      'paper-b': 'Applying term highlights…',
     })
 
     finishGeneration()
-    expect(store.getSnapshot().statusByPaperId['paper-a']).toBe('Applying tooltip drafts…')
+    expect(store.getSnapshot().statusByPaperId['paper-a']).toBe('Applying term highlights…')
     finishOtherPaper()
     expect(store.getSnapshot().statusByPaperId['paper-b']).toBeUndefined()
     finishApply()

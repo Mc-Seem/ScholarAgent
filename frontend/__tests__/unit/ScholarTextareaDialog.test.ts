@@ -24,7 +24,7 @@ afterEach(() => {
 describe('ScholarTextareaDialog', () => {
   it('renders a multiline textarea with a generous height instead of a single-line input', () => {
     const dialog = new ScholarTextareaDialog({
-      title: 'Generate AI Tooltip Suggestions',
+      title: 'Generate AI Term Highlights',
       initialValue: 'Prior expertise',
     })
 

@@ -128,7 +128,7 @@ export class ScholarSemanticLensWidget extends ReactWidget {
     const tooltips = this.store.getSnapshot().tooltipsByPaperId[paperId] ?? []
     const notesBySubjectId: Record<string, string> = {}
     for (const tooltip of tooltips) {
-      if (tooltip.entity_id) {
+      if (tooltip.entity_id && tooltip.is_user_override === true) {
         notesBySubjectId[tooltip.entity_id] = tooltip.content
       }
     }

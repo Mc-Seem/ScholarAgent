@@ -11,6 +11,8 @@ export interface Tooltip {
   user_id: string;
   target_text?: string | null;
   content: string;
+  /** True only when the reader replaced the graph's wording in Semantic Lens. */
+  is_user_override?: boolean;
   is_pinned: boolean;
   display_order?: number | null;
   created_at: string;

@@ -113,8 +113,8 @@ export class ScholarSuggestionsTreeWidget extends TreeWidget {
   ) {
     super(treeProps, model, contextMenuRenderer)
     this.id = SCHOLAR_SUGGESTIONS_WIDGET_ID
-    this.title.label = 'Suggestions'
-    this.title.caption = 'Tooltip Suggestions'
+    this.title.label = 'Highlights'
+    this.title.caption = 'Term Highlights'
     this.title.iconClass = 'codicon codicon-lightbulb-sparkle'
   }
 
@@ -248,21 +248,21 @@ export class ScholarSuggestionsTreeWidget extends TreeWidget {
   protected override renderTree(model: TreeModel): React.ReactNode {
     const paperId = this.store.getSnapshot().activePaperId
     if (!paperId) {
-      return this.renderMessage('Open a paper to see tooltip suggestions.')
+      return this.renderMessage('Open a paper to see term highlights.')
     }
     const state = this.suggestions.getPaperState(paperId)
     if (CompositeTreeNode.is(model.root) && model.root.children.length === 0) {
       if (state.loading) {
-        return this.renderMessage('Loading suggestions…')
+        return this.renderMessage('Loading term highlights…')
       }
       if (state.error) {
-        return this.renderMessage(`Unable to load suggestions: ${state.error}`, true)
+        return this.renderMessage(`Unable to load term highlights: ${state.error}`, true)
       }
-      return this.renderMessage('No tooltip suggestions for the active paper.')
+      return this.renderMessage('No term highlights for the active paper.')
     }
     return (
       <>
-        {state.loading && this.renderMessage('Refreshing suggestions…')}
+        {state.loading && this.renderMessage('Refreshing term highlights…')}
         {state.error && this.renderMessage(state.error, true)}
         {super.renderTree(model)}
       </>
@@ -419,8 +419,8 @@ export class ScholarSuggestionEditorWidget extends ReactWidget {
   ) {
     super()
     this.id = SCHOLAR_SUGGESTION_EDITOR_WIDGET_ID
-    this.title.label = 'Suggestion Details'
-    this.title.caption = 'Tooltip Suggestion Details and Editor'
+    this.title.label = 'Highlight Details'
+    this.title.caption = 'Term Highlight Details and Editor'
     this.title.iconClass = 'codicon codicon-lightbulb'
     this.node.classList.add('scholar-widget', 'scholar-native-editor', 'scholar-suggestion-editor')
     this.toDispose.push(this.suggestions.onDidChange(() => this.update()))
@@ -454,7 +454,7 @@ export function ScholarSuggestionEditorContent({
   )
   const paperId = snapshot.activePaperId
   if (!paperId) {
-    return <div className="scholar-empty">Open a paper to inspect tooltip suggestions.</div>
+    return <div className="scholar-empty">Open a paper to inspect term highlights.</div>
   }
 
   const state = suggestions.getPaperState(paperId)
@@ -474,7 +474,7 @@ export function ScholarSuggestionEditorContent({
   if (!focused) {
     return (
       <div className="scholar-empty scholar-suggestion-editor-empty">
-        <span>Select a suggestion to inspect or edit it.</span>
+        <span>Select a term highlight to inspect or edit it.</span>
         <button
           type="button"
           className="theia-button secondary"
@@ -482,7 +482,7 @@ export function ScholarSuggestionEditorContent({
           onClick={() => suggestions.startManualCreation(paperId)}
         >
           <span className="codicon codicon-add" aria-hidden="true" />
-          Create Manual Suggestion
+          Create Manual Term Highlight
         </button>
       </div>
     )
@@ -496,7 +496,7 @@ export function ScholarSuggestionEditorContent({
       ScholarCommands.DELETE_SUGGESTION.id,
       createScholarSuggestionTarget(paperId, focused.id),
     ).catch(reason => {
-      void messageService.error(`Could not delete suggestion: ${errorMessage(reason)}`)
+      void messageService.error(`Could not delete term highlight: ${errorMessage(reason)}`)
     })
   }
 
@@ -509,14 +509,14 @@ export function ScholarSuggestionEditorContent({
           {focused.is_ai_generated ? 'AI' : 'Manual'}
         </span>
       </header>
-      <section className="scholar-suggestion-preview" aria-label="Suggestion preview">
+      <section className="scholar-suggestion-preview" aria-label="Term highlight preview">
         <LatexText text={content} />
       </section>
       <label className="scholar-native-field">
-        <span>Suggestion content</span>
+        <span>Term highlight content</span>
         <textarea
           className="theia-input scholar-native-textarea"
-          aria-label="Suggestion content"
+          aria-label="Term highlight content"
           value={content}
           disabled={state.pending}
           onChange={event => suggestions.editSuggestion(paperId, focused.id, event.target.value)}
@@ -529,12 +529,12 @@ export function ScholarSuggestionEditorContent({
         <button
           type="button"
           className="theia-button secondary scholar-annotation-delete"
-          aria-label="Delete Suggestion"
+          aria-label="Delete Term Highlight"
           disabled={state.pending}
           onClick={executeDelete}
         >
           <span className="codicon codicon-trash" aria-hidden="true" />
-          Delete Suggestion
+          Delete Term Highlight
         </button>
       </div>
     </article>
@@ -559,7 +559,7 @@ function ScholarManualSuggestionForm({
   )
   const create = (): void => {
     void suggestions.createManualSuggestion(paperId).catch(reason => {
-      void messageService.error(`Could not create suggestion: ${errorMessage(reason)}`)
+      void messageService.error(`Could not create term highlight: ${errorMessage(reason)}`)
     })
   }
 
@@ -573,7 +573,7 @@ function ScholarManualSuggestionForm({
         }
       }}
     >
-      <h3>Create Manual Suggestion</h3>
+      <h3>Create Manual Term Highlight</h3>
       <label className="scholar-native-field">
         <span>Entity label</span>
         <input
@@ -611,10 +611,10 @@ function ScholarManualSuggestionForm({
         </select>
       </label>
       <label className="scholar-native-field">
-        <span>Tooltip content</span>
+        <span>Term highlight content</span>
         <textarea
           className="theia-input scholar-native-textarea"
-          aria-label="Tooltip content"
+          aria-label="Term highlight content"
           value={draft.tooltipContent}
           disabled={state.pending}
           onChange={event => suggestions.updateCreateDraft(paperId, {
@@ -636,7 +636,7 @@ function ScholarManualSuggestionForm({
           className="theia-button main"
           disabled={!valid || state.pending}
         >
-          Create Suggestion
+          Create Term Highlight
         </button>
       </div>
     </form>

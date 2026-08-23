@@ -134,8 +134,11 @@
   font-weight: 600;
 }
 
-.semantic-lens-section-title span,
-.semantic-locations-title span {
+/* Only direct content/count spans are badges. EditableSemanticText also puts
+   its actions in a span; styling that container as a badge leaves an opaque
+   empty pill over the title while its lone Edit button is hidden. */
+.semantic-lens-section-title > span:not(.semantic-editable-actions),
+.semantic-locations-title > span {
   min-width: 1.1rem;
   padding: 0 0.28rem;
   color: var(--theia-badge-foreground, #475569);
@@ -170,6 +173,7 @@
 .equation-lens-symbol {
   max-width: 7rem;
   overflow-x: auto;
+  overflow-y: hidden;
   color: var(--theia-textLink-foreground, #4338ca);
   font-size: 0.9rem;
   font-weight: 600;
@@ -272,6 +276,7 @@
 }
 
 .semantic-editable {
+  position: relative;
   min-width: 0;
 }
 
@@ -291,6 +296,14 @@
   gap: 0.25rem;
   margin-left: 0.35rem;
   vertical-align: baseline;
+}
+
+/* A lone hidden Edit/Add control must not leave its bordered silhouette in the
+   text flow. Its static position still follows the text, while focus keeps the
+   keyboard path provided by the shared action rule below. */
+.semantic-editable-actions-single {
+  position: absolute;
+  z-index: 1;
 }
 
 .semantic-editable-action {
@@ -320,12 +333,6 @@
 .semantic-editable:focus-within .semantic-editable-action,
 .equation-lens-notation-item:hover .semantic-editable-action,
 .semantic-lens-header:hover .semantic-editable-action {
-  opacity: 1;
-}
-
-/* A subject the agent said nothing about would otherwise offer no visible way
-   in, so its `Add` stays put. */
-.semantic-editable:has(.semantic-editable-empty) .semantic-editable-action {
   opacity: 1;
 }
 

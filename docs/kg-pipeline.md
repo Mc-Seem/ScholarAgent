@@ -15,7 +15,7 @@ anchor_equations                   (compiler IDs + one bounded equation analysis
              ↓
 build_canonical_document           (objects, relations, notation, explanations)
              ↓
-deterministic occurrence anchoring (exact DOM/equation offsets)
+deterministic occurrence anchoring (validated surfaces + exact DOM/equation offsets)
              ↓
 Paper.knowledge_graph              (validated schema-v3 JSON document)
 ```
@@ -36,7 +36,7 @@ Stable IDs derive from normalized semantic/math signatures and paper scope rathe
 - `tooltip_suggestion.py` consumes reusable explanation subjects and their complete occurrence lists, independently of graph rank.
 - Occurrences live only in the semantic document: stored drafts keep label, type and text, so `/tooltips/apply` looks the anchors up by subject id instead of trusting the request. Applying a draft therefore highlights terms even though the drafts panel knows nothing about positions.
 - Anchoring tolerates real LaTeXML output: a term split across inline tags is wrapped piecewise into adjacent spans sharing one occurrence id, and an occurrence whose text moved or whose node vanished is reported as skipped rather than failing the whole apply.
-- What may be anchored is defined once, in `backend/app/compiler/occurrence_text.py`, and shared by the builder and the injector. Every `data-id` element is scanned except math, a nested `data-id` node's text belongs to that node alone, and already anchored text still counts toward offsets. The earlier "childless nodes only" rule silently skipped every paragraph containing an inline formula, because LaTeXML gives each `<math>` its own `data-id` -- and, conversely, matched terms inside the TeX source kept in `<annotation>`, which corrupted the formula.
+- What may be anchored is defined once, in `backend/app/compiler/occurrence_text.py`, and shared by the builder and the injector. Every `data-id` element is scanned except math, a nested `data-id` node's text belongs to that node alone, and already anchored text still counts toward offsets. Explicit labels/aliases also receive conservative productive singular/plural alternatives; a generated form is admitted only when exactly one semantic subject owns it and it is not an explicit surface of another subject. Irregular morphology remains outside the deterministic contract. The earlier "childless nodes only" rule silently skipped every paragraph containing an inline formula, because LaTeXML gives each `<math>` its own `data-id` -- and, conversely, matched terms inside the TeX source kept in `<annotation>`, which corrupted the formula.
 - Anchoring is deterministic and observations are persisted, so `POST /knowledge-graph/reanchor` recomputes occurrences from the stored document plus section HTML. An improved anchoring rule therefore costs no extraction rerun; only the anchors change, subject ids and reader notes survive.
 - `semantic_routes.py` serves bounded section annotations, subject/evidence details, Equation Lens data, and glossary results.
 - Equation observations are anchored deterministically from compiler records, so their `quote` is the equation LaTeX itself rather than a supporting sentence. Only text-derived observations carry a real quote; clients present equation evidence as a location (section plus anchored node) instead of echoing the formula.
@@ -45,6 +45,17 @@ Stable IDs derive from normalized semantic/math signatures and paper scope rathe
 - `knowledge_graph_retrieval.py` is an offline experiment only. The measured decision in `docs/kg-retrieval-evaluation.md` keeps passage-only retrieval as the runtime default.
 
 Canonicalization records same-name cross-kind collisions such as a `topic` and `procedure` both named `SLIME` as diagnostics. It deliberately does not merge them automatically: a shared label is review evidence, not proof of identity.
+
+`measure_occurrence_coverage()` in `knowledge_graph_benchmark.py` compares exact
+label/alias matches with conservative singular/plural and hyphen/space candidates.
+It reports occurrence recall, subject coverage, ambiguous candidates, and the
+actual missed forms. This is explicitly a lower-bound surface audit rather than
+human-labelled semantic recall. On the available `arXiv:2602.02383` document,
+exact matching found 284 of 289 unambiguous candidate occurrences (98.27%); the
+five misses were all recovered by the safe singular/plural rule. Because the
+local corpus contains only that one schema-v3 paper, the inactive LangGraph AI
+injection path is retained as a fallback/reference until cross-domain evidence
+is available, but it is not called by the reader API.
 
 ## Legacy Pipeline Reference (Inactive)
 

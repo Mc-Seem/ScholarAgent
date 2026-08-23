@@ -3,6 +3,19 @@ from backend.app.agents.knowledge_graph_models import SourceObservation, SourceR
 from backend.app.agents import tooltip_suggestion
 
 
+def test_filter_prompt_uses_schema_v3_subject_ids():
+    expected_ids = [
+        "entity:d29d1b80aed35eb3c2f7",
+        "notation:d94043bb71ce6083d717",
+    ]
+
+    assert f'"selected_entity_ids": {expected_ids!r}'.replace("'", '"') in tooltip_suggestion.FILTER_USER_PROMPT
+    assert "formula_elbo" not in tooltip_suggestion.FILTER_USER_PROMPT
+    assert "symbol_alpha_t" not in tooltip_suggestion.FILTER_USER_PROMPT
+    assert "def_ELBO" not in tooltip_suggestion.FILTER_USER_PROMPT
+    assert "thm_3.2" not in tooltip_suggestion.FILTER_USER_PROMPT
+
+
 def _canonical_tooltip_graph(count=35):
     observations = [
         SourceObservation(
@@ -157,6 +170,9 @@ def test_apply_resolves_occurrences_from_the_graph_when_the_client_sends_none(ap
     assert body["tooltips_created"] == 2
     assert body["spans_injected"] == 2
     assert body["errors"] == []
+
+    tooltips = api_client.get("/api/papers/paper-apply/tooltips").json()
+    assert all(tooltip["is_user_override"] is False for tooltip in tooltips)
 
     html = api_client.get("/api/papers/paper-apply").json()["html_content"]
     assert html.count('class="kg-entity"') == 2

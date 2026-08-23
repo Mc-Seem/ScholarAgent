@@ -30,6 +30,7 @@ interface Tooltip {
   entity_id?: string | null;    // Set for glossary entries
   content: string;
   target_text?: string | null;  // The term being defined
+  is_user_override?: boolean;   // Only reader wording replaces graph text
   // ...
 }
 
@@ -170,7 +171,7 @@ Equation Lens; hover still does nothing.
 
 `ScholarSemanticLensWidget` is the primary surface for those details. It is a
 standalone right-sidebar view (`Semantic Lens`, rank 90, ahead of `Annotations`
-and `Tooltip Drafts`) that renders the same `SemanticDetails`/`EquationLens`
+and `Term Highlights`) that renders the same `SemanticDetails`/`EquationLens`
 components as the web reader. A reading pane must not compete with the article
 for vertical space, so the lens deliberately lives beside the text instead of
 below it: the bottom `Property View` grows over the centre of the screen, which
@@ -216,7 +217,7 @@ never reflows; a busy button is dimmed by colour for the same reason.
 There is exactly one text per subject, not an agent card plus a reader card: two
 competing explanations of the same symbol only force the reader to decide which
 one to trust. A reader edit is stored as a `Tooltip` keyed by the subject stable
-id (`entity:…`, `notation:…`, `equation:…`), which means an applied tooltip draft
+id (`entity:…`, `notation:…`, `equation:…`), which means an applied term highlight
 and a hand-typed correction are the same record. The lens shows the reader's
 wording when it differs from the agent's, marks it `edited`, and offers
 `Show original` and `Restore`. Restore deletes only the note; the injected
@@ -261,7 +262,10 @@ shares.
 
 Evidence is presented as places, not quotes. `EvidenceLocations` names the
 section (or the displayed equation when no section is known) and shows the
-supporting quote only when it adds something. Equation observations are anchored
+supporting quote only when it adds something. Semantic API evidence arrives in
+paper order (section, DOM node, then character offset), rather than the
+parallel-extraction order stored in `evidence_ids`, so `Appears in` follows the
+reader from Abstract through the body and conclusion. Equation observations are anchored
 with the equation LaTeX as their quote, so repeating it under the rendered
 formula would be pure duplication; that self-quote is dropped and only the
 location remains clickable.
@@ -311,33 +315,34 @@ and detail actions share Theia commands, while creation also uses the embedded
 editor instead of a floating React popover. The tree data transformations live in
 `lib/scholar-native-tree.ts` so they remain framework-independent and testable.
 
-The separate right-sidebar `Tooltip Drafts` `ViewContainer` holds `Suggestions`
-and `Suggestion Details`, making pending manual and AI content directly
+The separate right-sidebar `Term Highlights` `ViewContainer` holds `Highlights`
+and `Highlight Details`, making pending manual and AI content directly
 discoverable without the `Annotations` overflow menu. Its tree is expanded on
 first open, details are revealed when a draft is focused or created, and the
 container can be reopened through `View → Views`. After Theia restores a legacy
 layout, `ScholarContribution.onDidInitializeLayout` moves any saved suggestion
 parts out of `Annotations` and adds this container beside it without resetting
-unrelated tabs, panel sizes, or placements. `Suggestions` is a searchable native
+unrelated tabs, panel sizes, or placements. `Highlights` is a searchable native
 `TreeWidget` grouped as
-`Manual / AI → entity type → suggestion`. Its leaf and group checkboxes derive
+`Manual / AI → entity type → highlight`. Its leaf and group checkboxes derive
 tri-state selection from `ScholarSuggestionService`, while row focus reveals
-the separate `Suggestion Details` `ReactWidget`. The service keeps checked IDs,
+the separate `Highlight Details` `ReactWidget`. The service keeps checked IDs,
 focus, transient edits, create drafts, loading, and mutation state isolated by
-paper ID and rejects stale list responses. `Generate`, `Apply`, `Create Manual
-Suggestion`, and `Delete Suggestion` are Theia commands exposed through the tree
-toolbar, context menu, or details widget. Apply refreshes the shared paper and
+paper ID and rejects stale list responses. `Generate AI Term Highlights`,
+`Apply Selected Term Highlights`, `Create Manual Term Highlight`, and
+`Delete Term Highlight` are Theia commands exposed through the tree toolbar,
+context menu, or details widget. Apply refreshes the shared paper and
 tooltip caches so the reader and comments update immediately.
 
 `Re-anchor Terms in Paper` sits in the library context menu next to the graph
 commands. It recomputes where the graph's subjects occur in the paper and then
 reloads the paper, so an improved anchoring rule reaches an existing paper
 without a paid rebuild. It opens no confirmation dialog, because unlike
-`Build Knowledge Graph` it calls no model; drafts still have to be applied
-afterwards for the new anchors to become visible highlights.
+`Build Knowledge Graph` it calls no model; term highlights still have to be
+applied afterwards for the new anchors to become visible highlights.
 
-Generate and Apply publish per-paper `Generating tooltip drafts…` and
-`Applying tooltip drafts…` phases through the shared workspace status, so the
+Generate and Apply publish per-paper `Generating term highlights…` and
+`Applying term highlights…` phases through the shared workspace status, so the
 native bottom status bar stays visible for the entire request and subsequent
 reload. The finish callback is ownership-guarded: a late completion cannot
 clear a newer operation or another paper's status. The current suggestion
@@ -388,6 +393,11 @@ The initial request is a 20-node sparse overview and the server hard cap is 30. 
 Injected `.kg-entity` spans carry `data-occurrence-id` and `data-subject-id`, are keyboard-focusable, and activate only on click, Enter, or Space. There are no hover cards or hover-triggered details. Explicit term or equation selection opens the existing navigation sidebar; split-layout integrations retain selection without auto-opening a panel.
 
 `SemanticDetails` and `EquationLens` share one framework-neutral `SemanticSelection` union across Next.js and Theia. `reader-workspace-store.ts` caches bounded section annotations, subject details, and equation details per paper. Glossary search never inserts results into React Flow.
+
+`ScholarSemanticLensWidget` builds its replacement-text map only from entity
+tooltips carrying `is_user_override=true`. Applied AI drafts remain annotations
+and anchors but do not shadow a newly rebuilt graph explanation merely because
+their stored text came from an older build.
 
 ## API Integration
 
@@ -443,11 +453,12 @@ schema-v3 anchors, so every generated suggestion was rejected as
 `Malformed response from server`. `ReaderWorkspaceSuggestionApi.test.ts` now
 pins both directions — the new shape parses, the old one is rejected.
 
-Apply sends drafts without occurrences (`AppliedTooltipSuggestion`). The drafts
-panel lists stored suggestions, which keep only label, type and text, so sending
-`occurrences: []` claimed the term occurs nowhere and produced `Applied N
-tooltips to 0 occurrences`: notes existed but nothing was highlighted. The
-backend resolves anchors from the paper's semantic document instead. Because a
+Apply sends drafts without occurrences (`AppliedTooltipSuggestion`). The
+`Term Highlights` panel lists stored suggestions, which keep only label, type
+and text, so sending `occurrences: []` claimed the term occurs nowhere and
+produced `Applied N term highlights but highlighted no occurrences`: notes
+existed but nothing was highlighted. The backend resolves anchors from the
+paper's semantic document instead. Because a
 note without highlights is invisible, `spans_injected === 0` is reported as a
 warning rather than success, and backend skip reasons are surfaced as warnings.
 One term may arrive as several adjacent `.kg-entity` spans when inline markup

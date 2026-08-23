@@ -222,6 +222,9 @@ class TestPaperDeleteEndpoint:
 class TestTooltipsEndpoints:
     """Tests for tooltip CRUD endpoints."""
 
+    def test_paper_schema_has_no_legacy_suggestion_cache(self):
+        assert "tooltip_suggestions_cache" not in Paper.__table__.columns
+
     @pytest.fixture
     def paper_with_id(self, api_client, simple_tex_file):
         """Create a paper and return its ID."""
@@ -420,6 +423,7 @@ class TestSemanticNotes:
         assert result["dom_node_id"] is None
         assert result["content"] == "Local element size."
         assert result["target_text"] == "τ"
+        assert result["is_user_override"] is True
 
     def test_second_edit_replaces_the_first_instead_of_stacking(self, api_client, paper_with_id):
         """One subject carries one text, so the reader never sees two versions."""
@@ -434,6 +438,7 @@ class TestSemanticNotes:
 
         assert first.json()["id"] == second.json()["id"]
         assert second.json()["content"] == "Corrected wording."
+        assert second.json()["is_user_override"] is True
         stored = api_client.get(f"/api/papers/{paper_with_id}/tooltips").json()
         assert [item["content"] for item in stored] == ["Corrected wording."]
 

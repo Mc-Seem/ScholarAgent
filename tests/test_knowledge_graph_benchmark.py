@@ -6,6 +6,7 @@ import pytest
 from backend.app.agents.knowledge_graph_benchmark import (
     measure_canonical_document,
     measure_canonical_corpus,
+    measure_occurrence_coverage,
     measure_legacy_graph,
 )
 from backend.app.agents.knowledge_graph_canonical import canonicalize_observations
@@ -188,3 +189,79 @@ def test_measure_canonical_document_reports_notation_scope_and_diagnostic_misses
     assert metrics["relations"]["vocabulary_misses"] == ["measures"]
     assert metrics["notation"]["same_glyph_distinct_scope_count"] == 1
     assert metrics["notation"]["duplicate_signature_count"] == 0
+
+
+def test_measure_occurrence_coverage_reports_conservative_unanchored_word_forms():
+    sections = [{
+        "id": "sec-main",
+        "content_html": (
+            '<p data-id="p-main">A reward model scores reward models. '
+            "Policies optimize losses.</p>"
+        ),
+    }]
+    observations = [
+        SourceObservation(
+            id=f"obs-{index}",
+            kind="artifact" if label == "reward model" else "topic",
+            label=label,
+            payload={"summary": f"Definition of {label}."},
+            source=SourceReference(
+                paper_id="paper-forms",
+                section_id="sec-main",
+                dom_node_id="p-main",
+                quote=label,
+            ),
+        )
+        for index, label in enumerate(["reward model", "policy", "loss"])
+    ]
+    document = canonicalize_observations(
+        "paper-forms",
+        observations,
+        sections=sections,
+    )
+
+    coverage = measure_occurrence_coverage(document, sections)
+
+    assert coverage["eligible_subject_count"] == 3
+    assert coverage["exact_occurrence_count"] == 1
+    assert coverage["additional_inflection_occurrence_count"] == 3
+    assert coverage["potential_occurrence_recall"] == pytest.approx(0.25)
+    assert coverage["subject_exact_coverage_rate"] == pytest.approx(1 / 3)
+    assert coverage["subject_potential_coverage_rate"] == pytest.approx(1.0)
+    assert [item["form"] for item in coverage["top_unanchored_forms"]] == [
+        "losses",
+        "Policies",
+        "reward models",
+    ]
+
+
+def test_measure_occurrence_coverage_separates_ambiguous_generated_forms():
+    sections = [{
+        "id": "sec-main",
+        "content_html": '<p data-id="p-main">The models differ.</p>',
+    }]
+    observations = [
+        SourceObservation(
+            id=f"obs-{index}",
+            kind=kind,
+            label="model",
+            payload={"summary": summary},
+            source=SourceReference(
+                paper_id="paper-ambiguous",
+                section_id="sec-main",
+                dom_node_id="p-main",
+                quote=summary,
+            ),
+        )
+        for index, (kind, summary) in enumerate([
+            ("artifact", "A trained model."),
+            ("topic", "A conceptual model."),
+        ])
+    ]
+    document = canonicalize_observations("paper-ambiguous", observations)
+
+    coverage = measure_occurrence_coverage(document, sections)
+
+    assert coverage["additional_inflection_occurrence_count"] == 0
+    assert coverage["ambiguous_candidate_occurrence_count"] == 1
+    assert coverage["potential_occurrence_recall"] == 0.0

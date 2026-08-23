@@ -126,6 +126,7 @@ describe('ScholarLlmSettingsContent', () => {
     expect(screen.getByLabelText('Model for kg_extraction')).toHaveValue('kg-model')
     expect(screen.getByLabelText('Model for html_injection')).toHaveValue('html-model')
     expect(screen.getByLabelText('Model for tooltip_suggestion')).toHaveValue('tooltip-model')
+    expect(screen.getByText('Term Highlights')).toBeTruthy()
     expect(screen.getByText(/Saved in database/)).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Save LLM settings' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Revert LLM settings' })).toBeDisabled()

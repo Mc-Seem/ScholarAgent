@@ -330,10 +330,10 @@ describe('ScholarSuggestionService', () => {
     expect(service.getPaperState('paper-a').pending).toBe(true)
     expect(workspace.startPaperOperation).toHaveBeenCalledWith(
       'paper-a',
-      'Generating tooltip drafts…',
+      'Generating term highlights…',
     )
     expect(workspace.getSnapshot().statusByPaperId['paper-a'])
-      .toBe('Generating tooltip drafts…')
+      .toBe('Generating term highlights…')
     await expect(resultPromise).resolves.toMatchObject({ suggested_count: 1 })
 
     expect(api.generateTooltipSuggestions).toHaveBeenCalledWith('paper-a', {
@@ -354,7 +354,7 @@ describe('ScholarSuggestionService', () => {
     const resultPromise = service.generateSuggestions('paper-a', 'Researcher')
     const rejection = expect(resultPromise).rejects.toThrow('Generation failed')
     expect(workspace.getSnapshot().statusByPaperId['paper-a'])
-      .toBe('Generating tooltip drafts…')
+      .toBe('Generating term highlights…')
     await rejection
 
     expect(workspace.operationFinishes[0]).toHaveBeenCalledOnce()
@@ -440,10 +440,10 @@ describe('ScholarSuggestionService', () => {
     expect(service.getPaperState('paper-a').pending).toBe(true)
     expect(workspace.startPaperOperation).toHaveBeenCalledWith(
       'paper-a',
-      'Applying tooltip drafts…',
+      'Applying term highlights…',
     )
     expect(workspace.getSnapshot().statusByPaperId['paper-a'])
-      .toBe('Applying tooltip drafts…')
+      .toBe('Applying term highlights…')
     await expect(resultPromise).resolves.toMatchObject({ tooltips_created: 2 })
 
     // No `occurrences` key: stored drafts hold only label and text, so sending an
@@ -490,7 +490,7 @@ describe('ScholarSuggestionService', () => {
 
     publishProgress?.({ stage: 'applying', current: 3, total: 8 })
     expect(workspace.getSnapshot().statusByPaperId['paper-a'])
-      .toBe('Applying tooltip drafts… 3/8')
+      .toBe('Applying term highlights… 3/8')
 
     response.resolve({ success: true, spans_injected: 1, tooltips_created: 1, errors: [] })
     await applying

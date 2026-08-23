@@ -754,7 +754,7 @@ describe('ScholarContribution Semantic Lens placement', () => {
   })
 })
 
-describe('ScholarContribution Tooltip Drafts layout migration', () => {
+describe('ScholarContribution Term Highlights layout migration', () => {
   async function migrate(context: ReturnType<typeof createContribution>): Promise<void> {
     const contribution = context.contribution as unknown as {
       onDidInitializeLayout(app: unknown): Promise<void>
@@ -862,7 +862,7 @@ describe('ScholarContribution Tooltip Drafts layout migration', () => {
     ])
     expect(context.shell.addWidget).not.toHaveBeenCalled()
     expect(context.messageService.warn).toHaveBeenCalledWith(
-      'Could not migrate the Tooltip Drafts layout: factory failed',
+      'Could not migrate the Term Highlights layout: factory failed',
     )
   })
 })
@@ -1521,8 +1521,8 @@ describe('ScholarContribution active-paper commands', () => {
 
   it('shows the active paper suggestion operation in the shared status bar', async () => {
     snapshot.activePaperId = 'paper-a'
-    snapshot.statusByPaperId['paper-a'] = 'Applying tooltip drafts…'
-    snapshot.statusByPaperId['paper-b'] = 'Generating tooltip drafts…'
+    snapshot.statusByPaperId['paper-a'] = 'Applying term highlights…'
+    snapshot.statusByPaperId['paper-b'] = 'Generating term highlights…'
     const { contribution, statusBar } = createContribution(store)
 
     contribution.onStart()
@@ -1530,8 +1530,8 @@ describe('ScholarContribution active-paper commands', () => {
     expect(statusBar.setElement).toHaveBeenLastCalledWith(
       'scholar-agent.active-paper',
       expect.objectContaining({
-        text: '$(sync~spin) Applying tooltip drafts…',
-        tooltip: 'Applying tooltip drafts…',
+        text: '$(sync~spin) Applying term highlights…',
+        tooltip: 'Applying term highlights…',
       }),
     )
 
@@ -1542,8 +1542,8 @@ describe('ScholarContribution active-paper commands', () => {
     expect(statusBar.setElement).toHaveBeenLastCalledWith(
       'scholar-agent.active-paper',
       expect.objectContaining({
-        text: '$(sync~spin) Generating tooltip drafts…',
-        tooltip: 'Generating tooltip drafts…',
+        text: '$(sync~spin) Generating term highlights…',
+        tooltip: 'Generating term highlights…',
       }),
     )
 

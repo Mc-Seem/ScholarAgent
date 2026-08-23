@@ -10,8 +10,8 @@ import {
 } from '../../../../lib/reader-workspace-api'
 import { ScholarWorkspaceService } from './scholar-workspace-service'
 
-const GENERATING_TOOLTIP_DRAFTS_STATUS = 'Generating tooltip drafts…'
-const APPLYING_TOOLTIP_DRAFTS_STATUS = 'Applying tooltip drafts…'
+const GENERATING_TOOLTIP_DRAFTS_STATUS = 'Generating term highlights…'
+const APPLYING_TOOLTIP_DRAFTS_STATUS = 'Applying term highlights…'
 
 export type SuggestionCheckState = 'checked' | 'unchecked' | 'indeterminate'
 
@@ -313,7 +313,7 @@ export class ScholarSuggestionService {
     this.ensureNoPending(paperId)
     const state = this.getPaperState(paperId)
     if (!state.suggestions.some(suggestion => suggestion.id === suggestionId)) {
-      throw new Error('Suggestion not found')
+      throw new Error('Term highlight not found')
     }
     this.beginMutation(paperId)
     try {
@@ -343,7 +343,7 @@ export class ScholarSuggestionService {
     const state = this.getPaperState(paperId)
     const selected = state.suggestions.filter(suggestion => state.checkedIds.has(suggestion.id))
     if (selected.length === 0) {
-      throw new Error('Select at least one suggestion to apply')
+      throw new Error('Select at least one term highlight to apply')
     }
     let finishOperation = this.workspace.startPaperOperation(
       paperId,
@@ -401,7 +401,7 @@ export class ScholarSuggestionService {
       this.updatePaper(paperId, {
         ...current,
         pending: false,
-        error: result.success ? null : result.errors.join('\n') || 'Could not apply suggestions',
+        error: result.success ? null : result.errors.join('\n') || 'Could not apply term highlights',
         editedContent,
       })
       return result
@@ -440,7 +440,7 @@ export class ScholarSuggestionService {
 
   private ensureNoPending(paperId: string): void {
     if (this.getPaperState(paperId).pending) {
-      throw new Error('Another suggestion operation is already in progress')
+      throw new Error('Another term highlight operation is already in progress')
     }
   }
 

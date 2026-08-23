@@ -228,6 +228,51 @@ def test_repeated_term_occurrences_share_one_explanation_and_stable_subject():
     ]
 
 
+def test_occurrences_include_unambiguous_singular_and_plural_forms():
+    observations = [
+        _observation(
+            "obs-model",
+            "artifact",
+            "reward model",
+            {"summary": "A learned reward estimator."},
+        ),
+        _observation(
+            "obs-llm",
+            "topic",
+            "Large Language Models",
+            {"summary": "Generative language models.", "aliases": ["LLMs"]},
+        ),
+    ]
+    sections = [{
+        "id": "sec-1",
+        "content_html": (
+            "<p data-id='p-1'>Reward models are evaluated by one LLM.</p>"
+        ),
+    }]
+
+    document = canonicalize_observations("paper-1", observations, sections=sections)
+
+    assert {(item.text, item.subject_id) for item in document.occurrences} == {
+        ("Reward models", next(item.stable_id for item in document.objects if item.label == "reward model")),
+        ("LLM", next(item.stable_id for item in document.objects if item.label == "Large Language Models")),
+    }
+
+
+def test_generated_word_form_is_skipped_when_multiple_subjects_claim_it():
+    observations = [
+        _observation("obs-artifact", "artifact", "model", {"summary": "A trained artifact."}),
+        _observation("obs-topic", "topic", "model", {"summary": "A conceptual abstraction."}),
+    ]
+    sections = [{
+        "id": "sec-1",
+        "content_html": "<p data-id='p-1'>The models differ.</p>",
+    }]
+
+    document = canonicalize_observations("paper-1", observations, sections=sections)
+
+    assert document.occurrences == []
+
+
 def test_terms_are_anchored_in_paragraphs_that_contain_inline_math():
     """Prose around a formula is still prose, and it is where terms live.
 

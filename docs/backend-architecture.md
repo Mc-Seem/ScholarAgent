@@ -57,6 +57,7 @@ class Tooltip(Base):
 
     content: Text              # The tooltip text
     target_text: str | None    # The term being defined
+    is_user_override: bool     # Reader wording, not an applied AI draft
 ```
 
 ### LLMConfig
@@ -144,6 +145,12 @@ Evidence remains immutable source observations. Rendering uses separate exact oc
 | GET | `/api/papers/{id}/semantic/equations/{equation}` | Equation, notation, evidence, and optional defined-subject details |
 | GET | `/api/papers/{id}/semantic/glossary` | Bounded object/notation search without graph insertion |
 
+Subject and equation evidence is returned in reading order, reconstructed from
+the compiled `sections_data` section sequence, each section's `data-id` DOM
+sequence, and the source `char_start`. The order of `evidence_ids` is not a UI
+order: parallel extraction and canonical merging may arrange those IDs
+arbitrarily.
+
 ### Tooltips
 | Method | Path | Description |
 |--------|------|-------------|
@@ -157,8 +164,12 @@ Evidence remains immutable source observations. Rendering uses separate exact oc
 | DELETE | `/api/papers/{id}/semantic-notes/{subject}` | Drop it so the agent's text shows again |
 
 Semantic notes are `Tooltip` rows keyed by `entity_id`, where the subject is an
-object, a notation entry, or an equation record. `POST /tooltips` cannot serve
-them: it anchors to a DOM node and never sets `entity_id`. The delete route is
+object, a notation entry, or an equation record. Only rows with
+`is_user_override=true` replace the graph explanation in Semantic Lens; applying
+an AI draft creates the same entity annotation with the flag false, so a later
+graph rebuild cannot mislabel the previous generated text as a reader edit.
+`POST /tooltips` cannot serve notes: it anchors to a DOM node and never sets
+`entity_id`. The delete route is
 deliberately not `DELETE /tooltips/{tid}` either, because that route also strips
 the injected `span.kg-entity` anchors for the entity; restoring a wording must
 not un-highlight the term in the paper.
@@ -168,6 +179,11 @@ not un-highlight the term in the paper.
 `scope_id`). Its `entity_types` filter validates against object kinds plus
 `notation`; the pre-rework code read a `nodes` key that schema-v3 does not have,
 so any non-empty filter returned 400.
+The expertise-filter prompt likewise demonstrates real schema-v3 IDs
+(`entity:<hash>` and `notation:<hash>`), rather than legacy formula/theorem IDs.
+Suggestions are persisted in `tooltip_suggestions`; the unused
+`Paper.tooltip_suggestions_cache` column and its write-only endpoint assignment
+were removed by migration `007`.
 
 ### LLM Settings
 
@@ -218,6 +234,9 @@ builder writes offsets and the injector resolves them much later.
 * Text already inside `span.kg-entity` still counts toward offsets. Anchoring splits one
   text node into three without changing the concatenation, so applying drafts in batches
   keeps the remaining offsets valid; overlap is detected from the DOM instead.
+* Labels and aliases are augmented only with conservative productive singular/plural
+  forms. A generated form is skipped if multiple subjects generate it or if another
+  subject declares it explicitly, preserving deterministic identity without an LLM.
 
 ### Re-anchoring Without a Rebuild
 
@@ -229,7 +248,7 @@ schema or a paper without compiled sections. Theia exposes it as
 
 ### Deterministic Occurrence Injection
 
-Validated occurrences are injected directly from exact DOM offsets. The active apply path does not ask an LLM to rediscover each mention.
+Validated occurrences are injected directly from exact DOM offsets. The active apply path does not ask an LLM to rediscover each mention. The old LangGraph injection workflow remains dormant as a fallback/reference until coverage has been measured on a cross-domain corpus; current local evidence is one paper and is not sufficient justification to delete it.
 
 `/tooltips/apply` resolves the anchors itself, from `Paper.knowledge_graph`, keyed by
 subject id. Stored drafts (`tooltip_suggestions`) hold only label, type and text, so a

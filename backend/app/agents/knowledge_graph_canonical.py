@@ -11,7 +11,11 @@ from typing import Any, Iterable
 
 from bs4 import BeautifulSoup
 
-from backend.app.compiler.occurrence_text import annotatable_text, is_annotatable_target
+from backend.app.compiler.occurrence_text import (
+    annotatable_text,
+    conservative_plural_variants,
+    is_annotatable_target,
+)
 from backend.app.agents.knowledge_graph_models import (
     SCHEMA_VERSION,
     BuildMetadata,
@@ -483,11 +487,49 @@ def _base_explanations(
     return sorted(explanations, key=lambda item: item.stable_id)
 
 
+def _occurrence_surfaces(
+    entities: list[CanonicalEntity],
+) -> dict[str, list[str]]:
+    """Return explicit and unambiguous inflected surfaces by subject."""
+    explicit_owners: dict[str, set[str]] = defaultdict(set)
+    generated_owners: dict[str, set[str]] = defaultdict(set)
+    generated_display: dict[str, str] = {}
+    explicit_by_subject: dict[str, set[str]] = {}
+
+    for entity in entities:
+        explicit = {
+            value.strip()
+            for value in [entity.label, *entity.aliases]
+            if len(value.strip()) >= 2
+        }
+        explicit_by_subject[entity.stable_id] = explicit
+        for surface in explicit:
+            explicit_owners[surface.casefold()].add(entity.stable_id)
+            for variant in conservative_plural_variants(surface):
+                normalized = variant.casefold()
+                generated_owners[normalized].add(entity.stable_id)
+                generated_display.setdefault(normalized, variant)
+
+    result = {}
+    for entity in entities:
+        surfaces = set(explicit_by_subject[entity.stable_id])
+        for normalized, owners in generated_owners.items():
+            if owners != {entity.stable_id} or explicit_owners.get(normalized):
+                continue
+            surfaces.add(generated_display[normalized])
+        result[entity.stable_id] = sorted(
+            surfaces,
+            key=lambda value: (-len(value), value.casefold()),
+        )
+    return result
+
+
 def _candidate_occurrences(
     entities: list[CanonicalEntity],
     sections: list[dict[str, Any]],
 ) -> list[SemanticOccurrence]:
     candidates: list[tuple[str, int, int, str, str, str]] = []
+    surfaces_by_subject = _occurrence_surfaces(entities)
     for section in sections:
         section_id = str(section.get("id") or "paper")
         soup = BeautifulSoup(str(section.get("content_html") or ""), "html.parser")
@@ -501,9 +543,7 @@ def _candidate_occurrences(
             dom_node_id = str(element.get("data-id"))
             text = annotatable_text(element)
             for entity in entities:
-                for label in sorted({entity.label, *entity.aliases}, key=lambda value: (-len(value), value.casefold())):
-                    if len(label.strip()) < 2:
-                        continue
+                for label in surfaces_by_subject[entity.stable_id]:
                     pattern = re.compile(rf"(?<!\w){re.escape(label)}(?!\w)", re.IGNORECASE)
                     for match in pattern.finditer(text):
                         candidates.append((dom_node_id, match.start(), match.end(), match.group(), section_id, entity.stable_id))
@@ -533,17 +573,16 @@ def _fallback_occurrences(
 ) -> list[SemanticOccurrence]:
     by_id = {observation.id: observation for observation in observations}
     occurrences = []
+    surfaces_by_subject = _occurrence_surfaces(entities)
     for entity in entities:
         for evidence_id in entity.observation_ids:
             observation = by_id[evidence_id]
             source = observation.source
             if not source.dom_node_id:
                 continue
-            labels = sorted({entity.label, *entity.aliases}, key=lambda value: (-len(value), value.casefold()))
+            labels = surfaces_by_subject[entity.stable_id]
             match = None
             for label in labels:
-                if len(label.strip()) < 2:
-                    continue
                 match = re.search(
                     rf"(?<!\w){re.escape(label)}(?!\w)", source.quote, re.IGNORECASE
                 )

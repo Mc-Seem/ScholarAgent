@@ -126,7 +126,7 @@ describe('ScholarSuggestionEditorContent', () => {
   it('renders a native empty state without an active paper', () => {
     renderEditor(new FakeSuggestionService(null, paperState()))
 
-    expect(screen.getByText('Open a paper to inspect tooltip suggestions.')).toBeTruthy()
+    expect(screen.getByText('Open a paper to inspect term highlights.')).toBeTruthy()
   })
 
   it('renders LatexText preview and transient editing for the focused suggestion', () => {
@@ -142,13 +142,13 @@ describe('ScholarSuggestionEditorContent', () => {
     expect(screen.getByText('Alpha \\(x\\)')).toBeTruthy()
     expect(screen.getByText('definition')).toBeTruthy()
     expect(screen.getByText('Edited \\(y\\) content')).toBeTruthy()
-    const editor = screen.getByLabelText('Suggestion content') as HTMLTextAreaElement
+    const editor = screen.getByLabelText('Term highlight content') as HTMLTextAreaElement
     expect(editor.value).toBe('Edited $y$ content')
 
     fireEvent.change(editor, { target: { value: 'New content' } })
     expect(service.editSuggestion).toHaveBeenCalledWith('paper-a', item.id, 'New content')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Delete Suggestion' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Term Highlight' }))
     expect(commandService.executeCommand).toHaveBeenCalledWith(
       ScholarCommands.DELETE_SUGGESTION.id,
       expect.objectContaining({ paperId: 'paper-a', suggestionId: item.id }),
@@ -159,21 +159,23 @@ describe('ScholarSuggestionEditorContent', () => {
     const service = new FakeSuggestionService('paper-a', paperState())
     const { messageService } = renderEditor(service)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Create Manual Suggestion' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Create Manual Term Highlight' }))
     expect(service.startManualCreation).toHaveBeenCalledWith('paper-a')
-    const create = screen.getByRole('button', { name: 'Create Suggestion' }) as HTMLButtonElement
+    const create = screen.getByRole('button', { name: 'Create Term Highlight' }) as HTMLButtonElement
     expect(create.disabled).toBe(true)
 
     fireEvent.change(screen.getByLabelText('Entity label'), { target: { value: '  Alpha $x$  ' } })
     const entityType = screen.getByLabelText('Entity type') as HTMLSelectElement
     expect(Array.from(entityType.options, option => option.value)).toContain('theorem')
     fireEvent.change(entityType, { target: { value: 'theorem' } })
-    fireEvent.change(screen.getByLabelText('Tooltip content'), { target: { value: ' Explanation ' } })
+    fireEvent.change(screen.getByLabelText('Term highlight content'), {
+      target: { value: ' Explanation ' },
+    })
     expect(screen.getByText('Alpha \\(x\\)')).toBeTruthy()
-    expect((screen.getByRole('button', { name: 'Create Suggestion' }) as HTMLButtonElement).disabled)
+    expect((screen.getByRole('button', { name: 'Create Term Highlight' }) as HTMLButtonElement).disabled)
       .toBe(false)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Create Suggestion' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Create Term Highlight' }))
     await waitFor(() => expect(service.createManualSuggestion).toHaveBeenCalledWith('paper-a'))
     expect(messageService.error).not.toHaveBeenCalled()
   })
@@ -190,9 +192,9 @@ describe('ScholarSuggestionEditorContent', () => {
     service.createManualSuggestion.mockRejectedValueOnce(new Error('Backend unavailable'))
     const { messageService } = renderEditor(service)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Create Suggestion' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Create Term Highlight' }))
     await waitFor(() => expect(messageService.error).toHaveBeenCalledWith(
-      'Could not create suggestion: Backend unavailable',
+      'Could not create term highlight: Backend unavailable',
     ))
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
     expect(service.cancelManualCreation).toHaveBeenCalledWith('paper-a')

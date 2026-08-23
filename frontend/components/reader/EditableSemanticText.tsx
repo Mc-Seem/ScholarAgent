@@ -154,7 +154,12 @@ export function EditableSemanticText({
         : <span className="semantic-editable-empty">{EMPTY_AGENT_TEXT}</span>}
       {children}
       {editor && (
-        <span className="semantic-editable-actions">
+        <span
+          className={[
+            'semantic-editable-actions',
+            !edited && 'semantic-editable-actions-single',
+          ].filter(Boolean).join(' ')}
+        >
           {edited && (
             <>
               <span className="semantic-editable-badge" data-testid="semantic-editable-badge">

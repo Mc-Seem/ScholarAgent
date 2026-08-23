@@ -1,3 +1,5 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -7,6 +9,10 @@ import type { EquationDetails } from '@/lib/semantic-api'
 
 
 const typesetPromise = vi.fn().mockResolvedValue(undefined)
+const css = fs.readFileSync(
+  path.resolve(process.cwd(), 'styles/reader-interactions.css'),
+  'utf-8',
+)
 
 const details: EquationDetails = {
   schema_version: '3.0',
@@ -98,6 +104,13 @@ describe('EquationLens', () => {
 
     expect(screen.getByTestId('equation-notation')).toHaveClass('equation-lens-notation')
     expect(screen.getAllByTestId('equation-notation-item')).toHaveLength(2)
+  })
+
+  it('scrolls long notation horizontally without exposing a vertical scrollbar', () => {
+    const symbol = css.match(/\.equation-lens-symbol \{[^}]*\}/)?.[0] ?? ''
+
+    expect(symbol).toMatch(/overflow-x: auto;/)
+    expect(symbol).toMatch(/overflow-y: hidden;/)
   })
 
   it('names the place of each occurrence instead of listing bare quotes', () => {

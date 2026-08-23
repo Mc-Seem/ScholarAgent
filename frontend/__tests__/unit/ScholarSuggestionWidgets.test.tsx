@@ -319,10 +319,10 @@ describe('ScholarSuggestionsTreeWidget checkbox and keyboard callbacks', () => {
 
 describe('ScholarSuggestionsTreeWidget native states and guards', () => {
   it.each([
-    [null, paperState([]), 'Open a paper to see tooltip suggestions.'],
-    ['paper-a', paperState([], [], { loading: true, loaded: false }), 'Loading suggestions…'],
+    [null, paperState([]), 'Open a paper to see term highlights.'],
+    ['paper-a', paperState([], [], { loading: true, loaded: false }), 'Loading term highlights…'],
     ['paper-a', paperState([], [], { error: 'Backend unavailable' }), 'Backend unavailable'],
-    ['paper-a', paperState([]), 'No tooltip suggestions for the active paper.'],
+    ['paper-a', paperState([]), 'No term highlights for the active paper.'],
   ] as const)('renders the expected empty/status state', (activePaperId, state, expected) => {
     const widget = createWidget(activePaperId, state)
     widget.refreshTree()

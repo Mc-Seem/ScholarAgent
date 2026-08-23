@@ -33,7 +33,7 @@ describe('native Suggestions module wiring', () => {
     expect(source).toMatch(/SCHOLAR_SUGGESTIONS_WIDGET_ID[\s\S]*search: true[\s\S]*widget: ScholarSuggestionsTreeWidget/)
   })
 
-  it('keeps applied annotations separate from a dedicated Tooltip Drafts container', () => {
+  it('keeps applied annotations separate from a dedicated Term Highlights container', () => {
     const source = readModuleSource()
     const annotationsStart = source.indexOf('id: SCHOLAR_ANNOTATIONS_WIDGET_ID')
     const draftsStart = source.indexOf('id: SCHOLAR_TOOLTIP_DRAFTS_WIDGET_ID')
@@ -52,7 +52,8 @@ describe('native Suggestions module wiring', () => {
     expect(annotationsFactory).not.toContain('SCHOLAR_SUGGESTIONS_WIDGET_ID')
     expect(annotationsFactory).not.toContain('SCHOLAR_SUGGESTION_EDITOR_WIDGET_ID')
 
-    expect(draftsFactory).toContain("label: 'Tooltip Drafts'")
+    expect(draftsFactory).toContain("label: 'Term Highlights'")
+    expect(draftsFactory).toContain("caption: 'Manual and AI Term Highlights'")
     expect(draftsFactory).toContain('getOrCreateWidget(SCHOLAR_SUGGESTIONS_WIDGET_ID)')
     expect(draftsFactory).toContain('getOrCreateWidget(SCHOLAR_SUGGESTION_EDITOR_WIDGET_ID)')
   })
@@ -71,7 +72,7 @@ describe('native Suggestions module wiring', () => {
     )
   })
 
-  it('places Tooltip Drafts beside Annotations and reveals details in the new container', () => {
+  it('places Term Highlights beside Annotations and reveals details in the new container', () => {
     const source = readContributionSource()
 
     expect(source).toMatch(
@@ -85,12 +86,13 @@ describe('native Suggestions module wiring', () => {
     )
   })
 
-  it('can reopen Tooltip Drafts from the standard Views menu', () => {
+  it('can reopen Term Highlights from the standard Views menu without changing its stable ID', () => {
     const commands = readCommandsSource()
     const contribution = readContributionSource()
 
     expect(commands).toContain('SHOW_TOOLTIP_DRAFTS')
     expect(commands).toContain("id: 'scholar-agent.show-tooltip-drafts'")
+    expect(commands).toContain("label: 'Scholar Agent: Show Term Highlights'")
     expect(contribution).toMatch(
       /registerCommand\(ScholarCommands\.SHOW_TOOLTIP_DRAFTS[\s\S]*showView\(SCHOLAR_TOOLTIP_DRAFTS_WIDGET_ID, 'right'\)/,
     )

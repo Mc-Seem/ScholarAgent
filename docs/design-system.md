@@ -299,6 +299,17 @@ The same file is imported by `app/globals.css` and by the Theia extension's
 prefer these classes over Tailwind colour utilities: only the shared file can
 resolve Theia theme tokens and follow a dark theme.
 
+Notation symbols keep horizontal overflow for genuinely long LaTeX but hide
+vertical overflow explicitly. Setting only `overflow-x: auto` makes CSS compute
+the other axis as scrollable too, which exposed a one-pixel MathJax height
+mismatch as a useless vertical scrollbar. A lone hidden `Edit`/`Add` action is
+positioned out of flow, so it appears on hover/focus without leaving an empty
+bordered slot beside every formula or notation meaning; edited-state controls
+remain in flow because their badge and restore actions carry persistent state.
+Formula-title badge styling explicitly excludes `.semantic-editable-actions`:
+the transparent button's parent must not retain an opaque badge background that
+covers the title while the action itself is hidden.
+
 ---
 
 ## 7. Quick Reference

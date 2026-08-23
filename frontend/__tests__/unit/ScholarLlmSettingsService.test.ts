@@ -221,7 +221,7 @@ describe('ScholarLlmSettingsService', () => {
     expect(validation.canTest.tooltip_suggestion).toBe(false)
     expect(validation.errors).toEqual(expect.arrayContaining([
       'Base URL must be an HTTP(S) endpoint.',
-      'A model is required for Tooltip Suggestions.',
+      'A model is required for Term Highlights.',
     ]))
     await expect(service.save()).rejects.toThrow('Base URL must be an HTTP(S) endpoint.')
     expect(api.save).not.toHaveBeenCalled()
@@ -311,7 +311,7 @@ describe('ScholarLlmSettingsService', () => {
     service.setModel('tooltip_suggestion', '')
 
     await expect(service.testWorkflow('tooltip_suggestion'))
-      .rejects.toThrow('A model is required for Tooltip Suggestions.')
+      .rejects.toThrow('A model is required for Term Highlights.')
     expect(api.test).not.toHaveBeenCalled()
   })
 

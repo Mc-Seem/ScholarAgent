@@ -229,8 +229,8 @@ export default new ContainerModule(bind => {
         id: SCHOLAR_TOOLTIP_DRAFTS_WIDGET_ID,
       })
       viewContainer.setTitleOptions({
-        label: 'Tooltip Drafts',
-        caption: 'Manual and AI Tooltip Drafts',
+        label: 'Term Highlights',
+        caption: 'Manual and AI Term Highlights',
         iconClass: 'codicon codicon-lightbulb-sparkle',
         closeable: true,
       })

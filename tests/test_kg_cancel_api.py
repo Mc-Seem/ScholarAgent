@@ -481,6 +481,56 @@ class TestSemanticEndpoints:
         assert glossary.json()["results"][0]["kind"] == "notation"
         assert glossary.json()["results"][0]["label"] == "tau"
 
+    def test_subject_evidence_follows_paper_order_not_extraction_order(self, kg_client):
+        client, session_factory = kg_client
+        paper_id = _seed_compiled_paper(session_factory)
+        graph = _semantic_graph()
+        graph["observations"].append({
+            "id": "obs-supg-abstract",
+            "kind": "procedure",
+            "label": "SUPG",
+            "payload": {"summary": "An abstract mention."},
+            "confidence": 1.0,
+            "source": {
+                "paper_id": paper_id,
+                "section_id": "sec-abstract",
+                "section_title": "Abstract",
+                "dom_node_id": "p-abstract",
+                "equation_id": None,
+                "quote": "SUPG is introduced here.",
+                "char_start": 0,
+                "char_end": 4,
+            },
+        })
+        graph["objects"][0]["evidence_ids"].append("obs-supg-abstract")
+        graph["metrics"]["observation_count"] += 1
+        with session_factory() as db:
+            paper = db.query(Paper).filter(Paper.id == paper_id).one()
+            paper.sections_data = [
+                {
+                    "id": "sec-abstract",
+                    "title": "Abstract",
+                    "level": 1,
+                    "content_html": "<p data-id='p-abstract'>SUPG is introduced here.</p>",
+                },
+                {
+                    "id": "sec-1",
+                    "title": "1 Introduction",
+                    "level": 1,
+                    "content_html": "<p data-id='p-1'>SUPG stabilizes transport.</p>",
+                },
+            ]
+            paper.knowledge_graph = graph
+            db.commit()
+
+        response = client.get(f"/api/papers/{paper_id}/semantic/subjects/{graph['objects'][0]['stable_id']}")
+
+        assert response.status_code == 200
+        assert [item["source"]["section_title"] for item in response.json()["evidence"]] == [
+            "Abstract",
+            None,
+        ]
+
     def test_semantic_endpoints_distinguish_legacy_and_malformed_documents(self, kg_client):
         client, session_factory = kg_client
         paper_id = _seed_compiled_paper(session_factory)

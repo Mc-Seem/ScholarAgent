@@ -231,6 +231,7 @@ describe('ScholarSemanticLensWidget', () => {
         dom_node_id: null,
         entity_id: 'equation:eq-7',
         content: 'Element-size limiter.',
+        is_user_override: true,
         is_pinned: false,
       }],
     }
@@ -293,6 +294,7 @@ describe('ScholarSemanticLensWidget', () => {
         dom_node_id: null,
         entity_id: 'equation:eq-7',
         content: 'Element-size limiter.',
+        is_user_override: true,
         is_pinned: false,
       }],
     }
@@ -333,6 +335,33 @@ describe('ScholarSemanticLensWidget', () => {
     renderLens(widget)
 
     expect(document.querySelector('.semantic-lens-header')).toHaveTextContent('Agent wording.')
+    expect(screen.queryByTestId('semantic-editable-badge')).not.toBeInTheDocument()
+  })
+
+  it('does not treat an applied AI tooltip as a reader edit after a graph rebuild', async () => {
+    const store = {
+      loadEquationDetails: vi.fn().mockResolvedValue(equationDetails('New graph wording.')),
+      loadSemanticSubject: vi.fn(),
+      tooltips: [{
+        id: 'tooltip-applied',
+        paper_id: 'paper-a',
+        dom_node_id: null,
+        entity_id: 'equation:eq-7',
+        content: 'Wording from the previous graph build.',
+        is_user_override: false,
+        is_pinned: false,
+      }],
+    }
+    const { widget, publish } = createLens(store)
+
+    await act(async () => {
+      publish(equationSelection())
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    renderLens(widget)
+
+    expect(document.querySelector('.semantic-lens-header')).toHaveTextContent('New graph wording.')
     expect(screen.queryByTestId('semantic-editable-badge')).not.toBeInTheDocument()
   })
 

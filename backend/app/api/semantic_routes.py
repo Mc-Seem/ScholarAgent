@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+from bs4 import BeautifulSoup
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
@@ -99,14 +100,14 @@ class GlossaryResponse(SemanticResponseModel):
     limit: int
 
 
-def _document(paper_id: str, db: Session) -> KnowledgeGraphDocument:
+def _paper_document(paper_id: str, db: Session) -> tuple[Paper, KnowledgeGraphDocument]:
     paper = db.query(Paper).filter(Paper.id == paper_id).first()
     if paper is None:
         raise HTTPException(status_code=404, detail="Paper not found")
     if not paper.knowledge_graph:
         raise HTTPException(status_code=404, detail="Semantic document not built")
     try:
-        return parse_document(paper.knowledge_graph)
+        return paper, parse_document(paper.knowledge_graph)
     except LegacyKnowledgeGraphError as error:
         raise HTTPException(
             status_code=409,
@@ -117,6 +118,30 @@ def _document(paper_id: str, db: Session) -> KnowledgeGraphDocument:
             status_code=500,
             detail={"code": "malformed_semantic_document", "message": str(error)},
         ) from error
+
+
+def _document(paper_id: str, db: Session) -> KnowledgeGraphDocument:
+    return _paper_document(paper_id, db)[1]
+
+
+def _source_order(
+    sections_data: Any,
+) -> tuple[dict[str, int], dict[tuple[str, str], int]]:
+    section_positions: dict[str, int] = {}
+    node_positions: dict[tuple[str, str], int] = {}
+    if not isinstance(sections_data, list):
+        return section_positions, node_positions
+
+    for section_position, section in enumerate(sections_data):
+        if not isinstance(section, dict) or not section.get("id"):
+            continue
+        section_id = str(section["id"])
+        section_positions.setdefault(section_id, section_position)
+        soup = BeautifulSoup(str(section.get("content_html") or ""), "html.parser")
+        for node_position, element in enumerate(soup.find_all(attrs={"data-id": True})):
+            node_id = str(element.get("data-id"))
+            node_positions.setdefault((section_id, node_id), node_position)
+    return section_positions, node_positions
 
 
 def _subject_index(document: KnowledgeGraphDocument) -> dict[str, SemanticSubject]:
@@ -154,10 +179,34 @@ def _explanation_index(document: KnowledgeGraphDocument) -> dict[str, SemanticEx
 
 
 def _evidence(
-    document: KnowledgeGraphDocument, evidence_ids: list[str]
+    document: KnowledgeGraphDocument,
+    evidence_ids: list[str],
+    source_order: tuple[dict[str, int], dict[tuple[str, str], int]] | None = None,
 ) -> list[SourceObservation]:
     observation_index = {item.id: item for item in document.observations}
-    return [observation_index[item_id] for item_id in evidence_ids if item_id in observation_index]
+    evidence = [observation_index[item_id] for item_id in evidence_ids if item_id in observation_index]
+    if source_order is None:
+        return evidence
+
+    section_positions, node_positions = source_order
+    unknown_section = max(section_positions.values(), default=-1) + 1
+
+    def position(indexed: tuple[int, SourceObservation]) -> tuple[int, int, int, int]:
+        original_position, item = indexed
+        source = item.source
+        section_position = section_positions.get(source.section_id or "", unknown_section)
+        node_position = node_positions.get(
+            (source.section_id or "", source.dom_node_id or ""),
+            1_000_000,
+        )
+        return (
+            section_position,
+            node_position,
+            source.char_start if source.char_start is not None else 0,
+            original_position,
+        )
+
+    return [item for _, item in sorted(enumerate(evidence), key=position)]
 
 
 def _defined_subject_details(
@@ -165,6 +214,7 @@ def _defined_subject_details(
     subject_id: str,
     *,
     occurrence_limit: int,
+    source_order: tuple[dict[str, int], dict[tuple[str, str], int]] | None = None,
 ) -> DefinedSubjectDetails:
     subjects = _subject_index(document)
     explanations = _explanation_index(document)
@@ -182,7 +232,7 @@ def _defined_subject_details(
         explanation=explanations.get(subject_id),
         occurrences=occurrences[:occurrence_limit],
         occurrence_total=len(occurrences),
-        evidence=_evidence(document, evidence_ids),
+        evidence=_evidence(document, evidence_ids, source_order),
     )
 
 
@@ -191,6 +241,7 @@ def _equation_details(
     equation: EquationRecord,
     *,
     include_defined_subject: bool,
+    source_order: tuple[dict[str, int], dict[tuple[str, str], int]] | None = None,
 ) -> EquationDetailResponse:
     notation_index = {item.stable_id: item for item in document.notation}
     subject_index = _subject_index(document)
@@ -200,13 +251,14 @@ def _equation_details(
             document,
             equation.defined_object_id,
             occurrence_limit=100,
+            source_order=source_order,
         )
     return EquationDetailResponse(
         schema_version=document.schema_version,
         equation=equation,
         notation=[notation_index[item_id] for item_id in equation.notation_ids],
         objects=[subject_index[item_id] for item_id in equation.object_ids],
-        evidence=_evidence(document, equation.evidence_ids),
+        evidence=_evidence(document, equation.evidence_ids, source_order),
         defined_subject=defined_subject,
     )
 
@@ -262,7 +314,8 @@ def subject_details(
     occurrence_limit: int = Query(default=100, ge=1, le=200),
     db: Session = Depends(get_db),
 ) -> SubjectDetailResponse:
-    document = _document(paper_id, db)
+    paper, document = _paper_document(paper_id, db)
+    source_order = _source_order(paper.sections_data)
     subjects = _subject_index(document)
     if subject_id not in subjects:
         raise HTTPException(status_code=404, detail="Semantic subject not found")
@@ -270,6 +323,7 @@ def subject_details(
         document,
         subject_id,
         occurrence_limit=occurrence_limit,
+        source_order=source_order,
     )
     defining_equation = next(
         (
@@ -287,6 +341,7 @@ def subject_details(
                 document,
                 defining_equation,
                 include_defined_subject=False,
+                source_order=source_order,
             )
             if defining_equation
             else None
@@ -300,7 +355,8 @@ def equation_details(
     equation_id: str,
     db: Session = Depends(get_db),
 ) -> EquationDetailResponse:
-    document = _document(paper_id, db)
+    paper, document = _paper_document(paper_id, db)
+    source_order = _source_order(paper.sections_data)
     equation = next(
         (item for item in document.equations if item.equation_id == equation_id), None
     )
@@ -310,6 +366,7 @@ def equation_details(
         document,
         equation,
         include_defined_subject=True,
+        source_order=source_order,
     )
 
 

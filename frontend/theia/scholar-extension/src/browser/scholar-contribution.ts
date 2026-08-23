@@ -221,7 +221,7 @@ export class ScholarContribution implements
       await this.migrateLegacyTooltipDraftsLayout(app)
     } catch (reason) {
       await this.messageService.warn(
-        `Could not migrate the Tooltip Drafts layout: ${errorMessage(reason)}`,
+        `Could not migrate the Term Highlights layout: ${errorMessage(reason)}`,
       )
     }
   }
@@ -1100,7 +1100,7 @@ export class ScholarContribution implements
       return
     }
     const dialog = new ScholarTextareaDialog({
-      title: 'Generate AI Tooltip Suggestions',
+      title: 'Generate AI Term Highlights',
       placeholder: 'Describe your background/expertise (e.g. "graduate student in topology")…',
       initialValue: readUserExpertise(),
       confirmButtonLabel: 'Generate',
@@ -1115,11 +1115,11 @@ export class ScholarContribution implements
     try {
       const result = await this.suggestions.generateSuggestions(paperId, expertise)
       await this.messageService.info(
-        `Generated ${result.suggested_count} AI tooltip suggestions`,
+        `Generated ${result.suggested_count} AI term highlights`,
       )
     } catch (reason) {
       await this.messageService.error(
-        `Could not generate suggestions: ${errorMessage(reason)}`,
+        `Could not generate term highlights: ${errorMessage(reason)}`,
       )
     }
   }
@@ -1135,20 +1135,20 @@ export class ScholarContribution implements
         // Notes without anchors are invisible in the paper, so this is a failure
         // to report rather than a quiet success.
         await this.messageService.warn(
-          `Applied ${result.tooltips_created} tooltips but highlighted no occurrences`,
+          `Applied ${result.tooltips_created} term highlights but highlighted no occurrences`,
         )
       } else if (result.success) {
         await this.messageService.info(
-          `Applied ${result.tooltips_created} tooltips to ${result.spans_injected} occurrences`,
+          `Applied ${result.tooltips_created} term highlights to ${result.spans_injected} occurrences`,
         )
       } else {
-        await this.messageService.error('The backend could not apply the selected suggestions')
+        await this.messageService.error('The backend could not apply the selected term highlights')
       }
       for (const warning of result.errors) {
         await this.messageService.warn(warning)
       }
     } catch (reason) {
-      await this.messageService.error(`Could not apply suggestions: ${errorMessage(reason)}`)
+      await this.messageService.error(`Could not apply term highlights: ${errorMessage(reason)}`)
     }
   }
 
@@ -1167,8 +1167,8 @@ export class ScholarContribution implements
       return
     }
     const confirmed = await new ConfirmDialog({
-      title: 'Delete Suggestion',
-      msg: 'Delete this tooltip suggestion permanently?',
+      title: 'Delete Term Highlight',
+      msg: 'Delete this term highlight permanently?',
       ok: 'Delete',
     }).open()
     if (!confirmed) {
@@ -1176,9 +1176,9 @@ export class ScholarContribution implements
     }
     try {
       await this.suggestions.deleteSuggestion(target.paperId, target.suggestionId)
-      await this.messageService.info('Suggestion deleted')
+      await this.messageService.info('Term highlight deleted')
     } catch (reason) {
-      await this.messageService.error(`Could not delete suggestion: ${errorMessage(reason)}`)
+      await this.messageService.error(`Could not delete term highlight: ${errorMessage(reason)}`)
     }
   }
 
@@ -1225,7 +1225,7 @@ export class ScholarContribution implements
       const result = await this.store.reanchorOccurrences(paperId)
       await this.messageService.info(
         `Re-anchored terms: ${result.occurrence_count} occurrences`
-        + ` (was ${result.previous_occurrence_count}). Apply tooltip drafts to highlight them.`,
+        + ` (was ${result.previous_occurrence_count}). Apply term highlights to show them.`,
       )
     } catch (reason) {
       await this.messageService.error(`Could not re-anchor terms: ${errorMessage(reason)}`)
@@ -1568,7 +1568,7 @@ export class ScholarContribution implements
         SCHOLAR_TOOLTIP_DRAFTS_WIDGET_ID,
       )
       if (!(tooltipDrafts instanceof ViewContainer)) {
-        throw new Error('Tooltip Drafts did not create a view container')
+        throw new Error('Term Highlights did not create a view container')
       }
       for (const part of legacyParts) {
         if (!tooltipDrafts.getPartFor(part.wrapped)) {

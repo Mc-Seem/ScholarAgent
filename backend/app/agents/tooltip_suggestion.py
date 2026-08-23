@@ -69,8 +69,8 @@ Return a JSON object with:
 
 Example:
 {{
-  "selected_entity_ids": ["formula_elbo", "symbol_alpha_t", "def_ELBO", "thm_3.2"],
-  "reasoning": "Selected RL-specific notation and variational inference concepts that may be unfamiliar to ML engineers without RL background"
+  "selected_entity_ids": ["entity:d29d1b80aed35eb3c2f7", "notation:d94043bb71ce6083d717"],
+  "reasoning": "Selected a paper-specific concept and notation that may be unfamiliar to this reader"
 }}
 """
 

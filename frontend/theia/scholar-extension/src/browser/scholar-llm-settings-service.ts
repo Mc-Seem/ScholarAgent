@@ -70,7 +70,7 @@ type Listener = () => void
 const WORKFLOW_LABELS: Record<LlmWorkflow, string> = {
   kg_extraction: 'Knowledge Graph',
   html_injection: 'HTML Injection',
-  tooltip_suggestion: 'Tooltip Suggestions',
+  tooltip_suggestion: 'Term Highlights',
 }
 
 function errorMessage(reason: unknown): string {

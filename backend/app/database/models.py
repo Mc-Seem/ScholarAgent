@@ -35,10 +35,6 @@ class Paper(Base):
     # Versioned semantic document (objects, relations, equations, notation, occurrences)
     knowledge_graph = Column(JSON, nullable=True)
 
-    # Cached tooltip suggestions (populated by suggest endpoint, used by apply endpoint)
-    # Stored as JSON: {expertise: str, suggestions: [...], generated_at: timestamp}
-    tooltip_suggestions_cache = Column(JSON, nullable=True)
-
     tooltips = relationship("Tooltip", back_populates="paper", cascade="all, delete-orphan")
     tooltip_suggestions = relationship("TooltipSuggestion", back_populates="paper", cascade="all, delete-orphan")
 
@@ -61,6 +57,9 @@ class Tooltip(Base):
     user_id = Column(String(64), default="default")  # MVP: single user
     target_text = Column(String(512), nullable=True)  # What symbol/term this annotation explains
     content = Column(Text, nullable=False)
+    # Applied AI drafts annotate/highlight an entity, but only text saved from
+    # Semantic Lens is allowed to replace the graph's current explanation.
+    is_user_override = Column(Boolean, default=False, nullable=False)
     is_pinned = Column(Boolean, default=False, nullable=False)  # Pin to keep expanded
     display_order = Column(Integer, nullable=True)  # Manual ordering within section
     created_at = Column(DateTime, default=utcnow)

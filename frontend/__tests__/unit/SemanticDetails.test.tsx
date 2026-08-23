@@ -3,6 +3,7 @@ import path from 'node:path'
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
+import { EditableSemanticText } from '@/components/reader/EditableSemanticText'
 import { SemanticDetails } from '@/components/reader/SemanticDetails'
 import type {
   EquationDetails,
@@ -88,6 +89,37 @@ const equationDetails: EquationDetails = {
 }
 
 describe('SemanticDetails', () => {
+  it('marks only a lone Edit or Add control for out-of-flow hiding', () => {
+    const editor = {
+      notesBySubjectId: {},
+      onSave: () => {},
+      onRestore: () => {},
+    }
+    const { rerender } = render(
+      <EditableSemanticText
+        subjectId="artifact:kto"
+        agentText="Agent explanation"
+        label="explanation of KTO"
+        editor={editor}
+      />,
+    )
+
+    expect(screen.getByTestId('semantic-editable-edit').parentElement)
+      .toHaveClass('semantic-editable-actions-single')
+
+    rerender(
+      <EditableSemanticText
+        subjectId="artifact:kto"
+        agentText="Agent explanation"
+        label="explanation of KTO"
+        editor={{ ...editor, notesBySubjectId: { 'artifact:kto': 'Reader explanation' } }}
+      />,
+    )
+
+    expect(screen.getByTestId('semantic-editable-badge')).toBeInTheDocument()
+    expect(screen.getByTestId('semantic-editable-edit').parentElement)
+      .not.toHaveClass('semantic-editable-actions-single')
+  })
   it('heads the panel with the term itself, without the internal kind', () => {
     render(<SemanticDetails selection={selection} subjectDetails={subjectDetails()} />)
 
@@ -251,12 +283,20 @@ describe('semantic lens chrome', () => {
     // A notation table has one row per symbol; permanently visible buttons put a
     // ragged column of `Edit` labels next to the meanings.
     const action = css.match(/\.semantic-editable-action \{[^}]*\}/)?.[0] ?? ''
+    const single = css.match(/\.semantic-editable-actions-single \{[^}]*\}/)?.[0] ?? ''
 
     expect(action).toMatch(/opacity: 0;/)
+    expect(single).toMatch(/position: absolute;/)
     expect(css).toMatch(/\.semantic-editable:hover \.semantic-editable-action/)
     expect(css).toMatch(/\.semantic-editable:focus-within \.semantic-editable-action/)
-    // A subject with no text at all would otherwise offer no visible way in.
-    expect(css).toMatch(/:has\(\.semantic-editable-empty\) \.semantic-editable-action/)
+    expect(css).toMatch(/@media \(hover: none\)/)
+  })
+
+  it('does not apply the formula-title pill background to hidden edit actions', () => {
+    expect(css).toMatch(
+      /\.semantic-lens-section-title > span:not\(\.semantic-editable-actions\)/,
+    )
+    expect(css).not.toMatch(/\.semantic-lens-section-title span,/)
   })
 
   it('dims a busy button through colour, so it does not reappear while hidden', () => {

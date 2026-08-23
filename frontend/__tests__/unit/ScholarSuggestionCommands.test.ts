@@ -9,7 +9,7 @@ const dialogState = vi.hoisted(() => ({
   confirmOpen: vi.fn<() => Promise<boolean>>(),
   inputOpen: vi.fn<() => Promise<string | undefined>>(),
   inputProps: [] as Array<Record<string, unknown>>,
-  // Generate AI Tooltip Suggestions uses the multiline ScholarTextareaDialog
+  // Generate AI Term Highlights uses the multiline ScholarTextareaDialog
   // (not the built-in single-line SingleTextInputDialog).
   textareaOpen: vi.fn<() => Promise<string | undefined>>(),
   textareaProps: [] as Array<Record<string, unknown>>,
@@ -239,6 +239,16 @@ beforeEach(() => {
 })
 
 describe('Scholar suggestion commands', () => {
+  it('uses Term Highlights labels while preserving stable command ids', () => {
+    expect(ScholarCommands.SHOW_TOOLTIP_DRAFTS).toMatchObject({
+      id: 'scholar-agent.show-tooltip-drafts',
+      label: 'Scholar Agent: Show Term Highlights',
+    })
+    expect(ScholarCommands.GENERATE_SUGGESTIONS.label).toBe('Generate AI Term Highlights')
+    expect(ScholarCommands.APPLY_SUGGESTIONS.label).toBe('Apply Selected Term Highlights')
+    expect(ScholarCommands.CREATE_MANUAL_SUGGESTION.label).toBe('Create Manual Term Highlight')
+    expect(ScholarCommands.DELETE_SUGGESTION.label).toBe('Delete Term Highlight')
+  })
   it('scopes toolbar commands to Suggestions and enforces active paper, KG, checks, and pending state', () => {
     const context = createContext()
     const tree = Object.create(ScholarSuggestionsTreeWidget.prototype)
@@ -276,9 +286,10 @@ describe('Scholar suggestion commands', () => {
 
     await commands.handlerFor(ScholarCommands.GENERATE_SUGGESTIONS).execute(tree)
     expect(suggestions.generateSuggestions).not.toHaveBeenCalled()
-    // Generate AI Tooltip Suggestions must use the multiline textarea dialog,
+    // Generate AI Term Highlights must use the multiline textarea dialog,
     // not the single-line SingleTextInputDialog (too small for a prompt).
     expect(dialogState.inputProps).toHaveLength(0)
+    expect(dialogState.textareaProps[0].title).toBe('Generate AI Term Highlights')
     expect(dialogState.textareaProps[0].initialValue).toBe('Saved expertise')
     expect((dialogState.textareaProps[0].validate as (input: string) => unknown)('   '))
       .toBe('Expertise is required.')
@@ -288,7 +299,7 @@ describe('Scholar suggestion commands', () => {
 
     expect(suggestions.generateSuggestions).toHaveBeenCalledWith('paper-a', 'Algebra researcher')
     expect(localStorage.getItem('scholar-agent-expertise')).toBe('Algebra researcher')
-    expect(messageService.info).toHaveBeenCalledWith('Generated 2 AI tooltip suggestions')
+    expect(messageService.info).toHaveBeenCalledWith('Generated 2 AI term highlights')
   })
 
   it('applies checked suggestions and reports both result counts and backend warnings', async () => {
@@ -298,7 +309,7 @@ describe('Scholar suggestion commands', () => {
     await commands.handlerFor(ScholarCommands.APPLY_SUGGESTIONS).execute(tree)
 
     expect(suggestions.applySuggestions).toHaveBeenCalledWith('paper-a')
-    expect(messageService.info).toHaveBeenCalledWith('Applied 2 tooltips to 4 occurrences')
+    expect(messageService.info).toHaveBeenCalledWith('Applied 2 term highlights to 4 occurrences')
     expect(messageService.warn).toHaveBeenCalledWith('One occurrence was skipped')
   })
 
@@ -318,7 +329,7 @@ describe('Scholar suggestion commands', () => {
 
     expect(messageService.info).not.toHaveBeenCalledWith(expect.stringContaining('Applied 8'))
     expect(messageService.warn).toHaveBeenCalledWith(
-      'Applied 8 tooltips but highlighted no occurrences',
+      'Applied 8 term highlights but highlighted no occurrences',
     )
   })
 
@@ -378,11 +389,11 @@ describe('Scholar suggestion commands', () => {
     await commands.handlerFor(ScholarCommands.APPLY_SUGGESTIONS).execute(tree)
 
     expect(messageService.error).toHaveBeenCalledWith(
-      'Could not apply suggestions: Injection failed',
+      'Could not apply term highlights: Injection failed',
     )
   })
 
-  it('reveals Suggestion Details when focus or manual-create mode changes', async () => {
+  it('reveals Highlight Details when focus or manual-create mode changes', async () => {
     const { contribution, suggestions, widgetManager, shell } = createContext()
     contribution.onStart()
 
