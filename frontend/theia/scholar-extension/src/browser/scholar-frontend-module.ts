@@ -18,7 +18,13 @@ import { ContainerModule } from '@theia/core/shared/inversify'
 
 import { HttpReaderWorkspaceApi } from '../../../../lib/reader-workspace-api'
 import { HttpLlmSettingsApi } from '../../../../lib/llm-settings-api'
+import { HttpChatApi } from '../../../../lib/chat-api'
 import { ScholarContribution } from './scholar-contribution'
+import { ScholarChatService } from './scholar-chat-service'
+import {
+  SCHOLAR_CHAT_WIDGET_ID,
+  ScholarChatWidget,
+} from './scholar-chat-widget'
 import { ScholarLlmSettingsService } from './scholar-llm-settings-service'
 import {
   SCHOLAR_LLM_SETTINGS_WIDGET_ID,
@@ -75,7 +81,9 @@ import './style/generated.css'
 export default new ContainerModule(bind => {
   bind(HttpReaderWorkspaceApi).toSelf().inSingletonScope()
   bind(HttpLlmSettingsApi).toSelf().inSingletonScope()
+  bind(HttpChatApi).toSelf().inSingletonScope()
   bind(ScholarWorkspaceService).toSelf().inSingletonScope()
+  bind(ScholarChatService).toSelf().inSingletonScope()
   bind(ScholarAnnotationService).toSelf().inSingletonScope()
   bind(ScholarSuggestionService).toSelf().inSingletonScope()
   bind(ScholarLlmSettingsService).toSelf().inSingletonScope()
@@ -185,6 +193,12 @@ export default new ContainerModule(bind => {
     createWidget: () => context.container.get(ScholarSemanticLensWidget),
   })).inSingletonScope()
 
+  bind(ScholarChatWidget).toSelf()
+  bind(WidgetFactory).toDynamicValue(context => ({
+    id: SCHOLAR_CHAT_WIDGET_ID,
+    createWidget: () => context.container.get(ScholarChatWidget),
+  })).inSingletonScope()
+
   bind(ScholarAnnotationEditorWidget).toSelf().inSingletonScope()
   bind(WidgetFactory).toDynamicValue(context => ({
     id: SCHOLAR_ANNOTATION_EDITOR_WIDGET_ID,
@@ -262,6 +276,7 @@ export default new ContainerModule(bind => {
         options,
         context.container.get(ScholarAnnotationService),
         context.container.get(SelectionService),
+        context.container.get(ScholarChatService),
       )
     },
   })).inSingletonScope()

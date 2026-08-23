@@ -22,6 +22,12 @@ from backend.app.database.models import TooltipSuggestion as TooltipSuggestionMo
 from backend.app.compiler.latexml_compiler import compile_latex_to_html, CompilationResult
 from backend.app.api.settings_routes import router as settings_router
 from backend.app.api.semantic_routes import router as semantic_router
+from backend.app.api.chat_routes import router as chat_router
+from backend.app.semantic_notes import (
+    EmptySemanticNote,
+    SemanticNotePaperNotFound,
+    upsert_semantic_note_record,
+)
 from backend.app.agents.knowledge_graph_canonical import canonicalize_observations
 from backend.app.agents.knowledge_graph_models import KnowledgeGraphDocument
 from backend.app.agents.knowledge_graph_projection import (
@@ -46,6 +52,7 @@ app.add_middleware(
 )
 app.include_router(settings_router)
 app.include_router(semantic_router)
+app.include_router(chat_router)
 
 @app.get("/health")
 async def health_check():
@@ -612,43 +619,21 @@ async def upsert_semantic_note(
     is upserted rather than appended. ``POST /tooltips`` cannot serve this: it
     only anchors to a DOM node and never sets ``entity_id``.
     """
-    paper = db.query(Paper).filter(Paper.id == paper_id).first()
-    if not paper:
-        raise HTTPException(status_code=404, detail="Paper not found")
-
-    content = note.content.strip()
-    if not content:
-        raise HTTPException(status_code=400, detail="Note content must not be empty")
-
-    existing = db.query(Tooltip).filter(
-        Tooltip.paper_id == paper_id,
-        Tooltip.entity_id == subject_id
-    ).order_by(Tooltip.created_at).first()
-
-    if existing:
-        existing.content = content
-        existing.is_user_override = True
-        if note.target_text is not None:
-            existing.target_text = note.target_text
-        existing.updated_at = datetime.now(UTC)
-        db.commit()
-        db.refresh(existing)
-        return existing
-
-    created = Tooltip(
-        id=str(uuid.uuid4()),
-        paper_id=paper_id,
-        entity_id=subject_id,
-        target_text=note.target_text,
-        content=content,
-        is_user_override=True,
-        created_at=datetime.now(UTC),
-        updated_at=datetime.now(UTC)
-    )
-    db.add(created)
+    try:
+        stored = upsert_semantic_note_record(
+            db,
+            paper_id=paper_id,
+            subject_id=subject_id,
+            content=note.content,
+            target_text=note.target_text,
+        )
+    except SemanticNotePaperNotFound as error:
+        raise HTTPException(status_code=404, detail="Paper not found") from error
+    except EmptySemanticNote as error:
+        raise HTTPException(status_code=400, detail="Note content must not be empty") from error
     db.commit()
-    db.refresh(created)
-    return created
+    db.refresh(stored)
+    return stored
 
 
 @app.delete("/api/papers/{paper_id}/semantic-notes/{subject_id}")

@@ -48,6 +48,7 @@ function serverSnapshot(
       kg_extraction: 'kg-model',
       html_injection: 'html-model',
       tooltip_suggestion: 'tooltip-model',
+      chat: 'chat-model',
     },
     isActive: true,
     ...overrides,
@@ -115,7 +116,7 @@ describe('ScholarLlmSettingsContent', () => {
     expect(screen.queryByLabelText('Provider')).toBeNull()
   })
 
-  it('renders native fields for one connection and three independent workflows', async () => {
+  it('renders native fields for one connection and four independent workflows', async () => {
     const { service, messages } = await readyContext()
 
     renderContent(service, messages)
@@ -126,11 +127,12 @@ describe('ScholarLlmSettingsContent', () => {
     expect(screen.getByLabelText('Model for kg_extraction')).toHaveValue('kg-model')
     expect(screen.getByLabelText('Model for html_injection')).toHaveValue('html-model')
     expect(screen.getByLabelText('Model for tooltip_suggestion')).toHaveValue('tooltip-model')
+    expect(screen.getByLabelText('Model for chat')).toHaveValue('chat-model')
     expect(screen.getByText('Term Highlights')).toBeTruthy()
     expect(screen.getByText(/Saved in database/)).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Save LLM settings' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Revert LLM settings' })).toBeDisabled()
-    expect(screen.getAllByRole('button', { name: /^Test .* connection$/ })).toHaveLength(3)
+    expect(screen.getAllByRole('button', { name: /^Test .* connection$/ })).toHaveLength(4)
   })
 
   it('edits connection, model, and database-key intent through native controls', async () => {

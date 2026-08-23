@@ -20,6 +20,7 @@ const snapshotWire = {
     kg_extraction: 'gpt-4.1',
     html_injection: 'gpt-4.1-mini',
     tooltip_suggestion: 'gpt-4.1-mini',
+    chat: 'gpt-4.1-mini',
   },
   is_active: true,
 }
@@ -36,6 +37,7 @@ const snapshot: LlmSettingsSnapshot = {
     kg_extraction: 'gpt-4.1',
     html_injection: 'gpt-4.1-mini',
     tooltip_suggestion: 'gpt-4.1-mini',
+    chat: 'gpt-4.1-mini',
   },
   isActive: true,
 }
@@ -49,6 +51,7 @@ const draft: LlmSettingsDraft = {
     kg_extraction: 'expensive-kg',
     html_injection: 'cheap-html',
     tooltip_suggestion: 'tooltip-model',
+    chat: 'chat-model',
   },
 }
 
@@ -74,7 +77,7 @@ describe('HttpLlmSettingsApi', () => {
     vi.unstubAllGlobals()
   })
 
-  it('loads and maps a strict three-workflow snapshot to camelCase', async () => {
+  it('loads and maps a strict four-workflow snapshot to camelCase', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(snapshotWire))
 
     await expect(api.load()).resolves.toEqual(snapshot)
@@ -151,7 +154,7 @@ describe('HttpLlmSettingsApi', () => {
     )
   })
 
-  it('saves all three models with explicit replace/remove intent and maps the baseline', async () => {
+  it('saves all four models with explicit replace/remove intent and maps the baseline', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(snapshotWire))
 
     await expect(api.save({ ...draft, clearApiKey: true, apiKey: '' })).resolves.toEqual(snapshot)

@@ -42,6 +42,7 @@ function serverSnapshot(
       kg_extraction: 'kg-model',
       html_injection: 'html-model',
       tooltip_suggestion: 'tooltip-model',
+      chat: 'chat-model',
     },
     isActive: true,
     ...overrides,
@@ -170,6 +171,7 @@ describe('ScholarLlmSettingsService', () => {
       kg_extraction: 'kg-model',
       html_injection: 'cheap-html',
       tooltip_suggestion: 'tooltip-model',
+      chat: 'chat-model',
     })
     expect(service.dirty).toBe(true)
     expect(dirtyChanged).toHaveBeenCalledTimes(1)
@@ -290,6 +292,7 @@ describe('ScholarLlmSettingsService', () => {
         kg_extraction: 'kg-model',
         html_injection: 'html-model',
         tooltip_suggestion: 'tooltip-model',
+        chat: 'chat-model',
       },
     }), 'kg_extraction')
     expect(service.getSnapshot().testByWorkflow.kg_extraction.status).toBe('pending')
@@ -324,6 +327,7 @@ describe('ScholarLlmSettingsService', () => {
         kg_extraction: 'new-kg',
         html_injection: 'html-model',
         tooltip_suggestion: 'tooltip-model',
+        chat: 'chat-model',
       },
     })
     api.save.mockResolvedValueOnce(normalized)
@@ -342,6 +346,7 @@ describe('ScholarLlmSettingsService', () => {
         kg_extraction: 'new-kg',
         html_injection: 'html-model',
         tooltip_suggestion: 'tooltip-model',
+        chat: 'chat-model',
       },
     })
     expect(service.getSnapshot()).toMatchObject({

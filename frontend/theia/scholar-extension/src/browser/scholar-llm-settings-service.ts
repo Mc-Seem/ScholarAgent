@@ -71,6 +71,7 @@ const WORKFLOW_LABELS: Record<LlmWorkflow, string> = {
   kg_extraction: 'Knowledge Graph',
   html_injection: 'HTML Injection',
   tooltip_suggestion: 'Term Highlights',
+  chat: 'Chat',
 }
 
 function errorMessage(reason: unknown): string {
@@ -100,6 +101,7 @@ function emptyTests(): Record<LlmWorkflow, LlmWorkflowTestState> {
     kg_extraction: emptyTestState(),
     html_injection: emptyTestState(),
     tooltip_suggestion: emptyTestState(),
+    chat: emptyTestState(),
   }
 }
 
@@ -108,6 +110,7 @@ function cloneWorkflowModels(models: WorkflowModels): WorkflowModels {
     kg_extraction: models.kg_extraction,
     html_injection: models.html_injection,
     tooltip_suggestion: models.tooltip_suggestion,
+    chat: models.chat,
   }
 }
 
@@ -176,12 +179,14 @@ export function validateLlmSettingsDraft(
         kg_extraction: false,
         html_injection: false,
         tooltip_suggestion: false,
+        chat: false,
       },
       errors,
       testErrors: {
         kg_extraction: errors,
         html_injection: errors,
         tooltip_suggestion: errors,
+        chat: errors,
       },
     }
   }
@@ -304,6 +309,7 @@ export class ScholarLlmSettingsService implements Saveable {
     kg_extraction: 0,
     html_injection: 0,
     tooltip_suggestion: 0,
+    chat: 0,
   }
   private savePromise: Promise<void> | null = null
 

@@ -6,6 +6,7 @@ export const LLM_WORKFLOWS = [
   'kg_extraction',
   'html_injection',
   'tooltip_suggestion',
+  'chat',
 ] as const
 
 export type LlmProvider = typeof LLM_PROVIDERS[number]

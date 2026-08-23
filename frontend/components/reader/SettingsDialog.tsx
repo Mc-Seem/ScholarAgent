@@ -42,6 +42,7 @@ const WORKFLOWS = [
   { id: 'kg_extraction', label: 'KG Extraction', description: 'Knowledge graph extraction from papers (most token-heavy)' },
   { id: 'html_injection', label: 'HTML Injection', description: 'Semantic span injection into HTML' },
   { id: 'tooltip_suggestion', label: 'Tooltip Suggestion', description: 'Entity filtering and tooltip content generation' },
+  { id: 'chat', label: 'Chat', description: 'Grounded questions and answers for the active paper' },
 ] as const;
 
 interface SettingsDialogProps {
@@ -55,6 +56,7 @@ const EMPTY_MODELS: WorkflowModels = {
   kg_extraction: '',
   html_injection: '',
   tooltip_suggestion: '',
+  chat: '',
 };
 
 function errorMessage(reason: unknown, fallback: string): string {
@@ -83,6 +85,7 @@ export default function SettingsDialog({ isOpen, onClose, api = DEFAULT_API }: S
     kg_extraction: 0,
     html_injection: 0,
     tooltip_suggestion: 0,
+    chat: 0,
   });
   const draftRef = useRef<LlmSettingsDraft>({
     provider,

@@ -217,6 +217,12 @@
   animation: toc-flash 1.5s ease-in-out;
 }
 
+.scholar-chat-quote-highlight {
+  color: inherit;
+  background: var(--theia-editor-findMatchHighlightBackground, rgba(250, 204, 21, 0.45));
+  outline: 1px solid var(--theia-editor-findMatchHighlightBorder, rgba(202, 138, 4, 0.8));
+}
+
 .kg-entity {
   padding: 0 1px;
   border-bottom: 1px dotted rgba(99, 102, 241, 0.5);
@@ -864,6 +870,277 @@
 
 .scholar-llm-settings-actions {
   padding-top: 0.2rem;
+}
+
+.scholar-chat-widget {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.scholar-chat-view {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.scholar-chat-header {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.45rem;
+  border-bottom: 1px solid var(--theia-widget-border);
+}
+
+.scholar-chat-header select {
+  flex: 1;
+  min-width: 0;
+}
+
+.scholar-chat-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  padding: 0;
+  color: var(--theia-icon-foreground);
+  background: transparent;
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.scholar-chat-icon:hover:not(:disabled) {
+  background: var(--theia-toolbar-hoverBackground);
+}
+
+.scholar-chat-icon:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.scholar-chat-transcript {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.65rem;
+  min-height: 0;
+  padding: 0.65rem;
+  overflow: auto;
+}
+
+.scholar-chat-empty {
+  margin: auto;
+  padding: 0.75rem;
+  color: var(--theia-descriptionForeground);
+  text-align: center;
+}
+
+.scholar-chat-message {
+  max-width: 94%;
+  padding: 0.55rem 0.65rem;
+  overflow-wrap: anywhere;
+  background: var(--theia-editor-background);
+  border: 1px solid var(--theia-widget-border);
+  border-radius: 6px;
+}
+
+.scholar-chat-message-user {
+  align-self: flex-end;
+  color: var(--theia-list-activeSelectionForeground);
+  background: var(--theia-list-activeSelectionBackground);
+  border-color: var(--theia-list-activeSelectionBackground);
+}
+
+.scholar-chat-message-user .scholar-chat-message-role {
+  color: inherit;
+  opacity: 0.75;
+}
+
+.scholar-chat-message-role {
+  margin-bottom: 0.3rem;
+  color: var(--theia-descriptionForeground);
+  font-size: var(--theia-ui-font-size1);
+  font-weight: 600;
+}
+
+.scholar-chat-markdown p,
+.scholar-chat-markdown ul,
+.scholar-chat-definition p {
+  margin: 0.35rem 0;
+  line-height: 1.45;
+}
+
+.scholar-chat-markdown pre {
+  padding: 0.45rem;
+  overflow: auto;
+  background: var(--theia-textCodeBlock-background);
+  border-radius: 3px;
+}
+
+.scholar-chat-markdown code {
+  font-family: var(--theia-code-font-family);
+}
+
+.scholar-chat-citations {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.55rem;
+}
+
+.scholar-chat-citation,
+.scholar-chat-context-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 0;
+  padding: 0.2rem 0.4rem;
+  color: var(--theia-textLink-foreground);
+  background: var(--theia-badge-background);
+  border: 1px solid var(--theia-widget-border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.scholar-chat-definition {
+  margin-top: 0.65rem;
+  padding: 0.55rem;
+  background: var(--theia-sideBar-background);
+  border-left: 2px solid var(--theia-focusBorder);
+}
+
+.scholar-chat-definition-row > span,
+.scholar-chat-action-status {
+  color: var(--theia-descriptionForeground);
+  font-size: var(--theia-ui-font-size1);
+  text-transform: capitalize;
+}
+
+.scholar-chat-definition-proposed p {
+  color: var(--theia-testing-iconPassed, var(--theia-foreground));
+}
+
+.scholar-chat-definition-actions,
+.scholar-chat-error {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  margin-top: 0.5rem;
+}
+
+.scholar-chat-progress {
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
+  color: var(--theia-descriptionForeground);
+}
+
+.scholar-chat-error {
+  padding: 0.5rem;
+  color: var(--theia-errorForeground);
+  background: var(--theia-inputValidation-errorBackground);
+  border: 1px solid var(--theia-inputValidation-errorBorder);
+  border-radius: 3px;
+}
+
+.scholar-chat-error > span {
+  flex: 1;
+}
+
+.scholar-chat-composer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.55rem;
+  border-top: 1px solid var(--theia-widget-border);
+}
+
+.scholar-chat-input {
+  position: relative;
+  flex-basis: 100%;
+  min-width: 0;
+}
+
+.scholar-chat-input textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 64px;
+  padding: 0.45rem 2.3rem 0.45rem 0.55rem;
+  resize: vertical;
+}
+
+.scholar-chat-submit {
+  position: absolute;
+  right: 0.4rem;
+  bottom: 0.45rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--theia-button-foreground);
+  background: var(--theia-button-background);
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.scholar-chat-submit:hover:not(:disabled) {
+  background: var(--theia-button-hoverBackground);
+}
+
+.scholar-chat-submit-icon {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+}
+
+.scholar-chat-submit:focus-visible {
+  outline: 1px solid var(--theia-focusBorder);
+  outline-offset: 1px;
+}
+
+.scholar-chat-submit:disabled {
+  color: var(--theia-disabledForeground);
+  background: var(--theia-button-secondaryBackground, var(--theia-button-background));
+  cursor: default;
+  opacity: 0.55;
+}
+
+.scholar-chat-context-chip {
+  flex-basis: 100%;
+  cursor: default;
+}
+
+.scholar-chat-section-summary {
+  flex-basis: 100%;
+  padding: 0.25rem 0.45rem;
+  color: var(--theia-textLink-foreground);
+  text-align: left;
+  background: transparent;
+  border: 1px solid var(--theia-widget-border);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.scholar-chat-section-summary:hover:not(:disabled) {
+  background: var(--theia-list-hoverBackground);
+}
+
+.scholar-chat-context-chip span {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scholar-chat-context-chip button {
+  color: inherit;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
 }
 
 @media (max-width: 760px) {

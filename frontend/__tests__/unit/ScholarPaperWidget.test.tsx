@@ -98,6 +98,13 @@ function createSelectionService() {
   return { selection: undefined as unknown }
 }
 
+function createChatService() {
+  return {
+    setNextContextForPaper: vi.fn(),
+    setCurrentSection: vi.fn(),
+  }
+}
+
 function createWidget(
   options: ScholarPaperWidgetOptions,
   html?: string,
@@ -112,6 +119,7 @@ function createWidget(
       options,
       { select: vi.fn() } as never,
       createSelectionService() as never,
+      createChatService() as never,
     )
   })
   widgets.push(widget!)
@@ -133,6 +141,42 @@ function installSearchRoot(widget: ScholarPaperWidgetClass, text: string): HTMLE
 }
 
 describe('ScholarPaperWidget', () => {
+  it('captures arbitrary text selection and reports the current section to chat', async () => {
+    const chat = createChatService()
+    const WidgetWithChat = ScholarPaperWidget as unknown as new (
+      ...args: unknown[]
+    ) => ScholarPaperWidgetClass
+    let widget: ScholarPaperWidgetClass | undefined
+    act(() => {
+      widget = new WidgetWithChat(
+        createStore(snapshot('paper-a', `
+          <section data-id="sec-1"><p data-id="p-1">An exact selected phrase.</p></section>
+          <section data-id="sec-2"><p data-id="p-2">Another section.</p></section>
+        `)),
+        { error: vi.fn() },
+        { render: vi.fn() },
+        { paperId: 'paper-a', label: 'Paper A' },
+        { select: vi.fn() },
+        createSelectionService(),
+        chat,
+      )
+    })
+    widgets.push(widget!)
+    renderWidget(widget!)
+
+    await vi.waitFor(() => expect(chat.setCurrentSection).toHaveBeenCalledWith('paper-a', 'sec-1'))
+    const text = screen.getByText('An exact selected phrase.').firstChild!
+    const range = document.createRange()
+    range.setStart(text, 3)
+    range.setEnd(text, 24)
+    window.getSelection()?.removeAllRanges()
+    window.getSelection()?.addRange(range)
+    fireEvent.mouseUp(screen.getByText('An exact selected phrase.'))
+
+    expect(chat.setNextContextForPaper).toHaveBeenCalledWith('paper-a', {
+      kind: 'selection', data_id: 'p-1', section_id: 'sec-1', quote: 'exact selected phrase',
+    })
+  })
   it('publishes occurrence and equation selections from the Desktop reader without hover activation', () => {
     const value = snapshot(
       'paper-a',
@@ -140,6 +184,7 @@ describe('ScholarPaperWidget', () => {
     )
     const store = createStore(value)
     const selectionService = createSelectionService()
+    const chat = createChatService()
     let widget: ScholarPaperWidgetClass | undefined
     act(() => {
       const WidgetWithSemanticSelection = ScholarPaperWidget as unknown as new (
@@ -152,6 +197,7 @@ describe('ScholarPaperWidget', () => {
         { paperId: 'paper-a', label: 'Paper A' },
         { select: vi.fn() },
         selectionService,
+        chat,
       )
     })
     widgets.push(widget!)
@@ -173,6 +219,9 @@ describe('ScholarPaperWidget', () => {
       'paper-a',
       expect.objectContaining({ kind: 'occurrence', occurrenceId: 'occ-1' }),
     )
+    expect(chat.setNextContextForPaper).toHaveBeenLastCalledWith('paper-a', {
+      kind: 'entity', subject_id: 'procedure:supg', data_id: 'p-1', section_id: 'sec-1',
+    })
 
     selectionService.selection = undefined
     fireEvent.keyDown(screen.getByRole('button', { name: 'Open details for equation eq-7' }), {

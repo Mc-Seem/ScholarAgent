@@ -9,7 +9,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 
 LlmProvider = Literal["anthropic", "openai", "ollama", "custom"]
-Workflow = Literal["kg_extraction", "html_injection", "tooltip_suggestion"]
+Workflow = Literal["kg_extraction", "html_injection", "tooltip_suggestion", "chat"]
 CredentialSource = Literal["database", "environment", "none"]
 
 PROVIDERS: tuple[LlmProvider, ...] = (
@@ -22,6 +22,7 @@ WORKFLOWS: tuple[Workflow, ...] = (
     "kg_extraction",
     "html_injection",
     "tooltip_suggestion",
+    "chat",
 )
 
 
@@ -58,6 +59,7 @@ PROVIDER_SPECS: dict[LlmProvider, ProviderSpec] = {
             "kg_extraction": "claude-sonnet-4-5-20250929",
             "html_injection": "claude-haiku-4-5-20251001",
             "tooltip_suggestion": "claude-sonnet-4-5-20250929",
+            "chat": "claude-sonnet-4-5-20250929",
         },
     ),
     "openai": ProviderSpec(
@@ -75,6 +77,7 @@ PROVIDER_SPECS: dict[LlmProvider, ProviderSpec] = {
             "kg_extraction": "gpt-4.1",
             "html_injection": "gpt-4.1-mini",
             "tooltip_suggestion": "gpt-4.1-mini",
+            "chat": "gpt-4.1-mini",
         },
     ),
     "ollama": ProviderSpec(
@@ -95,6 +98,7 @@ PROVIDER_SPECS: dict[LlmProvider, ProviderSpec] = {
             "kg_extraction": "qwen3-235b-a22b:cloud",
             "html_injection": "qwen3-14b:cloud",
             "tooltip_suggestion": "qwen3-32b:cloud",
+            "chat": "qwen3-32b:cloud",
         },
     ),
     "custom": ProviderSpec(
@@ -159,14 +163,16 @@ def normalize_workflow_models(
     provider: str,
     models: Mapping[str, object] | None,
 ) -> dict[Workflow, str]:
-    """Fill absent workflow values from provider recommendations for display/runtime."""
+    """Fill absent workflow values from user settings, then provider recommendations."""
     values = models or {}
     recommendations = get_provider_spec(provider).recommended_models
     normalized: dict[Workflow, str] = {}
     for workflow in WORKFLOWS:
         raw = values.get(workflow)
         explicit = raw.strip() if isinstance(raw, str) else ""
-        normalized[workflow] = explicit or recommendations.get(workflow, "")
+        interactive = values.get("tooltip_suggestion") if workflow == "chat" else None
+        inherited = interactive.strip() if isinstance(interactive, str) else ""
+        normalized[workflow] = explicit or inherited or recommendations.get(workflow, "")
     return normalized
 
 
@@ -207,7 +213,7 @@ def resolve_workflow_model(
     models: Mapping[str, object] | None,
     workflow: Workflow,
 ) -> str:
-    """Resolve explicit, compatible legacy, then provider-recommended workflow model."""
+    """Resolve explicit, user-compatible fallback, legacy, then recommended model."""
     if workflow not in WORKFLOWS:
         raise ValueError(f"Unknown workflow: {workflow}")
 
@@ -216,6 +222,11 @@ def resolve_workflow_model(
     explicit = values.get(workflow)
     if isinstance(explicit, str) and explicit.strip():
         return explicit.strip()
+
+    if workflow == "chat":
+        interactive = values.get("tooltip_suggestion")
+        if isinstance(interactive, str) and interactive.strip():
+            return interactive.strip()
 
     for legacy_key in ("default", "model"):
         legacy = values.get(legacy_key)

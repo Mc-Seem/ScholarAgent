@@ -13,6 +13,10 @@ export const ScholarCommands = {
     id: 'scholar-agent.show-semantic-lens',
     label: 'Scholar Agent: Show Semantic Lens',
   } satisfies Command,
+  SHOW_CHAT: {
+    id: 'scholar-agent.show-chat',
+    label: 'Scholar Agent: Show Chat',
+  } satisfies Command,
   SHOW_ANNOTATIONS: {
     id: 'scholar-agent.show-annotations',
     label: 'Scholar Agent: Show Annotations',

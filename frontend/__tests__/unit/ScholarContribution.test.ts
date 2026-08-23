@@ -66,6 +66,7 @@ let SCHOLAR_SUGGESTIONS_WIDGET_ID: string
 let SCHOLAR_SUGGESTION_EDITOR_WIDGET_ID: string
 let SCHOLAR_PAPER_FIND_TOOLBAR_ID: string
 let SCHOLAR_SEMANTIC_LENS_WIDGET_ID: string
+let SCHOLAR_CHAT_WIDGET_ID: string
 let ScholarGraphSelectionNs: typeof import(
   '@/theia/scholar-extension/src/browser/scholar-graph-selection'
 ).ScholarGraphSelection
@@ -114,6 +115,9 @@ beforeAll(async () => {
   ))
   ;({ SCHOLAR_SEMANTIC_LENS_WIDGET_ID } = await import(
     '@/theia/scholar-extension/src/browser/scholar-semantic-lens-widget'
+  ))
+  ;({ SCHOLAR_CHAT_WIDGET_ID } = await import(
+    '@/theia/scholar-extension/src/browser/scholar-chat-widget'
   ))
   ;({
     ScholarGraphSelection: ScholarGraphSelectionNs,
@@ -683,6 +687,7 @@ describe('ScholarContribution Semantic Lens placement', () => {
       call => (call[0] as { id: string }).id === SCHOLAR_ANNOTATIONS_WIDGET_ID,
     )
     expect(lensCall).toBeLessThan(annotationsCall)
+    expect(context.shell.activateWidget).toHaveBeenCalledWith(SCHOLAR_CHAT_WIDGET_ID)
   })
 
   it('reveals the lens on a semantic selection without stealing focus from the paper', async () => {

@@ -61,7 +61,7 @@ def get_llm(
     falls back to ANTHROPIC_API_KEY env var with default model names.
 
     Args:
-        workflow: One of "kg_extraction", "html_injection", "tooltip_suggestion".
+        workflow: One of "kg_extraction", "html_injection", "tooltip_suggestion", "chat".
         max_tokens: Optional max output tokens override.
         temperature: Optional temperature override.
 

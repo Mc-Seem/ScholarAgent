@@ -26,6 +26,7 @@ function makeSnapshot(
       kg_extraction: 'kg-model',
       html_injection: 'html-model',
       tooltip_suggestion: 'tooltip-model',
+      chat: 'chat-model',
     },
     isActive: true,
     ...overrides,
@@ -77,7 +78,7 @@ describe('SettingsDialog draft-aware LLM settings', () => {
     vi.clearAllMocks()
   })
 
-  it('renders the normalized snapshot as three independent accessible model controls', async () => {
+  it('renders the normalized snapshot as four independent accessible model controls', async () => {
     const api = createApi()
 
     render(<SettingsDialog isOpen onClose={vi.fn()} api={api} />)
@@ -89,8 +90,9 @@ describe('SettingsDialog draft-aware LLM settings', () => {
     expect(screen.getByLabelText('KG Extraction model')).toHaveValue('kg-model')
     expect(screen.getByLabelText('HTML Injection model')).toHaveValue('html-model')
     expect(screen.getByLabelText('Tooltip Suggestion model')).toHaveValue('tooltip-model')
+    expect(screen.getByLabelText('Chat model')).toHaveValue('chat-model')
     expect(screen.getByText(/Saved in database/)).toBeInTheDocument()
-    expect(screen.getAllByRole('button', { name: /^Test .* model$/ })).toHaveLength(3)
+    expect(screen.getAllByRole('button', { name: /^Test .* model$/ })).toHaveLength(4)
     expect(screen.queryByRole('button', { name: 'Test Connection' })).not.toBeInTheDocument()
   })
 
@@ -120,6 +122,7 @@ describe('SettingsDialog draft-aware LLM settings', () => {
         kg_extraction: 'kg-model',
         html_injection: 'budget-html',
         tooltip_suggestion: 'tooltip-model',
+        chat: 'chat-model',
       },
     }, 'html_injection'))
     expect(api.save).not.toHaveBeenCalled()
@@ -152,6 +155,7 @@ describe('SettingsDialog draft-aware LLM settings', () => {
         kg_extraction: 'kg-model',
         html_injection: 'html-model',
         tooltip_suggestion: 'tooltip-model',
+        chat: 'chat-model',
       },
     }))
     expect(await screen.findByText('Environment variable', { selector: 'strong' }))

@@ -16,7 +16,7 @@ from backend.app.api import settings_routes
 from backend.app.api.main import app
 from backend.app.database.connection import get_db
 from backend.app.database.models import Base, LLMConfig
-from backend.app.utils import crypto
+from backend.app.utils import crypto, llm_factory
 from backend.app.utils.crypto import decrypt, encrypt, mask_key
 from backend.app.utils.llm_factory import build_llm_from_settings, get_llm
 from backend.app.utils.llm_settings import (
@@ -30,21 +30,25 @@ ANTHROPIC_MODELS = {
     "kg_extraction": "claude-sonnet-4-5-20250929",
     "html_injection": "claude-haiku-4-5-20251001",
     "tooltip_suggestion": "claude-sonnet-4-5-20250929",
+    "chat": "claude-sonnet-4-5-20250929",
 }
 OPENAI_MODELS = {
     "kg_extraction": "gpt-4.1",
     "html_injection": "gpt-4.1-mini",
     "tooltip_suggestion": "gpt-4.1-mini",
+    "chat": "gpt-4.1-mini",
 }
 OLLAMA_MODELS = {
     "kg_extraction": "qwen3-235b-a22b:cloud",
     "html_injection": "qwen3-14b:cloud",
     "tooltip_suggestion": "qwen3-32b:cloud",
+    "chat": "qwen3-32b:cloud",
 }
 CUSTOM_MODELS = {
     "kg_extraction": "custom-kg",
     "html_injection": "custom-html",
     "tooltip_suggestion": "custom-tooltip",
+    "chat": "custom-chat",
 }
 
 
@@ -146,11 +150,12 @@ def settings_body(
 
 
 class TestProviderCatalog:
-    def test_declares_three_workflows_and_cost_aware_recommendations(self):
+    def test_declares_four_workflows_and_cost_aware_recommendations(self):
         assert WORKFLOWS == (
             "kg_extraction",
             "html_injection",
             "tooltip_suggestion",
+            "chat",
         )
         assert PROVIDER_SPECS["anthropic"].recommended_models == ANTHROPIC_MODELS
         assert PROVIDER_SPECS["openai"].recommended_models == OPENAI_MODELS
@@ -833,6 +838,31 @@ class TestLlmFactory:
         )
 
         assert constructor_spies[-1][1]["model"] == "gpt-legacy-compatible"
+
+    def test_chat_uses_user_selected_tooltip_model_for_existing_config(
+        self,
+        constructor_spies,
+        monkeypatch,
+    ):
+        monkeypatch.setattr(llm_factory, "_get_active_config", lambda: {
+            "provider": "ollama",
+            "base_url": "https://user-ollama.example/v1",
+            "api_key_enc": "encrypted-user-key",
+            "models": {
+                "kg_extraction": "user-kg-model",
+                "html_injection": "user-html-model",
+                "tooltip_suggestion": "user-interactive-model",
+            },
+        })
+        monkeypatch.setattr(llm_factory, "decrypt", lambda _value: "user-key")
+
+        get_llm("chat")
+
+        kind, kwargs = constructor_spies[-1]
+        assert kind == "openai-compatible"
+        assert kwargs["base_url"] == "https://user-ollama.example/v1"
+        assert kwargs["api_key"] == "user-key"
+        assert kwargs["model"] == "user-interactive-model"
 
     def test_custom_provider_without_explicit_or_legacy_model_fails_clearly(
         self,

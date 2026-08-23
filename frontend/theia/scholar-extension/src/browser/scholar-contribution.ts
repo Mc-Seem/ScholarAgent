@@ -83,6 +83,7 @@ import {
   type ScholarPaperGraphWidgetOptions,
 } from './scholar-paper-graph-widget'
 import { SCHOLAR_SEMANTIC_LENS_WIDGET_ID } from './scholar-semantic-lens-widget'
+import { SCHOLAR_CHAT_WIDGET_ID } from './scholar-chat-widget'
 import { ScholarSuggestionService } from './scholar-suggestion-service'
 import {
   SCHOLAR_SUGGESTION_EDITOR_WIDGET_ID,
@@ -101,6 +102,7 @@ const GRAPH_STATUS_BAR_ID = 'scholar-agent.graph-status'
 const UPLOAD_ACCEPT = '.tar.gz,.tgz,.zip,.tex'
 // Keeps the reading lens above the authoring views in the right side bar.
 const SEMANTIC_LENS_RANK = 90
+const CHAT_RANK = 80
 
 interface GraphSearchQuickPickItem extends QuickPickItem {
   id: string
@@ -193,9 +195,10 @@ export class ScholarContribution implements
   }
 
   async initializeLayout(app: FrontendApplication): Promise<void> {
-    const [library, navigation, semanticLens, annotations, tooltipDrafts] = await Promise.all([
+    const [library, navigation, chat, semanticLens, annotations, tooltipDrafts] = await Promise.all([
       this.widgetManager.getOrCreateWidget(SCHOLAR_LIBRARY_WIDGET_ID),
       this.widgetManager.getOrCreateWidget(SCHOLAR_NAVIGATION_WIDGET_ID),
+      this.widgetManager.getOrCreateWidget(SCHOLAR_CHAT_WIDGET_ID),
       this.widgetManager.getOrCreateWidget(SCHOLAR_SEMANTIC_LENS_WIDGET_ID),
       this.widgetManager.getOrCreateWidget(SCHOLAR_ANNOTATIONS_WIDGET_ID),
       this.widgetManager.getOrCreateWidget(SCHOLAR_TOOLTIP_DRAFTS_WIDGET_ID),
@@ -207,6 +210,7 @@ export class ScholarContribution implements
       mode: 'tab-after',
       ref: library,
     })
+    await app.shell.addWidget(chat, { area: 'right', rank: CHAT_RANK })
     await app.shell.addWidget(semanticLens, { area: 'right', rank: SEMANTIC_LENS_RANK })
     await app.shell.addWidget(annotations, { area: 'right', rank: 100 })
     await app.shell.addWidget(tooltipDrafts, {
@@ -214,6 +218,7 @@ export class ScholarContribution implements
       mode: 'tab-after',
       ref: annotations,
     })
+    await app.shell.activateWidget(chat.id)
   }
 
   async onDidInitializeLayout(app: FrontendApplication): Promise<void> {
@@ -247,6 +252,9 @@ export class ScholarContribution implements
     })
     commands.registerCommand(ScholarCommands.SHOW_SEMANTIC_LENS, {
       execute: () => this.showView(SCHOLAR_SEMANTIC_LENS_WIDGET_ID, 'right'),
+    })
+    commands.registerCommand(ScholarCommands.SHOW_CHAT, {
+      execute: () => this.showView(SCHOLAR_CHAT_WIDGET_ID, 'right'),
     })
     commands.registerCommand(ScholarCommands.SHOW_ANNOTATIONS, {
       execute: () => this.showView(SCHOLAR_ANNOTATIONS_WIDGET_ID, 'right'),
@@ -648,6 +656,10 @@ export class ScholarContribution implements
     menus.registerMenuAction(CommonMenus.VIEW_VIEWS, {
       commandId: ScholarCommands.SHOW_SEMANTIC_LENS.id,
       order: 'a25',
+    })
+    menus.registerMenuAction(CommonMenus.VIEW_VIEWS, {
+      commandId: ScholarCommands.SHOW_CHAT.id,
+      order: 'a27',
     })
     menus.registerMenuAction(CommonMenus.VIEW_VIEWS, {
       commandId: ScholarCommands.SHOW_ANNOTATIONS.id,

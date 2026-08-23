@@ -42,7 +42,15 @@ export function truncateLabel(label: string, maxLength = 45): string {
   return `${label.substring(0, maxLength - 1)}…`
 }
 
-export function navigateToPaperElement(paperId: string, dataId: string): void {
+export interface PaperNavigationOptions {
+  quote?: string
+}
+
+export function navigateToPaperElement(
+  paperId: string,
+  dataId: string,
+  options: PaperNavigationOptions = {},
+): void {
   const paperRoot = Array.from(document.querySelectorAll<HTMLElement>('[data-scholar-paper-id]'))
     .find(element => element.dataset.scholarPaperId === paperId)
   const target = paperRoot
@@ -57,4 +65,49 @@ export function navigateToPaperElement(paperId: string, dataId: string): void {
   target.scrollIntoView({ behavior: 'smooth', block: 'start' })
   target.classList.add('toc-flash')
   window.setTimeout(() => target.classList.remove('toc-flash'), 1500)
+  if (options.quote) {
+    highlightPaperQuote(target, options.quote)
+  }
+}
+
+function highlightPaperQuote(target: HTMLElement, quote: string): void {
+  const exactQuote = quote.trim()
+  if (!exactQuote) return
+
+  const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT)
+  const textNodes: Text[] = []
+  let combined = ''
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const text = node as Text
+    textNodes.push(text)
+    combined += text.data
+  }
+  const quoteStart = combined.indexOf(exactQuote)
+  if (quoteStart < 0) return
+  const quoteEnd = quoteStart + exactQuote.length
+  const marks: HTMLElement[] = []
+  let offset = 0
+  for (const text of textNodes) {
+    const nodeStart = offset
+    const nodeEnd = nodeStart + text.data.length
+    offset = nodeEnd
+    const start = Math.max(quoteStart, nodeStart)
+    const end = Math.min(quoteEnd, nodeEnd)
+    if (start >= end) continue
+    const range = document.createRange()
+    range.setStart(text, start - nodeStart)
+    range.setEnd(text, end - nodeStart)
+    const mark = document.createElement('mark')
+    mark.className = 'scholar-chat-quote-highlight'
+    range.surroundContents(mark)
+    marks.push(mark)
+  }
+  window.setTimeout(() => {
+    for (const mark of marks) {
+      if (!mark.isConnected) continue
+      const parent = mark.parentNode
+      mark.replaceWith(...Array.from(mark.childNodes))
+      parent?.normalize()
+    }
+  }, 3000)
 }

@@ -33,6 +33,10 @@ const WORKFLOWS: Readonly<Record<LlmWorkflow, { label: string; description: stri
     label: 'Term Highlights',
     description: 'Choose the model used to select terms and draft highlight content.',
   },
+  chat: {
+    label: 'Chat',
+    description: 'Choose the model used for grounded questions about the active paper.',
+  },
 }
 
 function errorMessage(reason: unknown): string {

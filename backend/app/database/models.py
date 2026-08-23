@@ -1,5 +1,17 @@
 from datetime import datetime, UTC
-from sqlalchemy import Column, String, Text, DateTime, ForeignKey, Index, Boolean, Integer, JSON
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    Column,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    JSON,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import DeclarativeBase, relationship
 
 
@@ -11,6 +23,19 @@ def utcnow():
 
 class Base(DeclarativeBase):
     pass
+
+
+class User(Base):
+    """Minimal user record for the current single-user application model."""
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, autoincrement=False)
+
+    chat_conversations = relationship(
+        "ChatConversation",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
 
 
 class Paper(Base):
@@ -37,6 +62,11 @@ class Paper(Base):
 
     tooltips = relationship("Tooltip", back_populates="paper", cascade="all, delete-orphan")
     tooltip_suggestions = relationship("TooltipSuggestion", back_populates="paper", cascade="all, delete-orphan")
+    chat_conversations = relationship(
+        "ChatConversation",
+        back_populates="paper",
+        cascade="all, delete-orphan",
+    )
 
     def __repr__(self):
         return f"<Paper(id={self.id[:8]}..., filename={self.filename})>"
@@ -118,7 +148,7 @@ class LLMConfig(Base):
     provider = Column(String(64), nullable=False)  # "anthropic" | "openai" | "ollama" | "custom"
     base_url = Column(String(512), nullable=True)   # Custom endpoint URL (e.g. Ollama Cloud)
     api_key_enc = Column(Text, nullable=True)       # Fernet-encrypted API key
-    # Per-workflow model names: {"kg_extraction": "...", "html_injection": "...", "tooltip_suggestion": "..."}
+    # Per-workflow model names, including extraction, injection, tooltip, and chat.
     models = Column(JSON, nullable=False, default=dict)
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=utcnow)
@@ -126,3 +156,87 @@ class LLMConfig(Base):
 
     def __repr__(self):
         return f"<LLMConfig(id={self.id}, provider={self.provider}, active={self.is_active})>"
+
+
+class ChatConversation(Base):
+    """Named, paper-scoped chat owned by the current user."""
+    __tablename__ = "chat_conversations"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    paper_id = Column(String(64), ForeignKey("papers.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, default=1)
+    title = Column(String(255), nullable=False)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+    paper = relationship("Paper", back_populates="chat_conversations")
+    user = relationship("User", back_populates="chat_conversations")
+    messages = relationship(
+        "ChatMessage",
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        order_by="ChatMessage.id",
+    )
+
+    __table_args__ = (
+        Index("idx_chat_conversation_paper_user", "paper_id", "user_id"),
+    )
+
+
+class ChatMessage(Base):
+    """Persisted user or assistant message with immutable context evidence."""
+    __tablename__ = "chat_messages"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    conversation_id = Column(
+        Integer,
+        ForeignKey("chat_conversations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    role = Column(String(16), nullable=False)
+    content = Column(Text, nullable=False)
+    context_snapshot = Column(JSON, nullable=True)
+    citations = Column(JSON, nullable=False, default=list)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+
+    conversation = relationship("ChatConversation", back_populates="messages")
+    action = relationship(
+        "ChatAction",
+        back_populates="source_message",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint("role IN ('user', 'assistant')", name="ck_chat_message_role"),
+        Index("idx_chat_message_conversation_id", "conversation_id", "id"),
+    )
+
+
+class ChatAction(Base):
+    """Two-phase semantic definition proposal attached to an assistant message."""
+    __tablename__ = "chat_actions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    source_message_id = Column(
+        Integer,
+        ForeignKey("chat_messages.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    subject_id = Column(String(128), nullable=False)
+    base_definition = Column(Text, nullable=True)
+    proposed_definition = Column(Text, nullable=False)
+    knowledge_graph_version = Column(String(64), nullable=True)
+    status = Column(String(16), nullable=False, default="pending")
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+    source_message = relationship("ChatMessage", back_populates="action")
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'confirmed', 'rejected', 'stale')",
+            name="ck_chat_action_status",
+        ),
+        UniqueConstraint("source_message_id", name="uq_chat_action_source_message"),
+    )

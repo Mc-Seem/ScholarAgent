@@ -11,6 +11,7 @@ import {
   type PaperSearchControllerSnapshot,
 } from '../../../../components/reader/paper-search-controller'
 import type { TooltipUpdate } from '../../../../lib/reader-workspace-store'
+import type { ChatContext } from '../../../../lib/chat-api'
 import type { SemanticSelection } from '../../../../lib/semantic-api'
 import { paperLabel, truncateLabel, useScholarSnapshot, useTooltipMaps } from './scholar-react'
 import {
@@ -19,6 +20,7 @@ import {
   type ScholarAnnotationTarget,
 } from './scholar-annotation-service'
 import type { ScholarWorkspaceService } from './scholar-workspace-service'
+import type { ScholarChatService } from './scholar-chat-service'
 import {
   SCHOLAR_GRAPH_SELECTION_KIND,
   ScholarGraphSelection,
@@ -59,6 +61,7 @@ export class ScholarPaperWidget extends ReactWidget {
     readonly options: ScholarPaperWidgetOptions,
     private readonly annotations: ScholarAnnotationService,
     private readonly selectionService: SelectionService,
+    private readonly chat?: ScholarChatService,
   ) {
     super()
     this.selectionSource = {
@@ -158,6 +161,16 @@ export class ScholarPaperWidget extends ReactWidget {
       this.selectionSource,
       selection,
     )
+    const context = semanticChatContext(selection)
+    if (context) this.chat?.setNextContextForPaper(this.options.paperId, context)
+  }
+
+  private readonly handleTextSelection = (context: ChatContext): void => {
+    this.chat?.setNextContextForPaper(this.options.paperId, context)
+  }
+
+  private readonly handleCurrentSection = (sectionId: string | null): void => {
+    this.chat?.setCurrentSection(this.options.paperId, sectionId)
   }
 
   private clearSemanticSelection(): void {
@@ -197,6 +210,8 @@ export class ScholarPaperWidget extends ReactWidget {
         onContentChanged={this.handleContentChanged}
         onAnnotationContextMenu={request => this.openAnnotationMenu(request)}
         onSemanticSelect={this.handleSemanticSelection}
+        onTextSelection={this.handleTextSelection}
+        onCurrentSection={this.handleCurrentSection}
       />
     )
   }
@@ -224,6 +239,8 @@ interface ScholarPaperContentProps {
   onContentChanged: () => void
   onAnnotationContextMenu: (request: AnnotationContextMenuRequest) => void
   onSemanticSelect: (selection: SemanticSelection) => void
+  onTextSelection: (context: ChatContext) => void
+  onCurrentSection: (sectionId: string | null) => void
 }
 
 function ScholarPaperContent({
@@ -234,7 +251,10 @@ function ScholarPaperContent({
   onContentChanged,
   onAnnotationContextMenu,
   onSemanticSelect,
+  onTextSelection,
+  onCurrentSection,
 }: ScholarPaperContentProps): React.ReactElement {
+  const scrollRef = React.useRef<HTMLDivElement>(null)
   const snapshot = useScholarSnapshot(store)
   const paper = snapshot.papersById[paperId]
   const tooltips = snapshot.tooltipsByPaperId[paperId] ?? []
@@ -245,6 +265,60 @@ function ScholarPaperContent({
   React.useLayoutEffect(() => {
     onContentChanged()
   }, [error, loading, onContentChanged, paper?.html_content, tooltips])
+
+  React.useEffect(() => {
+    const scroll = scrollRef.current
+    if (!scroll || !paper?.html_content) return
+    const renderer = scroll.querySelector<HTMLElement>('.html-renderer')
+    if (!renderer) return
+
+    const captureSelection = () => {
+      const selection = window.getSelection()
+      if (!selection || selection.isCollapsed || selection.rangeCount === 0) return
+      const range = selection.getRangeAt(0)
+      if (!renderer.contains(range.startContainer) || !renderer.contains(range.endContainer)) return
+      const quote = selection.toString().trim()
+      if (!quote) return
+      const startElement = range.startContainer instanceof Element
+        ? range.startContainer
+        : range.startContainer.parentElement
+      const source = startElement?.closest<HTMLElement>('[data-id]')
+      if (!source || !renderer.contains(source)) return
+      const section = source.matches('section[data-id]')
+        ? source
+        : source.closest<HTMLElement>('section[data-id]')
+      onTextSelection({
+        kind: 'selection',
+        data_id: source.dataset.id,
+        section_id: section?.dataset.id,
+        quote,
+      })
+    }
+
+    const reportCurrentSection = () => {
+      const sections = Array.from(renderer.querySelectorAll<HTMLElement>('section[data-id]'))
+      if (sections.length === 0) {
+        onCurrentSection(null)
+        return
+      }
+      const scrollTop = scroll.getBoundingClientRect().top
+      const current = sections.reduce((best, section) => {
+        const distance = Math.abs(section.getBoundingClientRect().top - scrollTop)
+        return distance < best.distance ? { section, distance } : best
+      }, { section: sections[0], distance: Number.POSITIVE_INFINITY }).section
+      onCurrentSection(current.dataset.id ?? null)
+    }
+
+    renderer.addEventListener('mouseup', captureSelection)
+    renderer.addEventListener('keyup', captureSelection)
+    scroll.addEventListener('scroll', reportCurrentSection, { passive: true })
+    reportCurrentSection()
+    return () => {
+      renderer.removeEventListener('mouseup', captureSelection)
+      renderer.removeEventListener('keyup', captureSelection)
+      scroll.removeEventListener('scroll', reportCurrentSection)
+    }
+  }, [onCurrentSection, onTextSelection, paper?.html_content])
 
   const reportFailure = React.useCallback((action: string, reason: unknown) => {
     void messageService.error(`${action}: ${errorMessage(reason)}`)
@@ -257,7 +331,7 @@ function ScholarPaperContent({
 
   return (
     <div className="scholar-widget scholar-reader-widget" data-scholar-paper-id={paperId}>
-      <div className="scholar-reader-scroll">
+      <div ref={scrollRef} className="scholar-reader-scroll">
         {loading && !paper && <div className="scholar-loading">Loading paper…</div>}
         {error && !paper && (
           <div className="scholar-error">
@@ -316,6 +390,21 @@ function ScholarPaperContent({
       </div>
     </div>
   )
+}
+
+function semanticChatContext(selection: SemanticSelection): ChatContext | null {
+  if (selection.kind === 'node') {
+    return { kind: 'entity', subject_id: selection.id, data_id: selection.domNodeId }
+  }
+  if (selection.kind === 'occurrence') {
+    return {
+      kind: 'entity',
+      subject_id: selection.subjectId,
+      data_id: selection.domNodeId,
+      section_id: selection.scopeId,
+    }
+  }
+  return null
 }
 
 function errorMessage(error: unknown): string {
