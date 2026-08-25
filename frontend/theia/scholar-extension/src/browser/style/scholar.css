@@ -982,6 +982,14 @@
   font-family: var(--theia-code-font-family);
 }
 
+.scholar-chat-markdown blockquote {
+  margin: 0.45rem 0;
+  padding: 0.35rem 0.65rem;
+  color: var(--theia-descriptionForeground);
+  background: var(--theia-textBlockQuote-background);
+  border-left: 3px solid var(--theia-textBlockQuote-border);
+}
+
 .scholar-chat-table-scroll {
   max-width: 100%;
   margin: 0.45rem 0;

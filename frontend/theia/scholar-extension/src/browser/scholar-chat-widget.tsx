@@ -165,6 +165,24 @@ export function SafeChatMarkdown({ content }: { content: string }): React.ReactN
       code.push(line)
       continue
     }
+    const quote = line.match(/^\s*>\s?(.*)$/)
+    if (quote) {
+      flushParagraph()
+      flushList()
+      const quotedLines = [quote[1]]
+      while (lineIndex + 1 < lines.length) {
+        const nextQuote = lines[lineIndex + 1].match(/^\s*>\s?(.*)$/)
+        if (!nextQuote) break
+        quotedLines.push(nextQuote[1])
+        lineIndex += 1
+      }
+      blocks.push(
+        <blockquote key={`quote-${blocks.length}`}>
+          {inlineMarkdown(quotedLines.join(' '))}
+        </blockquote>,
+      )
+      continue
+    }
     const headerCells = tableCells(line)
     const dividerCells = tableCells(lines[lineIndex + 1] ?? '')
     if (headerCells && isTableDivider(dividerCells) && headerCells.length === dividerCells?.length) {

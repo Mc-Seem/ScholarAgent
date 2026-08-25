@@ -126,6 +126,19 @@ describe('ScholarChatView', () => {
     expect(typesetPromise.mock.calls.every(([elements]) => elements.length === 1)).toBe(true)
   })
 
+  it('renders consecutive markdown quote lines as a blockquote', () => {
+    render(<ScholarChatView snapshot={snapshot({ messages: [{
+      id: 6, conversation_id: 1, role: 'assistant',
+      content: '> First quoted line\n> Second **important** line',
+      context: null, citations: [], pending_action: null,
+      created_at: '2026-08-23T20:00:00Z',
+    }] })} actions={actions()} />)
+
+    const quote = screen.getByText(/First quoted line/).closest('blockquote')
+    expect(quote).toHaveTextContent('First quoted line Second important line')
+    expect(quote?.querySelector('strong')).toHaveTextContent('important')
+  })
+
   it('submits composer text and disables it while streaming', async () => {
     const user = userEvent.setup()
     const handlers = actions()
