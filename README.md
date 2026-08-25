@@ -4,6 +4,10 @@ Interactive academic paper reader that compiles arXiv LaTeX sources into HTML5 w
 
 ## Quick Start (Docker Compose)
 
+> **Legacy UI:** The published `frontend` container currently serves the
+> deprecated Next.js client. For the primary Theia frontend and newer features
+> such as chat, use the source setup below.
+
 **No repository clone required!** Just download the `docker-compose.yml` file:
 
 ```bash
@@ -187,27 +191,21 @@ docker pull latexml/ar5ivist
 ### Running from Source
 
 ```bash
-# Backend (from project root)
-uv run uvicorn backend.app.api.main:app --reload --port 8000 --reload-dir backend --reload-delay 1
-
-# Frontend (from project root, always with the pinned Node.js)
-mise exec -- npm --prefix frontend run dev
-```
-
-Access the app at `http://localhost:3000`
-
-### Experimental Theia Pilot
-
-The existing Next.js client remains the default and fallback. The isolated
-Theia Platform pilot reuses the same reader components and FastAPI backend.
-
-```bash
-# Browser workbench + backend (from project root)
+# Recommended: Theia browser workbench + backend (from project root)
 mise exec -- npm --prefix frontend run dev:theia
 
-# Electron workbench + backend
+# Recommended desktop app + backend
 mise exec -- npm --prefix frontend run dev:theia:desktop
+```
 
+The browser workbench is available at the URL printed by Theia during startup.
+
+### Theia Frontend
+
+Theia is the primary frontend and the target for new features. It reuses the
+shared reader components and FastAPI backend.
+
+```bash
 # Build either target without starting it
 mise exec -- npm --prefix frontend run theia:build:browser
 mise exec -- npm --prefix frontend run theia:build:electron
@@ -216,10 +214,28 @@ mise exec -- npm --prefix frontend run theia:build:electron
 mise run verify
 ```
 
-The pilot provides one central tab per paper, native split view and layout
+The Theia frontend provides one central tab per paper, native split view and layout
 restoration, Papers/Navigation/Annotations views, commands, keybindings, and
 status-bar progress. Set `window.__SCHOLAR_API_BASE__` before frontend startup
 to override the default `http://<current-host>:8000` API URL.
+
+### Legacy Next.js UI (Deprecated)
+
+The standalone Next.js browser UI and its Electron wrapper are retained only as
+fallbacks. They do not receive every new feature; chat, for example, is Theia-only.
+Do not add new UI features to these clients unless legacy compatibility is
+explicitly required.
+
+```bash
+# Backend only (from project root)
+uv run uvicorn backend.app.api.main:app --reload --port 8000 --reload-dir backend --reload-delay 1
+
+# Deprecated Next.js browser UI (requires a separately running backend)
+mise exec -- npm --prefix frontend run dev
+
+# Deprecated Next.js Electron UI + frontend + backend
+mise exec -- npm --prefix frontend run dev:desktop
+```
 
 ## Environment Variables
 
@@ -250,7 +266,7 @@ arXiv .tar.gz → LaTeXML → HTML5 + MathML → PostgreSQL
 
 ### Tech Stack
 - **Backend**: FastAPI, PostgreSQL, SQLAlchemy, LangGraph
-- **Frontend**: Next.js reference client; Theia Platform pilot; React, MathJax 4, Framer Motion
+- **Frontend**: Theia Platform; React, MathJax 4, Framer Motion; deprecated Next.js legacy client
 - **AI**: Claude Sonnet via Anthropic API
 - **Compilation**: LaTeXML (Docker)
 
@@ -396,10 +412,11 @@ ScholarAgent/
 │   │   └── database/            # SQLAlchemy models
 │   └── alembic/                 # Database migrations
 ├── frontend/
-│   ├── app/                     # Next.js pages
+│   ├── app/                     # Deprecated Next.js legacy UI
 │   ├── components/reader/       # Paper viewer components
 │   ├── hooks/                   # React hooks
-│   └── lib/                     # Utilities & design system
+│   ├── lib/                     # Utilities & design system
+│   └── theia/                   # Primary browser and Electron applications
 ├── storage/                     # Uploaded papers + compiled HTML
 ├── tests/                       # Backend pytest tests
 └── docker-compose.yml           # Production deployment

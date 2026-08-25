@@ -6,8 +6,12 @@ Interactive academic paper reader that compiles arXiv LaTeX sources into HTML5 w
 - **Runtime**: `mise install` (from project root; pins Node.js 24.18.0)
 - **Bootstrap**: `mise run bootstrap`
 - **Backend**: `uv run uvicorn backend.app.api.main:app --reload --port 8000 --reload-dir backend --reload-delay 1` (from project root)
-- **Frontend**: `mise exec -- npm --prefix frontend run dev`
-- **Electron**: `mise exec -- npm --prefix frontend run dev:desktop`
+- **Frontend (Theia)**: `mise exec -- npm --prefix frontend run dev:theia`
+- **Electron (Theia)**: `mise exec -- npm --prefix frontend run dev:theia:desktop`
+
+> **Deprecated:** The standalone Next.js UI (`dev`, `dev:desktop`) is a legacy
+> fallback and does not receive every new feature, including chat. Develop new
+> UI features for Theia unless legacy compatibility is explicitly required.
 
 ## Key Commands
 - **Run Tests**: `.venv/bin/pytest tests/` (backend) | `mise exec -- npm --prefix frontend test -- --run` (frontend)
@@ -17,7 +21,7 @@ Interactive academic paper reader that compiles arXiv LaTeX sources into HTML5 w
 ## Architecture
 arXiv .tar.gz → LaTeXML (Docker) → HTML5 + MathML → PostgreSQL → data-id injection → Knowledge Graph extraction (LLM) → Semantic tooltip injection.
 
-**Stack**: FastAPI, PostgreSQL, SQLAlchemy, Alembic, LangGraph, Next.js, html-react-parser, MathJax 4, Framer Motion, React Flow.
+**Stack**: FastAPI, PostgreSQL, SQLAlchemy, Alembic, LangGraph, Theia, React, html-react-parser, MathJax 4, Framer Motion, React Flow. Next.js remains only as a deprecated legacy client.
 
 ## Documentation
 

@@ -1,5 +1,9 @@
 # Frontend Architecture
 
+> **Status:** Theia is the primary frontend and the target for new features.
+> The standalone Next.js UI is deprecated and retained as a compatibility
+> fallback; feature parity is not guaranteed (chat is currently Theia-only).
+
 ## Terminology
 
 ### Tooltips: Two Types
@@ -43,7 +47,7 @@ const glossaryTooltips = tooltips.filter(t => t.entity_id);
 
 ```
 frontend/
-├── app/                        # Next.js pages
+├── app/                        # Deprecated Next.js legacy UI
 │   ├── page.tsx                # Main app (PaperLoader)
 │   └── globals.css             # Global styles + .kg-entity
 ├── components/
@@ -97,10 +101,11 @@ PaperLoader.tsx
     └── Tab: Glossary → GlossaryList (entity_id tooltips)
 ```
 
-## Theia Platform Pilot
+## Theia Platform Frontend
 
-The pilot lives beside the Next.js reference client and reuses its reader
-components. It does not change backend endpoints or database models.
+The primary Theia frontend lives beside the deprecated Next.js client and
+reuses its reader components. It does not change backend endpoints or database
+models.
 
 ```
 frontend/theia/
@@ -136,7 +141,7 @@ and knowledge-graph SSE subscriptions.
 
 Theia persists widget factory options (`paperId` and label), so paper tabs,
 split groups, and side-view layout restore across restarts. The Next.js
-`PaperLoader` remains available as the comparison baseline and fallback.
+`PaperLoader` remains available only as a legacy compatibility fallback.
 
 The paper widget no longer renders an embedded React find strip. Each
 `ScholarPaperWidget` owns one stable `PaperSearchController`, scoped to the
@@ -228,8 +233,8 @@ belong to the block they annotate and stay in `Annotations`.
 `View → Semantic Lens` and `Alt+Shift+L` reopen the view. The native bottom
 `Property View` provider stays registered as a secondary, flat-table channel for
 the same selections. This makes the Theia Desktop reader the primary
-semantic-reading surface while retaining the Next.js reader as a compatible
-reference client.
+semantic-reading surface while retaining the deprecated Next.js reader as a
+compatibility fallback.
 
 Everything the lens shows goes through MathJax: notation meanings, units,
 constraints, related labels, explanations, and note content. Because extracted

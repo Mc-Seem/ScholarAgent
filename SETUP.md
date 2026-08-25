@@ -175,17 +175,21 @@ docker run --rm \
 
 ### Development Mode
 
-#### Option 1: Full stack (Next.js + FastAPI + Electron)
+#### Option 1: Theia desktop + FastAPI (recommended)
 ```bash
-mise exec -- npm --prefix frontend run dev:desktop
+mise exec -- npm --prefix frontend run dev:theia:desktop
 ```
 
 This will start:
 - Backend API on `http://localhost:8000`
-- Frontend on `http://localhost:3000`
-- Electron desktop app
+- Theia Electron desktop app
 
-#### Option 2: Backend only
+#### Option 2: Theia browser + FastAPI (recommended)
+```bash
+mise exec -- npm --prefix frontend run dev:theia
+```
+
+#### Option 3: Backend only
 ```bash
 cd frontend
 npm run dev:backend
@@ -196,12 +200,21 @@ Or manually:
 uv run uvicorn backend.app.api.main:app --reload --port 8000 --reload-dir backend --reload-delay 1
 ```
 
-#### Option 3: Frontend only (requires backend running separately)
+#### Legacy Next.js UI (deprecated)
+
+The standalone Next.js UI and its Electron wrapper remain available as
+fallbacks, but they do not receive every new feature, including chat. New UI
+development should target Theia.
+
 ```bash
+# Browser UI only (requires backend running separately)
 mise exec -- npm --prefix frontend run dev
+
+# Electron UI + frontend + backend
+mise exec -- npm --prefix frontend run dev:desktop
 ```
 
-### Production Mode
+### Legacy Next.js Production Mode (deprecated)
 
 ```bash
 mise exec -- npm --prefix frontend run build
@@ -253,7 +266,7 @@ curl http://localhost:8000/
 ```
 
 ### Frontend
-Open browser to `http://localhost:3000`
+For the browser workbench, open the URL printed by Theia during startup.
 
 Run the complete frontend verification from the project root:
 ```bash
