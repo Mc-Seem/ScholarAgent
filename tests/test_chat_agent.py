@@ -74,6 +74,7 @@ def install_fake_models(monkeypatch, router_output, answer_output):
 def test_answer_system_prompt_requires_markdown_latex_and_markdown_tables():
     prompt = chat_agent.ANSWER_SYSTEM_PROMPT
 
+    assert "prefer it over general knowledge" in prompt
     assert "valid Markdown" in prompt
     assert "LaTeX using `$...$` or `$$...$$`" in prompt
     assert "never Unicode pseudo-formulas" in prompt

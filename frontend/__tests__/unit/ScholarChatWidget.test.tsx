@@ -1,3 +1,6 @@
+import fs from 'node:fs'
+import path from 'node:path'
+
 import * as React from 'react'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -5,6 +8,11 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import type { ScholarChatSnapshot } from '@/theia/scholar-extension/src/browser/scholar-chat-service'
 import type { ScholarChatView as ScholarChatViewType } from '@/theia/scholar-extension/src/browser/scholar-chat-widget'
+
+const css = fs.readFileSync(
+  path.resolve(process.cwd(), 'theia/scholar-extension/src/browser/style/scholar.css'),
+  'utf8',
+)
 
 const confirmDialogOpen = vi.fn<() => Promise<boolean | undefined>>()
 const singleTextInputDialogOpen = vi.fn<() => Promise<string | undefined>>()
@@ -124,6 +132,13 @@ describe('ScholarChatView', () => {
     expect(screen.getByRole('cell', { name: 'DPO' })).toBeInTheDocument()
     await vi.waitFor(() => expect(typesetPromise).toHaveBeenCalledTimes(2))
     expect(typesetPromise.mock.calls.every(([elements]) => elements.length === 1)).toBe(true)
+  })
+
+  it('allows horizontal but not vertical scrolling for display LaTeX', () => {
+    const displayMath = css.match(/\.scholar-chat-math-display \{[^}]*\}/)?.[0] ?? ''
+
+    expect(displayMath).toMatch(/overflow-x: auto;/)
+    expect(displayMath).toMatch(/overflow-y: hidden;/)
   })
 
   it('renders consecutive markdown quote lines as a blockquote', () => {

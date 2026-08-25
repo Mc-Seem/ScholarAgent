@@ -158,6 +158,56 @@ def test_selection_and_section_context_are_included_once_and_bounded():
     assert result.evidence[0].text == "exact selected phrase"
     assert sum(item.source_id == "p-0" for item in result.evidence) == 1
     assert sum(len(item.text) for item in result.evidence) <= 12_000
+
+
+def test_retrieval_includes_adjacent_formulas_from_matching_section():
+    corpus = [
+        {
+            "id": "kto-heading",
+            "text": "Kahneman-Tversky Optimization (KTO)",
+            "section_id": "sec-kto",
+            "section_title": "Kahneman-Tversky Optimization",
+            "kind": "h2",
+        },
+        {
+            "id": "kto-intro",
+            "text": "The KTO loss is defined as an expectation of the per-sample loss:",
+            "section_id": "sec-kto",
+            "section_title": "Kahneman-Tversky Optimization",
+            "kind": "p",
+        },
+        {
+            "id": "kto-loss",
+            "text": "L KTO pi theta pi ref equals E l KTO y w",
+            "section_id": "sec-kto",
+            "section_title": "Kahneman-Tversky Optimization",
+            "kind": "math",
+        },
+        {
+            "id": "kto-per-sample",
+            "text": "l KTO y w equals one minus v KTO y w if y desirable",
+            "section_id": "sec-kto",
+            "section_title": "Kahneman-Tversky Optimization",
+            "kind": "math",
+        },
+        *[
+            {
+                "id": f"other-{index}",
+                "text": f"KTO loss baseline comparison result {index}",
+                "section_id": f"sec-other-{index}",
+                "section_title": "Experiments",
+                "kind": "p",
+            }
+            for index in range(6)
+        ],
+    ]
+
+    result = retrieve_chat_evidence("What is the formula for KTO loss?", corpus)
+
+    source_ids = {item.source_id for item in result.evidence}
+    assert {"kto-loss", "kto-per-sample"} <= source_ids
+
+
 @pytest.fixture
 def fixture_document_data():
     path = Path(__file__).parent / "fixtures" / "knowledge_graph_baseline.json"

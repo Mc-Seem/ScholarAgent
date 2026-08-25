@@ -20,6 +20,7 @@ from backend.app.agents.knowledge_graph_retrieval import hybrid_retrieve, passag
 
 
 PASSAGE_LIMIT = 5
+PASSAGE_CONTEXT_RADIUS = 3
 GRAPH_EVIDENCE_LIMIT = 6
 TOTAL_EVIDENCE_LIMIT = 12
 MAX_EVIDENCE_CHARS = 12_000
@@ -150,6 +151,39 @@ def _passage_record(source: Mapping[str, Any], *, text: str | None = None) -> Ev
         section_id=str(source["section_id"]) if source.get("section_id") else None,
         section_title=str(section_title) if section_title else None,
     )
+
+
+def _section_neighbors(
+    corpus: list[dict[str, Any]],
+    source_ids: Sequence[str],
+) -> list[dict[str, Any]]:
+    """Keep nearby prose and equations that form one logical article fragment."""
+    index_by_id = {str(source["id"]): index for index, source in enumerate(corpus)}
+    selected_ids = set(source_ids)
+    neighbors: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for source_id in source_ids:
+        source_index = index_by_id.get(source_id)
+        if source_index is None:
+            continue
+        section_id = corpus[source_index].get("section_id")
+        if not section_id:
+            continue
+        for distance in range(1, PASSAGE_CONTEXT_RADIUS + 1):
+            for neighbor_index in (source_index - distance, source_index + distance):
+                if not 0 <= neighbor_index < len(corpus):
+                    continue
+                neighbor = corpus[neighbor_index]
+                neighbor_id = str(neighbor["id"])
+                if (
+                    neighbor.get("section_id") != section_id
+                    or neighbor_id in selected_ids
+                    or neighbor_id in seen_ids
+                ):
+                    continue
+                neighbors.append(neighbor)
+                seen_ids.add(neighbor_id)
+    return neighbors
 
 
 def _graph_records(
@@ -324,6 +358,10 @@ def retrieve_chat_evidence(
             source = source_by_id.get(source_id)
             if source is not None:
                 ordered.append(_passage_record(source))
+        ordered.extend(
+            _passage_record(source)
+            for source in _section_neighbors(corpus, selected_source_ids)
+        )
 
     if graph_enabled and parsed_document is not None:
         ordered.extend(_graph_records(
