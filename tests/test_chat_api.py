@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import io
 import json
@@ -291,6 +292,43 @@ class TestChatConversationApi:
 
 
 class TestChatMessageStream:
+    def test_stream_offloads_chat_agent_from_event_loop(
+        self,
+        chat_api,
+        monkeypatch,
+    ):
+        conversation_id = create_conversation(chat_api)["id"]
+        offloaded = []
+
+        async def fake_to_thread(function, **kwargs):
+            offloaded.append((function, kwargs))
+            return GroundedChatResult(
+                content="Offloaded answer.",
+                citations=[],
+                graph_available=False,
+                used_graph=False,
+            )
+
+        monkeypatch.setattr(asyncio, "to_thread", fake_to_thread)
+
+        with chat_api.client.stream(
+            "POST",
+            f"/api/papers/paper-one/chat/conversations/{conversation_id}/messages",
+            json={"content": "Do not block other requests"},
+        ) as response:
+            events = parse_sse(response)
+
+        assert events[-1][0] == "final"
+        assert offloaded == [(chat_routes.run_chat_agent, {
+            "question": "Do not block other requests",
+            "context": None,
+            "history": [],
+            "html_content": None,
+            "sections_data": None,
+            "knowledge_graph": None,
+            "semantic_overrides": {},
+        })]
+
     def test_stream_persists_context_and_emits_persisted_final_message(
         self,
         chat_api,

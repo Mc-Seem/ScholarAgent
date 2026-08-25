@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from typing import Any, Literal, Mapping, Sequence, TypeVar, TypedDict
 
@@ -30,6 +31,8 @@ INSUFFICIENT_EVIDENCE_REPLY = (
 )
 GENERAL_KNOWLEDGE_NOTICE = "[General knowledge — not sourced from the article]"
 StructuredOutput = TypeVar("StructuredOutput", bound=BaseModel)
+
+logger = logging.getLogger(__name__)
 
 ROUTER_SYSTEM_PROMPT = """You route questions about one academic paper.
 Return a concise retrieval query using terminology likely present in the paper while preserving
@@ -134,10 +137,45 @@ def _invoke_structured(
     model: Any,
     schema: type[StructuredOutput],
     messages: list[Any],
+    stage: str,
 ) -> StructuredOutput:
     validation_error: Exception | None = None
+    invocation_failed = False
     for attempt in range(2):
-        output = model.invoke(messages)
+        invocation_failed = False
+        try:
+            output = model.invoke(messages)
+        except Exception as error:
+            invocation_failed = True
+            validation_error = error
+            logger.warning(
+                "Chat %s structured output attempt %s failed: %s",
+                stage,
+                attempt + 1,
+                error,
+            )
+            output = None
+        if isinstance(output, Mapping) and (
+            "parsed" in output or "parsing_error" in output
+        ):
+            parsed = output.get("parsed")
+            parsing_error = output.get("parsing_error")
+            if parsed is not None:
+                output = parsed
+            else:
+                validation_error = parsing_error or ValueError(
+                    "model returned no structured output"
+                )
+                raw_preview = repr(output.get("raw"))
+                if len(raw_preview) > 2_000:
+                    raw_preview = f"{raw_preview[:2_000]}..."
+                logger.warning(
+                    "Chat %s structured output attempt %s could not be parsed; raw=%s",
+                    stage,
+                    attempt + 1,
+                    raw_preview,
+                )
+                output = None
         if output is not None:
             if isinstance(output, schema):
                 return output
@@ -145,13 +183,15 @@ def _invoke_structured(
                 return schema.model_validate(output)
             except ValidationError as error:
                 validation_error = error
-        else:
+        elif validation_error is None:
             validation_error = ValueError("model returned no structured output")
         if attempt == 0:
             messages = [
                 *messages,
                 HumanMessage(content="Return a valid response using the required structured output schema."),
             ]
+    if invocation_failed and validation_error is not None:
+        raise validation_error
     raise ValueError(
         f"{schema.__name__} model returned invalid structured output after 2 attempts"
     ) from validation_error
@@ -280,8 +320,8 @@ def _validated_definition_proposal(
 def create_chat_workflow():
     """Create the fixed router -> deterministic retrieval -> answer graph."""
     llm = get_llm("chat", max_tokens=2_000, temperature=0)
-    router_llm = get_structured_llm(llm, RouterOutput)
-    answer_llm = get_structured_llm(llm, AnswerOutput)
+    router_llm = get_structured_llm(llm, RouterOutput, include_raw=True)
+    answer_llm = get_structured_llm(llm, AnswerOutput, include_raw=True)
 
     def route_node(state: ChatAgentState) -> dict[str, Any]:
         payload = {
@@ -291,7 +331,7 @@ def create_chat_workflow():
         route = _invoke_structured(router_llm, RouterOutput, [
             SystemMessage(content=ROUTER_SYSTEM_PROMPT),
             HumanMessage(content=json.dumps(payload, ensure_ascii=False)),
-        ])
+        ], "router")
         route = route.model_copy(update={
             "use_graph": route.intent == "definition" or (
                 route.use_graph and route.intent in {"entity", "relation"}
@@ -323,7 +363,7 @@ def create_chat_workflow():
         answer = _invoke_structured(answer_llm, AnswerOutput, [
             SystemMessage(content=ANSWER_SYSTEM_PROMPT),
             HumanMessage(content=json.dumps(payload, ensure_ascii=False)),
-        ])
+        ], "answer")
         if answer.insufficient_evidence or not answer.answer.strip():
             result = GroundedChatResult(
                 content=INSUFFICIENT_EVIDENCE_REPLY,

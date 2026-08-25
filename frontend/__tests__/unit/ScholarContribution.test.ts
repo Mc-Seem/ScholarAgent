@@ -67,6 +67,8 @@ let SCHOLAR_SUGGESTION_EDITOR_WIDGET_ID: string
 let SCHOLAR_PAPER_FIND_TOOLBAR_ID: string
 let SCHOLAR_SEMANTIC_LENS_WIDGET_ID: string
 let SCHOLAR_CHAT_WIDGET_ID: string
+let SCHOLAR_NAVIGATION_WIDGET_ID: string
+let SCHOLAR_OUTLINE_WIDGET_ID: string
 let ScholarGraphSelectionNs: typeof import(
   '@/theia/scholar-extension/src/browser/scholar-graph-selection'
 ).ScholarGraphSelection
@@ -100,6 +102,7 @@ beforeAll(async () => {
     ScholarLibraryWidget,
     SCHOLAR_LIBRARY_CONTEXT_MENU,
     SCHOLAR_ANNOTATIONS_WIDGET_ID,
+    SCHOLAR_NAVIGATION_WIDGET_ID,
     SCHOLAR_TOOLTIP_DRAFTS_WIDGET_ID,
   } = await import(
     '@/theia/scholar-extension/src/browser/scholar-side-widgets'
@@ -118,6 +121,9 @@ beforeAll(async () => {
   ))
   ;({ SCHOLAR_CHAT_WIDGET_ID } = await import(
     '@/theia/scholar-extension/src/browser/scholar-chat-widget'
+  ))
+  ;({ SCHOLAR_OUTLINE_WIDGET_ID } = await import(
+    '@/theia/scholar-extension/src/browser/scholar-native-widgets'
   ))
   ;({
     ScholarGraphSelection: ScholarGraphSelectionNs,
@@ -761,6 +767,15 @@ describe('ScholarContribution Semantic Lens placement', () => {
 
 describe('ScholarContribution Term Highlights layout migration', () => {
   async function migrate(context: ReturnType<typeof createContribution>): Promise<void> {
+    const chat = { id: SCHOLAR_CHAT_WIDGET_ID }
+    const tryGetWidget = context.widgetManager.tryGetWidget.getMockImplementation()
+    context.widgetManager.tryGetWidget.mockImplementation((widgetId: string) => (
+      widgetId === SCHOLAR_CHAT_WIDGET_ID ? chat : tryGetWidget?.(widgetId)
+    ))
+    const getAreaFor = context.shell.getAreaFor.getMockImplementation()
+    context.shell.getAreaFor.mockImplementation((widget: unknown) => (
+      widget === chat ? 'right' : getAreaFor?.(widget)
+    ))
     const contribution = context.contribution as unknown as {
       onDidInitializeLayout(app: unknown): Promise<void>
     }
@@ -869,6 +884,57 @@ describe('ScholarContribution Term Highlights layout migration', () => {
     expect(context.messageService.warn).toHaveBeenCalledWith(
       'Could not migrate the Term Highlights layout: factory failed',
     )
+  })
+})
+
+describe('ScholarContribution Chat layout migration', () => {
+  it('adds Chat and returns a detached Outline to Navigate after restoring a pre-Chat layout', async () => {
+    const context = createContribution(createFakeStore(emptySnapshot()))
+    const chat = { id: SCHOLAR_CHAT_WIDGET_ID }
+    const outline = { id: SCHOLAR_OUTLINE_WIDGET_ID, close: vi.fn() }
+    const navigation = createFakeViewContainer(SCHOLAR_NAVIGATION_WIDGET_ID, [])
+    Object.defineProperty(navigation, 'close', { value: vi.fn(), configurable: true })
+    context.widgetManager.tryGetWidget.mockReturnValue(undefined)
+    context.widgetManager.getOrCreateWidget.mockImplementation(async (widgetId: string) => {
+      if (widgetId === SCHOLAR_CHAT_WIDGET_ID) return chat
+      if (widgetId === SCHOLAR_NAVIGATION_WIDGET_ID) return navigation
+      if (widgetId === SCHOLAR_OUTLINE_WIDGET_ID) return outline
+      throw new Error(`Unexpected widget: ${widgetId}`)
+    })
+    context.shell.getAreaFor.mockImplementation((widget: unknown) => (
+      widget === outline || widget === navigation ? 'right' : undefined
+    ))
+
+    await (context.contribution as unknown as {
+      onDidInitializeLayout(app: unknown): Promise<void>
+    }).onDidInitializeLayout({ shell: context.shell })
+
+    expect(outline.close).toHaveBeenCalledOnce()
+    expect(navigation.addWidget).toHaveBeenCalledWith(outline, { order: 10, weight: 1 })
+    expect(navigation.close).toHaveBeenCalledOnce()
+    expect(context.shell.addWidget).toHaveBeenCalledWith(navigation, { area: 'left' })
+    expect(context.shell.addWidget).toHaveBeenCalledWith(chat, { area: 'right', rank: 80 })
+    expect(context.shell.activateWidget).toHaveBeenCalledWith(SCHOLAR_CHAT_WIDGET_ID)
+    expect(context.messageService.warn).not.toHaveBeenCalled()
+  })
+
+  it('preserves a restored layout that already contains Chat', async () => {
+    const context = createContribution(createFakeStore(emptySnapshot()))
+    const chat = { id: SCHOLAR_CHAT_WIDGET_ID }
+    context.widgetManager.tryGetWidget.mockImplementation((widgetId: string) => (
+      widgetId === SCHOLAR_CHAT_WIDGET_ID ? chat : undefined
+    ))
+    context.shell.getAreaFor.mockImplementation((widget: unknown) => (
+      widget === chat ? 'right' : undefined
+    ))
+
+    await (context.contribution as unknown as {
+      onDidInitializeLayout(app: unknown): Promise<void>
+    }).onDidInitializeLayout({ shell: context.shell })
+
+    expect(context.widgetManager.getOrCreateWidget).not.toHaveBeenCalled()
+    expect(context.shell.addWidget).not.toHaveBeenCalled()
+    expect(context.shell.activateWidget).not.toHaveBeenCalled()
   })
 })
 

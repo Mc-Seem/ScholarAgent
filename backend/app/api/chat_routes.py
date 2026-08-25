@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import datetime
@@ -505,7 +506,8 @@ async def stream_message(
             ChatStatusEvent(stage="answer", message="Preparing grounded answer."),
         )
         try:
-            result = run_chat_agent(
+            result = await asyncio.to_thread(
+                run_chat_agent,
                 question=request.content,
                 context=request.context,
                 history=history,

@@ -172,15 +172,15 @@ def get_structured_output_method(llm: BaseChatModel) -> str:
     return "function_calling"
 
 
-def get_structured_llm(llm: BaseChatModel, schema):
-    """Wrap an LLM with structured output, using the right method per provider.
+def get_structured_llm(llm: BaseChatModel, schema, *, include_raw: bool = False):
+    """Wrap an LLM with structured output and optional parsing diagnostics.
 
-    For ChatOpenAI (Ollama, custom), uses json_mode and relies on the prompt
-    to convey the expected schema. For ChatAnthropic, uses tool_calling which
-    passes the schema natively.
+    Function calling passes the schema to both Anthropic and OpenAI-compatible
+    providers. ``include_raw`` preserves the raw response and parsing error so
+    callers can implement retries for malformed tool calls.
 
     Usage (replaces llm.with_structured_output(Schema)):
         structured_llm = get_structured_llm(llm, Schema)
     """
     method = get_structured_output_method(llm)
-    return llm.with_structured_output(schema, method=method)
+    return llm.with_structured_output(schema, method=method, include_raw=include_raw)

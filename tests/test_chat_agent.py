@@ -58,10 +58,11 @@ class FakeStructuredModel:
 
 
 def install_fake_models(monkeypatch, router_output, answer_output):
-    captured = {"router": [], "answer": []}
+    captured = {"router": [], "answer": [], "structured_options": []}
     monkeypatch.setattr(chat_agent, "get_llm", lambda *_args, **_kwargs: object())
 
-    def structured(_llm, schema):
+    def structured(_llm, schema, **_kwargs):
+        captured["structured_options"].append((schema, _kwargs))
         if schema is RouterOutput:
             return FakeStructuredModel(router_output, captured["router"])
         assert schema is AnswerOutput
@@ -103,6 +104,10 @@ def test_multilingual_router_query_drives_passage_retrieval(monkeypatch):
     assert result.citations[0].quote == "The ELBO is a lower bound on the log evidence."
     assert "Что такое ELBO?" in str(captured["router"][0])
     assert "ELBO lower bound log evidence" in str(captured["answer"][0])
+    assert captured["structured_options"] == [
+        (RouterOutput, {"include_raw": True}),
+        (AnswerOutput, {"include_raw": True}),
+    ]
 
 
 def test_validator_drops_unknown_handles_wrong_kinds_and_inexact_quotes(monkeypatch):
@@ -209,6 +214,36 @@ def test_empty_structured_answer_is_retried(monkeypatch):
     )
 
     assert result.content.startswith(chat_agent.GENERAL_KNOWLEDGE_NOTICE)
+    assert len(captured["answer"]) == 2
+
+
+def test_structured_parsing_error_is_retried(monkeypatch):
+    captured = install_fake_models(
+        monkeypatch,
+        RouterOutput(intent="question", retrieval_query="DPO", use_graph=False),
+        [
+            {
+                "raw": SimpleNamespace(content="not a tool call"),
+                "parsed": None,
+                "parsing_error": ValueError("missing tool call"),
+            },
+            {
+                "raw": SimpleNamespace(content=""),
+                "parsed": AnswerOutput(answer="DPO uses preference data.", uses_general_knowledge=True),
+                "parsing_error": None,
+            },
+        ],
+    )
+
+    result = run_chat_agent(
+        question="What is DPO?",
+        html_content="",
+        sections_data=[],
+        knowledge_graph=None,
+        history=[],
+    )
+
+    assert "DPO uses preference data" in result.content
     assert len(captured["answer"]) == 2
 
 
@@ -417,10 +452,32 @@ def test_paper_prompt_injection_is_delimited_as_untrusted_and_history_is_bounded
     assert len(prompt) < 35_000
 
 
-def test_provider_failure_propagates_without_partial_result(monkeypatch):
+def test_provider_failure_is_retried_then_succeeds(monkeypatch):
+    captured = install_fake_models(
+        monkeypatch,
+        [
+            RuntimeError("temporary provider failure"),
+            RouterOutput(intent="question", retrieval_query="Question", use_graph=False),
+        ],
+        AnswerOutput(answer="Recovered answer.", uses_general_knowledge=True),
+    )
+
+    result = run_chat_agent(
+        question="Question",
+        html_content="",
+        sections_data=[],
+        knowledge_graph=None,
+        history=[],
+    )
+
+    assert "Recovered answer" in result.content
+    assert len(captured["router"]) == 2
+
+
+def test_provider_failure_propagates_after_retry(monkeypatch):
     install_fake_models(
         monkeypatch,
-        RuntimeError("router provider secret"),
+        [RuntimeError("router provider secret"), RuntimeError("router provider secret")],
         AnswerOutput(answer="unused"),
     )
 

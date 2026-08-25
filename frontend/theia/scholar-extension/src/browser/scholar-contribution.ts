@@ -65,6 +65,7 @@ import {
 } from './scholar-annotation-service'
 import {
   SCHOLAR_ANNOTATION_EDITOR_WIDGET_ID,
+  SCHOLAR_OUTLINE_WIDGET_ID,
   SCHOLAR_TREE_CONTEXT_MENU,
   isScholarTreeNode,
 } from './scholar-native-widgets'
@@ -227,6 +228,13 @@ export class ScholarContribution implements
     } catch (reason) {
       await this.messageService.warn(
         `Could not migrate the Term Highlights layout: ${errorMessage(reason)}`,
+      )
+    }
+    try {
+      await this.migratePreChatLayout(app)
+    } catch (reason) {
+      await this.messageService.warn(
+        `Could not migrate the Chat layout: ${errorMessage(reason)}`,
       )
     }
   }
@@ -1622,6 +1630,41 @@ export class ScholarContribution implements
       }
       throw reason
     }
+  }
+
+  private async migratePreChatLayout(app: FrontendApplication): Promise<void> {
+    const existingChat = this.widgetManager.tryGetWidget(SCHOLAR_CHAT_WIDGET_ID)
+    if (existingChat && app.shell.getAreaFor(existingChat)) {
+      return
+    }
+
+    const [chat, navigation, outline] = await Promise.all([
+      existingChat ?? this.widgetManager.getOrCreateWidget(SCHOLAR_CHAT_WIDGET_ID),
+      this.widgetManager.getOrCreateWidget(SCHOLAR_NAVIGATION_WIDGET_ID),
+      this.widgetManager.getOrCreateWidget(SCHOLAR_OUTLINE_WIDGET_ID),
+    ])
+    if (!(navigation instanceof ViewContainer)) {
+      throw new Error('Navigate did not create a view container')
+    }
+
+    const outlineArea = app.shell.getAreaFor(outline)
+    if (outlineArea) {
+      outline.close()
+    }
+    if (!navigation.getPartFor(outline)) {
+      navigation.addWidget(outline, { order: 10, weight: 1 })
+    }
+
+    const navigationArea = app.shell.getAreaFor(navigation)
+    if (navigationArea && navigationArea !== 'left') {
+      navigation.close()
+    }
+    if (navigationArea !== 'left') {
+      await app.shell.addWidget(navigation, { area: 'left' })
+    }
+
+    await app.shell.addWidget(chat, { area: 'right', rank: CHAT_RANK })
+    await app.shell.activateWidget(chat.id)
   }
 
   private revealSemanticLens(): Promise<void> {
