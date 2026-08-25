@@ -317,6 +317,7 @@ class TestChatMessageStream:
                     "kind": "selection",
                     "data_id": "paragraph-1",
                     "section_id": "section-1",
+                    "label": "Selected passage",
                     "quote": " exact selected phrase ",
                 },
             },
@@ -342,6 +343,7 @@ class TestChatMessageStream:
             "data_id": "paragraph-1",
             "section_id": "section-1",
             "subject_id": None,
+            "label": "Selected passage",
             "quote": " exact selected phrase ",
         }
         assert history[1]["id"] == final["message"]["id"]

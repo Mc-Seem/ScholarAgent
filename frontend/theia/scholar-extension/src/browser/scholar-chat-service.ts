@@ -199,8 +199,10 @@ export class ScholarChatService {
     this.update({ nextContext: context })
   }
 
-  setNextContextForPaper(paperId: string, context: ChatContext): void {
-    if (paperId === this.snapshot.activePaperId) this.setNextContext(context)
+  setNextContextForPaper(paperId: string, context: ChatContext | null): void {
+    if (paperId !== this.snapshot.activePaperId) return
+    if (context) this.setNextContext(context)
+    else this.clearNextContext()
   }
 
   setCurrentSection(paperId: string, sectionId: string | null): void {

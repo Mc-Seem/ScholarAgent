@@ -51,10 +51,13 @@ class ChatContext(BaseModel):
     data_id: str | None = Field(default=None, min_length=1, max_length=256)
     section_id: str | None = Field(default=None, min_length=1, max_length=256)
     subject_id: str | None = Field(default=None, min_length=1, max_length=128)
+    label: str | None = Field(default=None, min_length=1, max_length=512)
     quote: str | None = Field(default=None, min_length=1, max_length=10_000)
 
     @model_validator(mode="after")
     def validate_kind_fields(self):
+        if self.label is not None and not self.label.strip():
+            raise ValueError("Context label cannot be blank.")
         if self.kind == "selection" and (
             not self.data_id
             or not self.data_id.strip()

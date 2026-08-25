@@ -154,6 +154,31 @@ describe('ScholarChatView', () => {
     expect(quote?.querySelector('strong')).toHaveTextContent('important')
   })
 
+  it('shows the evidence attached to persisted user messages', () => {
+    render(<ScholarChatView snapshot={snapshot({ messages: [
+      {
+        id: 7, conversation_id: 1, role: 'user', content: 'Change the definition',
+        context: {
+          kind: 'entity', subject_id: 'artifact:simpo', data_id: 'p-1', label: 'SimPO',
+        },
+        citations: [], pending_action: null, created_at: '2026-08-23T20:00:00Z',
+      },
+      {
+        id: 8, conversation_id: 1, role: 'user', content: 'Explain this',
+        context: { kind: 'selection', data_id: 'p-2', quote: 'exact selected phrase' },
+        citations: [], pending_action: null, created_at: '2026-08-23T20:01:00Z',
+      },
+    ] })} actions={actions()} />)
+
+    expect(screen.getAllByText('Attached evidence')).toHaveLength(2)
+    expect(screen.getByText('Entity: SimPO').closest('.scholar-chat-attached-evidence-value'))
+      .toHaveAttribute('title', 'Entity: SimPO')
+    expect(screen.getByText('Selection: exact selected phrase').closest('.scholar-chat-attached-evidence-value')).toHaveAttribute(
+      'title',
+      'Selection: exact selected phrase',
+    )
+  })
+
   it('submits composer text and disables it while streaming', async () => {
     const user = userEvent.setup()
     const handlers = actions()

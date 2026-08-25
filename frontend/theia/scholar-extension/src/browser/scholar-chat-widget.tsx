@@ -267,8 +267,21 @@ export function SafeChatMarkdown({ content }: { content: string }): React.ReactN
 
 function contextLabel(context: ChatContext): string {
   if (context.kind === 'selection') return `Selection: ${context.quote}`
-  if (context.kind === 'section') return `Section: ${context.section_id}`
-  return `Entity: ${context.subject_id}`
+  if (context.kind === 'section') return `Section: ${context.label || context.section_id}`
+  return `Entity: ${context.label || context.subject_id}`
+}
+
+function AttachedEvidence({ context }: { context: ChatContext }): React.ReactNode {
+  const label = contextLabel(context)
+  return (
+    <div className="scholar-chat-attached-evidence">
+      <span className="scholar-chat-attached-evidence-label">Attached evidence</span>
+      <span className="scholar-chat-attached-evidence-value" title={label}>
+        <span className="codicon codicon-link" aria-hidden="true" />
+        <span>{label}</span>
+      </span>
+    </div>
+  )
 }
 
 function ChatSubmitIcon({ stop = false }: { stop?: boolean }): React.ReactNode {
@@ -352,6 +365,7 @@ function TranscriptMessage({ message, snapshot, actions }: {
   return (
     <article className={`scholar-chat-message scholar-chat-message-${message.role}`}>
       <div className="scholar-chat-message-role">{message.role === 'user' ? 'You' : 'Chat'}</div>
+      {message.role === 'user' && message.context && <AttachedEvidence context={message.context} />}
       <SafeChatMarkdown content={message.content} />
       {message.citations.length > 0 && (
         <div className="scholar-chat-citations">

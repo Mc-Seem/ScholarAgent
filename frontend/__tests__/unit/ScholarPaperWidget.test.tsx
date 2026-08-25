@@ -176,6 +176,11 @@ describe('ScholarPaperWidget', () => {
     expect(chat.setNextContextForPaper).toHaveBeenCalledWith('paper-a', {
       kind: 'selection', data_id: 'p-1', section_id: 'sec-1', quote: 'exact selected phrase',
     })
+
+    window.getSelection()?.removeAllRanges()
+    fireEvent.mouseUp(screen.getByText('An exact selected phrase.'))
+
+    expect(chat.setNextContextForPaper).toHaveBeenLastCalledWith('paper-a', null)
   })
   it('publishes occurrence and equation selections from the Desktop reader without hover activation', () => {
     const value = snapshot(
@@ -221,6 +226,7 @@ describe('ScholarPaperWidget', () => {
     )
     expect(chat.setNextContextForPaper).toHaveBeenLastCalledWith('paper-a', {
       kind: 'entity', subject_id: 'procedure:supg', data_id: 'p-1', section_id: 'sec-1',
+      label: 'SUPG',
     })
 
     selectionService.selection = undefined

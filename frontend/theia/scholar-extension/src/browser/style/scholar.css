@@ -964,6 +964,39 @@
   font-weight: 600;
 }
 
+.scholar-chat-attached-evidence {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+  margin: 0.1rem 0 0.4rem;
+}
+
+.scholar-chat-attached-evidence-label {
+  font-size: var(--theia-ui-font-size1);
+  opacity: 0.75;
+}
+
+.scholar-chat-attached-evidence-value {
+  display: inline-flex;
+  gap: 0.3rem;
+  align-items: center;
+  align-self: flex-start;
+  box-sizing: border-box;
+  max-width: 100%;
+  padding: 0.25rem 0.4rem;
+  color: var(--theia-foreground);
+  background: var(--theia-editor-background);
+  border: 1px solid var(--theia-widget-border);
+  border-radius: 3px;
+}
+
+.scholar-chat-attached-evidence-value > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .scholar-chat-markdown p,
 .scholar-chat-markdown ul,
 .scholar-chat-definition p {

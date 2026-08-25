@@ -7,6 +7,7 @@ export type ChatContext = {
   data_id?: string
   section_id?: string
   subject_id?: string
+  label?: string
   quote?: string
 }
 
@@ -145,6 +146,7 @@ function parseContext(value: unknown): ChatContext | null {
     data_id: optionalString(item.data_id, 'context data_id'),
     section_id: optionalString(item.section_id, 'context section_id'),
     subject_id: optionalString(item.subject_id, 'context subject_id'),
+    label: optionalString(item.label, 'context label'),
     quote: optionalString(item.quote, 'context quote'),
   }
   if (kind === 'selection' && (!context.data_id || !context.quote)) throw new Error('Invalid chat context')

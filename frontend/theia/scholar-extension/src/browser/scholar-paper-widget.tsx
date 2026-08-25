@@ -165,7 +165,7 @@ export class ScholarPaperWidget extends ReactWidget {
     if (context) this.chat?.setNextContextForPaper(this.options.paperId, context)
   }
 
-  private readonly handleTextSelection = (context: ChatContext): void => {
+  private readonly handleTextSelection = (context: ChatContext | null): void => {
     this.chat?.setNextContextForPaper(this.options.paperId, context)
   }
 
@@ -239,7 +239,7 @@ interface ScholarPaperContentProps {
   onContentChanged: () => void
   onAnnotationContextMenu: (request: AnnotationContextMenuRequest) => void
   onSemanticSelect: (selection: SemanticSelection) => void
-  onTextSelection: (context: ChatContext) => void
+  onTextSelection: (context: ChatContext | null) => void
   onCurrentSection: (sectionId: string | null) => void
 }
 
@@ -274,16 +274,28 @@ function ScholarPaperContent({
 
     const captureSelection = () => {
       const selection = window.getSelection()
-      if (!selection || selection.isCollapsed || selection.rangeCount === 0) return
+      if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+        onTextSelection(null)
+        return
+      }
       const range = selection.getRangeAt(0)
-      if (!renderer.contains(range.startContainer) || !renderer.contains(range.endContainer)) return
+      if (!renderer.contains(range.startContainer) || !renderer.contains(range.endContainer)) {
+        onTextSelection(null)
+        return
+      }
       const quote = selection.toString().trim()
-      if (!quote) return
+      if (!quote) {
+        onTextSelection(null)
+        return
+      }
       const startElement = range.startContainer instanceof Element
         ? range.startContainer
         : range.startContainer.parentElement
       const source = startElement?.closest<HTMLElement>('[data-id]')
-      if (!source || !renderer.contains(source)) return
+      if (!source || !renderer.contains(source)) {
+        onTextSelection(null)
+        return
+      }
       const section = source.matches('section[data-id]')
         ? source
         : source.closest<HTMLElement>('section[data-id]')
@@ -394,7 +406,10 @@ function ScholarPaperContent({
 
 function semanticChatContext(selection: SemanticSelection): ChatContext | null {
   if (selection.kind === 'node') {
-    return { kind: 'entity', subject_id: selection.id, data_id: selection.domNodeId }
+    return {
+      kind: 'entity', subject_id: selection.id, data_id: selection.domNodeId,
+      label: selection.label,
+    }
   }
   if (selection.kind === 'occurrence') {
     return {
@@ -402,6 +417,7 @@ function semanticChatContext(selection: SemanticSelection): ChatContext | null {
       subject_id: selection.subjectId,
       data_id: selection.domNodeId,
       section_id: selection.scopeId,
+      label: selection.label,
     }
   }
   return null
