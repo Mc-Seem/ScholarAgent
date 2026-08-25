@@ -10,7 +10,7 @@
     "bootstrap": "npm ci",
     "dev": "next dev --webpack",
     "dev:web": "next dev --webpack",
-    "dev:backend": "uv run --project .. python -m uvicorn backend.app.api.main:app --reload --port 8000 --app-dir .. --reload-dir ..",
+    "dev:backend": "uv run --project .. python -m uvicorn backend.app.api.main:app --reload --port 8000 --app-dir .. --reload-dir ../backend --reload-delay 1",
     "dev:electron": "wait-on http://localhost:3000 && electron .",
     "dev:desktop": "concurrently -k -n backend,frontend,electron -c green,blue,magenta \"npm run dev:backend\" \"npm run dev:web\" \"npm run dev:electron\"",
     "theia:compile": "npm run compile --workspace @scholar-agent/theia-extension",

@@ -5,7 +5,7 @@ Interactive academic paper reader that compiles arXiv LaTeX sources into HTML5 w
 ## Quick Start
 - **Runtime**: `mise install` (from project root; pins Node.js 24.18.0)
 - **Bootstrap**: `mise run bootstrap`
-- **Backend**: `uv run uvicorn backend.app.api.main:app --reload --port 8000` (from project root)
+- **Backend**: `uv run uvicorn backend.app.api.main:app --reload --port 8000 --reload-dir backend --reload-delay 1` (from project root)
 - **Frontend**: `mise exec -- npm --prefix frontend run dev`
 - **Electron**: `mise exec -- npm --prefix frontend run dev:desktop`
 

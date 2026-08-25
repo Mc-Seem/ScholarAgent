@@ -37,6 +37,7 @@ beforeAll(async () => {
 afterAll(() => {
   vi.unstubAllGlobals()
   delete (document as Partial<Document>).queryCommandSupported
+  delete (window as typeof window & { MathJax?: object }).MathJax
 })
 
 function snapshot(overrides: Partial<ScholarChatSnapshot> = {}): ScholarChatSnapshot {
@@ -94,6 +95,35 @@ describe('ScholarChatView', () => {
     expect(handlers.confirmAction).toHaveBeenCalledWith(8)
     await user.click(screen.getByRole('button', { name: 'Reject definition' }))
     expect(handlers.rejectAction).toHaveBeenCalledWith(8)
+  })
+
+  it('renders markdown tables and typesets inline and display LaTeX', async () => {
+    const typesetPromise = vi.fn().mockResolvedValue(undefined)
+    const typesetClear = vi.fn()
+    ;(window as typeof window & { MathJax?: object }).MathJax = {
+      typesetPromise,
+      typesetClear,
+    }
+
+    render(<ScholarChatView snapshot={snapshot({ messages: [{
+      id: 5, conversation_id: 1, role: 'assistant',
+      content: [
+        '| Method | Objective |',
+        '| --- | --- |',
+        '| DPO | $\\log \\sigma(x)$ |',
+        '',
+        '$$',
+        'J(\\theta) = \\mathbb{E}[r]',
+        '$$',
+      ].join('\n'),
+      context: null, citations: [], pending_action: null,
+      created_at: '2026-08-23T20:00:00Z',
+    }] })} actions={actions()} />)
+
+    expect(screen.getByRole('columnheader', { name: 'Method' })).toBeInTheDocument()
+    expect(screen.getByRole('cell', { name: 'DPO' })).toBeInTheDocument()
+    await vi.waitFor(() => expect(typesetPromise).toHaveBeenCalledTimes(2))
+    expect(typesetPromise.mock.calls.every(([elements]) => elements.length === 1)).toBe(true)
   })
 
   it('submits composer text and disables it while streaming', async () => {

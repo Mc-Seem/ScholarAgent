@@ -40,8 +40,42 @@ function safeHref(href: string): string | undefined {
   return /^(https?:\/\/|#)/i.test(href.trim()) ? href.trim() : undefined
 }
 
+function ChatMath({ source, display = false }: { source: string; display?: boolean }): React.ReactNode {
+  const containerRef = React.useRef<HTMLSpanElement>(null)
+
+  React.useLayoutEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+    container.textContent = source
+    return () => window.MathJax?.typesetClear?.([container])
+  }, [source])
+
+  React.useEffect(() => {
+    let cancelled = false
+    const typeset = async () => {
+      const container = containerRef.current
+      if (!container || !window.MathJax?.typesetPromise) return
+      try {
+        if (window.MathJax.startup?.promise) await window.MathJax.startup.promise
+        if (!cancelled && containerRef.current) await window.MathJax.typesetPromise([container])
+      } catch {
+        // Keep the LaTeX source visible if MathJax cannot typeset this expression.
+      }
+    }
+    const handleReady = () => void typeset()
+    void typeset()
+    window.addEventListener('MathJaxReady', handleReady)
+    return () => {
+      cancelled = true
+      window.removeEventListener('MathJaxReady', handleReady)
+    }
+  }, [source])
+
+  return <span ref={containerRef} className={display ? 'scholar-chat-math-display' : 'scholar-chat-math'} />
+}
+
 function inlineMarkdown(text: string): React.ReactNode[] {
-  const pattern = /(\*\*[^*\n]+\*\*|`[^`\n]+`|\[[^\]\n]+\]\([^\s)]+\))/g
+  const pattern = /(\*\*[^*\n]+\*\*|`[^`\n]+`|\[[^\]\n]+\]\([^\s)]+\)|\$\$[^$\n]+\$\$|\$[^$\n]+\$|\\\([^\n]+?\\\))/g
   const nodes: React.ReactNode[] = []
   let start = 0
   for (const match of text.matchAll(pattern)) {
@@ -49,9 +83,11 @@ function inlineMarkdown(text: string): React.ReactNode[] {
     if (index > start) nodes.push(text.slice(start, index))
     const token = match[0]
     if (token.startsWith('**')) {
-      nodes.push(<strong key={index}>{token.slice(2, -2)}</strong>)
+      nodes.push(<strong key={index}>{inlineMarkdown(token.slice(2, -2))}</strong>)
     } else if (token.startsWith('`')) {
       nodes.push(<code key={index}>{token.slice(1, -1)}</code>)
+    } else if (token.startsWith('$') || token.startsWith('\\(')) {
+      nodes.push(<ChatMath key={index} source={token} display={token.startsWith('$$')} />)
     } else {
       const parts = token.match(/^\[([^\]]+)\]\(([^)]+)\)$/)
       const href = parts ? safeHref(parts[2]) : undefined
@@ -63,6 +99,31 @@ function inlineMarkdown(text: string): React.ReactNode[] {
   }
   if (start < text.length) nodes.push(text.slice(start))
   return nodes
+}
+
+function tableCells(line: string): string[] | null {
+  const trimmed = line.trim()
+  if (!trimmed.includes('|')) return null
+  const row = trimmed.replace(/^\|/, '').replace(/\|$/, '')
+  const cells: string[] = []
+  let cell = ''
+  for (let index = 0; index < row.length; index += 1) {
+    if (row[index] === '\\' && row[index + 1] === '|') {
+      cell += '|'
+      index += 1
+    } else if (row[index] === '|') {
+      cells.push(cell.trim())
+      cell = ''
+    } else {
+      cell += row[index]
+    }
+  }
+  cells.push(cell.trim())
+  return cells
+}
+
+function isTableDivider(cells: string[] | null): boolean {
+  return Boolean(cells?.length && cells.every(cell => /^:?-{3,}:?$/.test(cell)))
 }
 
 export function SafeChatMarkdown({ content }: { content: string }): React.ReactNode {
@@ -87,7 +148,8 @@ export function SafeChatMarkdown({ content }: { content: string }): React.ReactN
     }
   }
 
-  for (const line of lines) {
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex]
     if (line.trim().startsWith('```')) {
       if (code) {
         blocks.push(<pre key={`pre-${blocks.length}`}><code>{code.join('\n')}</code></pre>)
@@ -102,6 +164,58 @@ export function SafeChatMarkdown({ content }: { content: string }): React.ReactN
     if (code) {
       code.push(line)
       continue
+    }
+    const headerCells = tableCells(line)
+    const dividerCells = tableCells(lines[lineIndex + 1] ?? '')
+    if (headerCells && isTableDivider(dividerCells) && headerCells.length === dividerCells?.length) {
+      flushParagraph()
+      flushList()
+      const rows: string[][] = []
+      lineIndex += 2
+      while (lineIndex < lines.length) {
+        const cells = tableCells(lines[lineIndex])
+        if (!cells || cells.length !== headerCells.length) break
+        rows.push(cells)
+        lineIndex += 1
+      }
+      lineIndex -= 1
+      blocks.push(
+        <div className="scholar-chat-table-scroll" key={`table-${blocks.length}`}>
+          <table>
+            <thead><tr>{headerCells.map((cell, index) =>
+              <th key={index}>{inlineMarkdown(cell)}</th>)}</tr></thead>
+            <tbody>{rows.map((row, rowIndex) =>
+              <tr key={rowIndex}>{row.map((cell, cellIndex) =>
+                <td key={cellIndex}>{inlineMarkdown(cell)}</td>)}</tr>)}</tbody>
+          </table>
+        </div>,
+      )
+      continue
+    }
+    const displayMath = line.trim().match(/^\$\$(.+)\$\$$|^\\\[(.+)\\\]$/)
+    if (displayMath) {
+      flushParagraph()
+      flushList()
+      blocks.push(<ChatMath
+        key={`math-${blocks.length}`}
+        source={line.trim()}
+        display
+      />)
+      continue
+    }
+    const mathDelimiter = line.trim() === '$$' ? '$$' : line.trim() === '\\[' ? '\\]' : null
+    if (mathDelimiter) {
+      const closingIndex = lines.findIndex((candidate, index) =>
+        index > lineIndex && candidate.trim() === mathDelimiter)
+      if (closingIndex > lineIndex) {
+        flushParagraph()
+        flushList()
+        const closingDelimiter = mathDelimiter === '$$' ? '$$' : '\\]'
+        const source = `${line.trim()}\n${lines.slice(lineIndex + 1, closingIndex).join('\n')}\n${closingDelimiter}`
+        blocks.push(<ChatMath key={`math-${blocks.length}`} source={source} display />)
+        lineIndex = closingIndex
+        continue
+      }
     }
     const heading = line.match(/^(#{1,3})\s+(.+)$/)
     if (heading) {

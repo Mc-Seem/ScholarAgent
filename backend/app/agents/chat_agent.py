@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any, Literal, Mapping, Sequence, TypedDict
+from typing import Any, Literal, Mapping, Sequence, TypeVar, TypedDict
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, StateGraph
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from backend.app.agents.chat_retrieval import (
     ChatRetrievalResult,
@@ -29,6 +29,7 @@ INSUFFICIENT_EVIDENCE_REPLY = (
     "I don't have enough evidence in this article to answer that question."
 )
 GENERAL_KNOWLEDGE_NOTICE = "[General knowledge — not sourced from the article]"
+StructuredOutput = TypeVar("StructuredOutput", bound=BaseModel)
 
 ROUTER_SYSTEM_PROMPT = """You route questions about one academic paper.
 Return a concise retrieval query using terminology likely present in the paper while preserving
@@ -46,6 +47,8 @@ If neither article evidence nor reliable general knowledge supports an answer, s
 Every citation must use an evidence handle exactly as supplied. For quote citations, copy an exact
 substring from that evidence. A definition proposal is allowed only when explicitly requested and
 must reference exactly one supplied entity handle. Never perform article, knowledge-graph, or note changes.
+Format the answer as valid Markdown. Write mathematical expressions in LaTeX using `$...$` or `$$...$$`,
+never Unicode pseudo-formulas. Format tabular data as Markdown tables.
 Answer in the language of the user's question unless the user asks otherwise."""
 
 
@@ -123,6 +126,33 @@ class ChatAgentState(TypedDict, total=False):
     answer: AnswerOutput
     result: GroundedChatResult
     semantic_overrides: dict[str, str]
+
+
+def _invoke_structured(
+    model: Any,
+    schema: type[StructuredOutput],
+    messages: list[Any],
+) -> StructuredOutput:
+    validation_error: Exception | None = None
+    for attempt in range(2):
+        output = model.invoke(messages)
+        if output is not None:
+            if isinstance(output, schema):
+                return output
+            try:
+                return schema.model_validate(output)
+            except ValidationError as error:
+                validation_error = error
+        else:
+            validation_error = ValueError("model returned no structured output")
+        if attempt == 0:
+            messages = [
+                *messages,
+                HumanMessage(content="Return a valid response using the required structured output schema."),
+            ]
+    raise ValueError(
+        f"{schema.__name__} model returned invalid structured output after 2 attempts"
+    ) from validation_error
 
 
 def _history_snapshot(history: Sequence[Any]) -> list[dict[str, str]]:
@@ -256,12 +286,10 @@ def create_chat_workflow():
             "question": state["question"],
             "one_shot_context": _context_snapshot(state.get("context")),
         }
-        route = router_llm.invoke([
+        route = _invoke_structured(router_llm, RouterOutput, [
             SystemMessage(content=ROUTER_SYSTEM_PROMPT),
             HumanMessage(content=json.dumps(payload, ensure_ascii=False)),
         ])
-        if not isinstance(route, RouterOutput):
-            route = RouterOutput.model_validate(route)
         route = route.model_copy(update={
             "use_graph": route.intent == "definition" or (
                 route.use_graph and route.intent in {"entity", "relation"}
@@ -290,12 +318,10 @@ def create_chat_workflow():
             "graph_used": retrieval.used_graph,
             "UNTRUSTED_ARTICLE_EVIDENCE": _evidence_payload(retrieval.evidence),
         }
-        answer = answer_llm.invoke([
+        answer = _invoke_structured(answer_llm, AnswerOutput, [
             SystemMessage(content=ANSWER_SYSTEM_PROMPT),
             HumanMessage(content=json.dumps(payload, ensure_ascii=False)),
         ])
-        if not isinstance(answer, AnswerOutput):
-            answer = AnswerOutput.model_validate(answer)
         if answer.insufficient_evidence or not answer.answer.strip():
             result = GroundedChatResult(
                 content=INSUFFICIENT_EVIDENCE_REPLY,

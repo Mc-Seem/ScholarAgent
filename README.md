@@ -188,7 +188,7 @@ docker pull latexml/ar5ivist
 
 ```bash
 # Backend (from project root)
-uv run uvicorn backend.app.api.main:app --reload --port 8000
+uv run uvicorn backend.app.api.main:app --reload --port 8000 --reload-dir backend --reload-delay 1
 
 # Frontend (from project root, always with the pinned Node.js)
 mise exec -- npm --prefix frontend run dev

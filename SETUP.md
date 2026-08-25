@@ -193,7 +193,7 @@ npm run dev:backend
 
 Or manually:
 ```bash
-uv run uvicorn backend.app.api.main:app --reload --port 8000
+uv run uvicorn backend.app.api.main:app --reload --port 8000 --reload-dir backend --reload-delay 1
 ```
 
 #### Option 3: Frontend only (requires backend running separately)

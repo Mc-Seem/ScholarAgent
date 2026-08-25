@@ -47,6 +47,11 @@ class FakeStructuredModel:
 
     def invoke(self, messages):
         self.captured.append(messages)
+        if isinstance(self.output, list):
+            output = self.output.pop(0)
+            if isinstance(output, Exception):
+                raise output
+            return output
         if isinstance(self.output, Exception):
             raise self.output
         return self.output
@@ -64,6 +69,15 @@ def install_fake_models(monkeypatch, router_output, answer_output):
 
     monkeypatch.setattr(chat_agent, "get_structured_llm", structured)
     return captured
+
+
+def test_answer_system_prompt_requires_markdown_latex_and_markdown_tables():
+    prompt = chat_agent.ANSWER_SYSTEM_PROMPT
+
+    assert "valid Markdown" in prompt
+    assert "LaTeX using `$...$` or `$$...$$`" in prompt
+    assert "never Unicode pseudo-formulas" in prompt
+    assert "Markdown tables" in prompt
 
 
 def test_multilingual_router_query_drives_passage_retrieval(monkeypatch):
@@ -170,6 +184,31 @@ def test_related_question_can_use_explicitly_disclosed_general_knowledge(monkeyp
     assert "DPO learns from preference pairs" in result.content
     assert result.citations == []
     assert '"UNTRUSTED_ARTICLE_EVIDENCE": []' in str(captured["answer"][0])
+
+
+def test_empty_structured_answer_is_retried(monkeypatch):
+    captured = install_fake_models(
+        monkeypatch,
+        RouterOutput(intent="question", retrieval_query="DPO GRPO comparison", use_graph=False),
+        [
+            None,
+            AnswerOutput(
+                answer="DPO learns from preference pairs, while GRPO optimizes sampled groups.",
+                uses_general_knowledge=True,
+            ),
+        ],
+    )
+
+    result = run_chat_agent(
+        question="How do DPO and GRPO differ?",
+        html_content="",
+        sections_data=[],
+        knowledge_graph=None,
+        history=[],
+    )
+
+    assert result.content.startswith(chat_agent.GENERAL_KNOWLEDGE_NOTICE)
+    assert len(captured["answer"]) == 2
 
 
 def test_graph_gate_returns_verified_entity_citation(monkeypatch):
