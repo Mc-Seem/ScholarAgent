@@ -132,17 +132,23 @@ export class ScholarSuggestionsTreeWidget extends TreeWidget {
   protected refreshTree(): void {
     const expanded = new Map<string, boolean>()
     collectExpandedState(this.model.root, expanded)
-    const root: CompositeTreeNode = {
-      id: `${this.id}:root`,
-      name: this.title.label,
-      visible: false,
-      parent: undefined,
-      children: [],
-    }
+    const rootId = `${this.id}:root`
+    const currentRoot = this.model.root
+    const root: CompositeTreeNode = CompositeTreeNode.is(currentRoot) && currentRoot.id === rootId
+      ? currentRoot
+      : {
+          id: rootId,
+          name: this.title.label,
+          visible: false,
+          parent: undefined,
+          children: [],
+        }
     const paperId = this.store.getSnapshot().activePaperId
     if (paperId) {
       const state = this.suggestions.getPaperState(paperId)
       root.children = this.buildSourceNodes(paperId, state.suggestions, root, expanded)
+    } else {
+      root.children = []
     }
     this.model.root = root
   }

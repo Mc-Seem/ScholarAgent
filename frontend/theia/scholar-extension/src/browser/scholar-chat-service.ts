@@ -68,6 +68,7 @@ function conversationTitle(question: string): string {
 @injectable()
 export class ScholarChatService {
   private snapshot: ScholarChatSnapshot = initialSnapshot()
+  private retryContext: ChatContext | null = null
   private readonly listeners = new Set<Listener>()
   private readonly citationEmitter = new Emitter<ChatCitation>()
   private readonly unsubscribeWorkspace: () => void
@@ -110,6 +111,7 @@ export class ScholarChatService {
 
   async activatePaper(paperId: string | null): Promise<void> {
     this.cancelStream()
+    this.retryContext = null
     const version = ++this.loadVersion
     this.update({ ...initialSnapshot(paperId), loading: Boolean(paperId) })
     if (!paperId) return
@@ -227,13 +229,14 @@ export class ScholarChatService {
     this.update({ nextContext: null })
   }
 
-  async sendMessage(content: string): Promise<void> {
+  async sendMessage(content: string, contextOverride?: ChatContext | null): Promise<void> {
     const question = content.trim()
     if (!question || this.snapshot.streaming) return
     const paperId = this.requirePaper()
     let conversationId = this.snapshot.activeConversationId
     if (!conversationId) conversationId = (await this.createConversation(conversationTitle(question))).id
-    const context = this.snapshot.nextContext
+    const context = contextOverride === undefined ? this.snapshot.nextContext : contextOverride
+    this.retryContext = null
     const controller = new AbortController()
     this.streamController = controller
     const optimistic: ChatMessage = {
@@ -286,6 +289,7 @@ export class ScholarChatService {
           error: errorMessage(reason),
           retryContent: question,
         })
+        this.retryContext = context
       }
     } finally {
       if (this.streamController === controller) this.streamController = null
@@ -293,7 +297,9 @@ export class ScholarChatService {
   }
 
   retry(): Promise<void> {
-    return this.snapshot.retryContent ? this.sendMessage(this.snapshot.retryContent) : Promise.resolve()
+    return this.snapshot.retryContent
+      ? this.sendMessage(this.snapshot.retryContent, this.retryContext)
+      : Promise.resolve()
   }
 
   cancelStream(): void {

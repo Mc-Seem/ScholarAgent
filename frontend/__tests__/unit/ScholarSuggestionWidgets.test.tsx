@@ -128,6 +128,7 @@ function createWidget(
   activePaperId: string | null,
   state: ScholarSuggestionPaperState = paperState([]),
 ): FakeWidget {
+  let currentPaperId = activePaperId
   const suggestionSnapshot: ScholarSuggestionSnapshot = {
     activePaperId,
     papers: activePaperId ? { [activePaperId]: state } : {},
@@ -139,7 +140,10 @@ function createWidget(
     id: { value: 'scholar-agent:suggestions', configurable: true },
     title: { value: { label: 'Suggestions' }, configurable: true },
     store: {
-      value: { getSnapshot: () => workspaceSnapshot(activePaperId) },
+      value: {
+        getSnapshot: () => workspaceSnapshot(currentPaperId),
+        setActivePaperId: (paperId: string | null) => { currentPaperId = paperId },
+      },
       configurable: true,
     },
     suggestions: {
@@ -205,6 +209,33 @@ describe('ScholarSuggestionsTreeWidget hierarchy and search data', () => {
       .toBe('suggestion:manual-def')
     expect((ai.children[0] as ScholarSuggestionTreeNode).children[0].id)
       .toBe('suggestion:ai-def')
+  })
+
+  it('retains the tree root identity across suggestion refreshes', () => {
+    const widget = createWidget('paper-a', paperState([
+      suggestion('ai-def', true, 'definition'),
+    ]))
+
+    widget.refreshTree()
+    const root = widget.model.root
+    widget.refreshTree()
+
+    expect(widget.model.root).toBe(root)
+  })
+
+  it('clears reused tree children when the active paper closes', () => {
+    const widget = createWidget('paper-a', paperState([
+      suggestion('ai-def', true, 'definition'),
+    ]))
+    widget.refreshTree()
+    expect(rootChildren(widget)).toHaveLength(1)
+
+    ;(widget.store as typeof widget.store & {
+      setActivePaperId(paperId: string | null): void
+    }).setActivePaperId(null)
+    widget.refreshTree()
+
+    expect(rootChildren(widget)).toEqual([])
   })
 
   it('derives checked and indeterminate states for every hierarchy level', () => {

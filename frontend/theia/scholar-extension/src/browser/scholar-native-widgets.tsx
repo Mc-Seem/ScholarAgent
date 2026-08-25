@@ -74,13 +74,17 @@ abstract class ScholarTreeWidget extends TreeWidget {
   protected refreshTree(): void {
     const state = new Map<string, { expanded: boolean; selected: boolean }>()
     collectTreeState(this.model.root, state)
-    const root: CompositeTreeNode = {
-      id: `${this.id}:root`,
-      name: this.title.label,
-      visible: false,
-      parent: undefined,
-      children: [],
-    }
+    const rootId = `${this.id}:root`
+    const currentRoot = this.model.root
+    const root: CompositeTreeNode = CompositeTreeNode.is(currentRoot) && currentRoot.id === rootId
+      ? currentRoot
+      : {
+          id: rootId,
+          name: this.title.label,
+          visible: false,
+          parent: undefined,
+          children: [],
+        }
     root.children = this.getEntries().map(entry => toTreeNode(entry, root, state, 0))
     this.model.root = root
   }

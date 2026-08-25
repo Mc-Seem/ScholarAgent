@@ -137,6 +137,28 @@ describe('ScholarChatService', () => {
     expect(service.getSnapshot().activePaperId).toBe('paper-b')
   })
 
+  it('reuses one-shot context when retrying a failed stream', async () => {
+    const { api, service } = setup()
+    vi.mocked(api.streamMessage).mockRejectedValueOnce(new Error('Provider failed'))
+    const context = {
+      kind: 'entity' as const,
+      subject_id: 'topic:grpo',
+      data_id: 'p-grpo',
+      label: 'GRPO',
+    }
+
+    await service.initialize()
+    service.setNextContext(context)
+    await service.sendMessage('Make this definition more specific')
+    await service.retry()
+
+    expect(api.streamMessage).toHaveBeenNthCalledWith(
+      2, 'paper-a', 1,
+      { content: 'Make this definition more specific', context },
+      expect.any(Function), expect.any(AbortSignal),
+    )
+  })
+
   it('tracks the visible section and sends the section summary as one-shot context', async () => {
     const { api, service } = setup()
     await service.initialize()

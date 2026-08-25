@@ -25,10 +25,14 @@ interface CommentsWidgetConstructor {
 }
 
 interface NativeTreeWidget {
+  id: string
+  title: { label: string }
   store: {
     getSnapshot: () => unknown
   }
+  model: { root?: unknown }
   getEntries: () => Array<{ id: string }>
+  refreshTree: () => void
 }
 
 interface CaptionRenderer {
@@ -139,6 +143,22 @@ describe('Scholar native tree widgets', () => {
 
     expect(outline.getEntries().map(entry => entry.id)).toEqual(['section:ltxid2'])
     expect(comments.getEntries().map(entry => entry.id)).toEqual(['comment-group:ltxid2'])
+  })
+
+  it('retains the outline root identity across workspace refreshes', () => {
+    const widget = Object.create(ScholarOutlineWidget.prototype) as NativeTreeWidget
+    Object.defineProperties(widget, {
+      id: { value: 'scholar-agent:outline' },
+      title: { value: { label: 'Sections' } },
+      store: { value: { getSnapshot: () => ({ activePaperId: null }) } },
+      model: { value: { root: undefined } },
+    })
+
+    widget.refreshTree()
+    const root = widget.model.root
+    widget.refreshTree()
+
+    expect(widget.model.root).toBe(root)
   })
 })
 

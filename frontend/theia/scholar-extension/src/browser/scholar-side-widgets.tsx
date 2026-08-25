@@ -75,13 +75,16 @@ export class ScholarLibraryWidget extends TreeWidget {
       })
     }
 
-    const root: CompositeTreeNode = {
-      id: `${this.id}:root`,
-      name: this.title.label,
-      visible: false,
-      parent: undefined,
-      children: [],
-    }
+    const rootId = `${this.id}:root`
+    const root: CompositeTreeNode = CompositeTreeNode.is(previousRoot) && previousRoot.id === rootId
+      ? previousRoot
+      : {
+          id: rootId,
+          name: this.title.label,
+          visible: false,
+          parent: undefined,
+          children: [],
+        }
     const snapshot = this.store.getSnapshot()
     root.children = snapshot.papers.map(paper => this.toLibraryNode(paper, root, snapshot, previousSelection))
     this.model.root = root

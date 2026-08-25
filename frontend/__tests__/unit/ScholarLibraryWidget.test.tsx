@@ -99,6 +99,16 @@ function libraryRoot(widget: FakeWidget): { children: ScholarLibraryTreeNode[] }
 }
 
 describe('ScholarLibraryWidget tree building', () => {
+  it('retains the tree root identity across library refreshes', () => {
+    const widget = createWidget(emptySnapshot())
+
+    widget.refreshTree()
+    const root = widget.model.root
+    widget.refreshTree()
+
+    expect(widget.model.root).toBe(root)
+  })
+
   it('builds one stable node per paper with a label and description', () => {
     const snapshot = emptySnapshot()
     snapshot.papers = [

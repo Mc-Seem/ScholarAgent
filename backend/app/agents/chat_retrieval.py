@@ -227,6 +227,7 @@ def _graph_records(
         document.notation,
         key=lambda item: item.stable_id != requested_subject_id,
     )
+    reserved_entity_slots = 1 if requested_subject_id in entity_by_id else 0
     for notation in notation_items:
         observations = [
             observation_by_id[evidence_id]
@@ -248,7 +249,9 @@ def _graph_records(
             section_title=next((item.source.section_title for item in observations if item.source.section_title), None),
             subject_id=notation.stable_id,
         ))
-        if len(records) >= GRAPH_EVIDENCE_LIMIT:
+        if len(records) >= GRAPH_EVIDENCE_LIMIT - reserved_entity_slots:
+            if reserved_entity_slots:
+                break
             return records
     for entity_id in selected_ids[:GRAPH_EVIDENCE_LIMIT]:
         if len(records) >= GRAPH_EVIDENCE_LIMIT:
@@ -364,11 +367,21 @@ def retrieve_chat_evidence(
         )
 
     if graph_enabled and parsed_document is not None:
-        ordered.extend(_graph_records(
+        graph_records = _graph_records(
             parsed_document,
             set(selected_source_ids),
             str(requested_subject_id) if requested_subject_id else None,
-        ))
+        )
+        if requested_subject_id:
+            requested_handle = f"entity:{requested_subject_id}"
+            requested_records = [
+                record for record in graph_records if record.handle == requested_handle
+            ]
+            graph_records = [
+                record for record in graph_records if record.handle != requested_handle
+            ]
+            ordered = [*requested_records, *ordered]
+        ordered.extend(graph_records)
 
     return ChatRetrievalResult(
         evidence=_bounded(ordered),

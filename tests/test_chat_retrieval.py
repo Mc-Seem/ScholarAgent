@@ -95,6 +95,35 @@ def test_graph_evidence_supports_notation_subjects(fixture_document_data):
     assert any(item.subject_id == "notation:q" for item in result.evidence)
 
 
+def test_entity_context_survives_passage_evidence_budget(fixture_document_data):
+    document, corpus = fixture_document_data
+    observation_id = next(
+        item.id for item in document.observations if item.source.dom_node_id == "eq-elbo"
+    )
+    document = document.model_copy(update={
+        "notation": [NotationRecord(
+            stable_id=f"notation:distractor-{index}",
+            symbol=f"d_{index}",
+            meaning="distractor notation",
+            scope_id="sec-method",
+            evidence_ids=[observation_id],
+        ) for index in range(6)],
+    })
+    large_corpus = [
+        {**item, "text": f"ELBO {item['text']} " + ("evidence " * 500)}
+        for item in corpus
+    ]
+
+    result = retrieve_chat_evidence(
+        "Make this definition more specific",
+        large_corpus,
+        document=document,
+        context={"kind": "entity", "subject_id": "quantity:elbo"},
+    )
+
+    assert any(item.subject_id == "quantity:elbo" for item in result.evidence)
+
+
 def test_graph_request_falls_back_to_passages_without_active_document():
     corpus = [{
         "id": "p-1",
