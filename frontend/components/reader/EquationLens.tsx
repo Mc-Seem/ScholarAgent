@@ -12,6 +12,7 @@ interface EquationLensProps {
   details: EquationDetails
   /** Supplied by the term endpoint; direct equation reads carry the same data. */
   definedSubject?: DefinedSubjectDetails | null
+  definedSubjectTitleAction?: React.ReactNode
   onNavigate?: (domNodeId: string) => void
   /** Enables replacing the agent's wording for the equation and its symbols. */
   editor?: SemanticTextEditor
@@ -19,13 +20,25 @@ interface EquationLensProps {
 
 const renderMath = (text: string) => <LatexText text={wrapBareMath(text)} />
 
-export function EquationLens({ details, definedSubject, onNavigate, editor }: EquationLensProps) {
+export function EquationLens({
+  details,
+  definedSubject,
+  definedSubjectTitleAction,
+  onNavigate,
+  editor,
+}: EquationLensProps) {
   const { equation, notation, objects, evidence } = details
   const definition = definedSubject ?? details.defined_subject
   const relatedObjects = objects.filter(item => item.stable_id !== definition?.subject.stable_id)
   return (
     <div className="semantic-lens" data-testid="equation-lens">
-      {definition && <SemanticSubjectSummary details={definition} editor={editor} />}
+      {definition && (
+        <SemanticSubjectSummary
+          details={definition}
+          editor={editor}
+          titleAction={definedSubjectTitleAction}
+        />
+      )}
       <header className="semantic-lens-header">
         <EditableSemanticText
           as={definition ? 'h4' : 'h3'}

@@ -44,6 +44,25 @@ function equationSelection(equationId = 'eq-7'): ScholarGraphSelectionType {
   )
 }
 
+function entitySelection(): ScholarGraphSelectionType {
+  return ScholarGraphSelection.create(
+    'paper-a',
+    {
+      kind: SCHOLAR_GRAPH_SELECTION_KIND as ScholarGraphSelectionType['source']['kind'],
+      paperId: 'paper-a',
+      owner,
+    },
+    {
+      kind: 'occurrence',
+      occurrenceId: 'occ-1',
+      subjectId: 'artifact:kto',
+      label: 'KTO',
+      domNodeId: 'p-1',
+      scopeId: 'sec-1',
+    },
+  )
+}
+
 function equationDetails(summary: string) {
   return {
     schema_version: '3.0',
@@ -71,6 +90,28 @@ function equationDetails(summary: string) {
   }
 }
 
+function subjectDetails() {
+  return {
+    schema_version: '3.0',
+    subject: {
+      stable_id: 'artifact:kto',
+      kind: 'artifact',
+      label: 'KTO',
+      aliases: [],
+      roles: [],
+      facets: [],
+      units: null,
+      constraints: [],
+      object_ids: [],
+    },
+    explanation: null,
+    occurrences: [],
+    evidence: [],
+    occurrence_total: 1,
+    defining_equation: null,
+  }
+}
+
 interface LensStore {
   loadEquationDetails: unknown
   loadSemanticSubject: unknown
@@ -88,6 +129,8 @@ function createLens(store: LensStore) {
   }
   const saveSemanticNote = vi.fn().mockResolvedValue({ id: 'tooltip-new' })
   const clearSemanticNote = vi.fn().mockResolvedValue(undefined)
+  const setNextContextForPaper = vi.fn()
+  const executeCommand = vi.fn().mockResolvedValue(undefined)
   const fullStore = {
     ...store,
     saveSemanticNote,
@@ -98,12 +141,21 @@ function createLens(store: LensStore) {
   const WidgetCtor = ScholarSemanticLensWidget as unknown as new (
     store: unknown,
     selectionService: unknown,
+    chat: unknown,
+    commandService: unknown,
   ) => ScholarSemanticLensWidgetClass
-  const widget = new WidgetCtor(fullStore, selectionService)
+  const widget = new WidgetCtor(
+    fullStore,
+    selectionService,
+    { setNextContextForPaper },
+    { executeCommand },
+  )
   return {
     widget,
     saveSemanticNote,
     clearSemanticNote,
+    setNextContextForPaper,
+    executeCommand,
     publish: (selection: unknown) => {
       selectionService.selection = selection
       listener?.(selection)
@@ -155,6 +207,38 @@ describe('ScholarSemanticLensWidget', () => {
     expect(store.loadEquationDetails).toHaveBeenCalledWith('paper-a', 'eq-7')
     expect(screen.getByTestId('equation-lens')).toBeInTheDocument()
     expect(screen.getByText('Defines the SUPG stabilization parameter.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /ask about this entity/i })).not.toBeInTheDocument()
+  })
+
+  it('attaches the selected entity and opens Chat from the lens', async () => {
+    const store = {
+      loadEquationDetails: vi.fn(),
+      loadSemanticSubject: vi.fn().mockResolvedValue(subjectDetails()),
+    }
+    const { widget, publish, setNextContextForPaper, executeCommand } = createLens(store)
+
+    await act(async () => {
+      publish(entitySelection())
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    renderLens(widget)
+
+    const askButton = screen.getByRole('button', { name: /ask about this entity/i })
+    expect(askButton).toHaveTextContent('')
+    expect(askButton.parentElement).toHaveClass('semantic-lens-title-row')
+    expect(askButton.parentElement).toContainElement(screen.getByRole('heading', { name: 'KTO' }))
+
+    await userEvent.click(askButton)
+
+    expect(setNextContextForPaper).toHaveBeenCalledWith('paper-a', {
+      kind: 'entity',
+      subject_id: 'artifact:kto',
+      data_id: 'p-1',
+      section_id: 'sec-1',
+      label: 'KTO',
+    })
+    expect(executeCommand).toHaveBeenCalledWith('scholar-agent.show-chat')
   })
 
   it('keeps the current lens when an unrelated selection arrives and clears it on an empty one', async () => {

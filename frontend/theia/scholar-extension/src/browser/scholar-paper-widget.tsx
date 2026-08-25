@@ -20,7 +20,7 @@ import {
   type ScholarAnnotationTarget,
 } from './scholar-annotation-service'
 import type { ScholarWorkspaceService } from './scholar-workspace-service'
-import type { ScholarChatService } from './scholar-chat-service'
+import { semanticChatContext, type ScholarChatService } from './scholar-chat-service'
 import {
   SCHOLAR_GRAPH_SELECTION_KIND,
   ScholarGraphSelection,
@@ -402,25 +402,6 @@ function ScholarPaperContent({
       </div>
     </div>
   )
-}
-
-function semanticChatContext(selection: SemanticSelection): ChatContext | null {
-  if (selection.kind === 'node') {
-    return {
-      kind: 'entity', subject_id: selection.id, data_id: selection.domNodeId,
-      label: selection.label,
-    }
-  }
-  if (selection.kind === 'occurrence') {
-    return {
-      kind: 'entity',
-      subject_id: selection.subjectId,
-      data_id: selection.domNodeId,
-      section_id: selection.scopeId,
-      label: selection.label,
-    }
-  }
-  return null
 }
 
 function errorMessage(error: unknown): string {

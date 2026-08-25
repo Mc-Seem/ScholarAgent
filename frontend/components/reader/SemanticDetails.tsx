@@ -1,6 +1,6 @@
 'use client'
 
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, MessageCircleQuestion } from 'lucide-react'
 import { wrapBareMath } from '../../lib/inline-math'
 import type {
   EquationDetails,
@@ -26,6 +26,7 @@ interface SemanticDetailsProps {
    */
   editor?: SemanticTextEditor
   onBack?: () => void
+  onAskAboutEntity?: () => void
   onNavigate?: (domNodeId: string) => void
 }
 
@@ -48,8 +49,21 @@ export function SemanticDetails({
   error,
   editor,
   onBack,
+  onAskAboutEntity,
   onNavigate,
 }: SemanticDetailsProps) {
+  const askAboutEntityButton = onAskAboutEntity ? (
+    <button
+      type="button"
+      className="semantic-lens-ask"
+      aria-label="Ask about this entity"
+      title="Ask about this entity"
+      onClick={onAskAboutEntity}
+    >
+      <MessageCircleQuestion size={16} aria-hidden="true" />
+    </button>
+  ) : undefined
+
   return (
     <div className="semantic-lens-panel" data-testid="semantic-details">
       {onBack && (
@@ -67,12 +81,17 @@ export function SemanticDetails({
           <EquationLens
             details={subjectDetails.defining_equation}
             definedSubject={subjectDetails}
+            definedSubjectTitleAction={askAboutEntityButton}
             onNavigate={onNavigate}
             editor={editor}
           />
         ) : (
           <div className="semantic-lens" data-testid="semantic-subject">
-            <SemanticSubjectSummary details={subjectDetails} editor={editor} />
+            <SemanticSubjectSummary
+              details={subjectDetails}
+              editor={editor}
+              titleAction={askAboutEntityButton}
+            />
             <EvidenceLocations
               evidence={subjectDetails.evidence}
               redundantQuote={subjectDetails.subject.label}

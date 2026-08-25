@@ -12,6 +12,7 @@ import {
   type ChatStreamEvent,
   type PendingChatAction,
 } from '../../../../lib/chat-api'
+import type { SemanticSelection } from '../../../../lib/semantic-api'
 import { ScholarWorkspaceService } from './scholar-workspace-service'
 import {
   SCHOLAR_GRAPH_SELECTION_KIND,
@@ -63,6 +64,25 @@ function errorMessage(reason: unknown): string {
 function conversationTitle(question: string): string {
   const title = question.replace(/\s+/g, ' ').trim()
   return title.length <= 60 ? title : `${title.slice(0, 59).trimEnd()}…`
+}
+
+export function semanticChatContext(selection: SemanticSelection): ChatContext | null {
+  if (selection.kind === 'node') {
+    return {
+      kind: 'entity', subject_id: selection.id, data_id: selection.domNodeId,
+      label: selection.label,
+    }
+  }
+  if (selection.kind === 'occurrence') {
+    return {
+      kind: 'entity',
+      subject_id: selection.subjectId,
+      data_id: selection.domNodeId,
+      section_id: selection.scopeId,
+      label: selection.label,
+    }
+  }
+  return null
 }
 
 @injectable()

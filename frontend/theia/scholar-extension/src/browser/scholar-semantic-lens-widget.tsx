@@ -1,11 +1,13 @@
 import * as React from 'react'
-import { Disposable, Emitter, Event, SelectionService } from '@theia/core'
+import { CommandService, Disposable, Emitter, Event, SelectionService } from '@theia/core'
 import { ReactWidget } from '@theia/core/lib/browser'
 import { inject, injectable } from '@theia/core/shared/inversify'
 
 import type { SemanticTextEditor } from '../../../../components/reader/EditableSemanticText'
 import { SemanticDetails } from '../../../../components/reader/SemanticDetails'
 import type { EquationDetails, SemanticSubjectDetails } from '../../../../lib/semantic-api'
+import { semanticChatContext, ScholarChatService } from './scholar-chat-service'
+import { ScholarCommands } from './scholar-commands'
 import { ScholarGraphSelection } from './scholar-graph-selection'
 import { navigateToPaperElement } from './scholar-react'
 import { ScholarWorkspaceService } from './scholar-workspace-service'
@@ -30,6 +32,8 @@ export class ScholarSemanticLensWidget extends ReactWidget {
   constructor(
     @inject(ScholarWorkspaceService) private readonly store: ScholarWorkspaceService,
     @inject(SelectionService) private readonly selectionService: SelectionService,
+    @inject(ScholarChatService) private readonly chat: ScholarChatService,
+    @inject(CommandService) private readonly commandService: CommandService,
   ) {
     super()
     this.id = SCHOLAR_SEMANTIC_LENS_WIDGET_ID
@@ -140,6 +144,15 @@ export class ScholarSemanticLensWidget extends ReactWidget {
     }
   }
 
+  private readonly askAboutEntity = (): void => {
+    const selection = this.selection
+    if (!selection) return
+    const context = semanticChatContext(selection.payload)
+    if (!context) return
+    this.chat.setNextContextForPaper(selection.paperId, context)
+    void this.commandService.executeCommand(ScholarCommands.SHOW_CHAT.id)
+  }
+
   protected override render(): React.ReactNode {
     const selection = this.selection
     if (!selection) {
@@ -157,6 +170,7 @@ export class ScholarSemanticLensWidget extends ReactWidget {
         loading={this.detailsLoading}
         error={this.detailsError}
         editor={this.semanticEditor(selection.paperId)}
+        onAskAboutEntity={semanticChatContext(selection.payload) ? this.askAboutEntity : undefined}
         onNavigate={dataId => navigateToPaperElement(selection.paperId, dataId)}
       />
     )

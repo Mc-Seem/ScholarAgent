@@ -9,19 +9,23 @@ import { LatexText } from './LatexText'
 interface SemanticSubjectSummaryProps {
   details: DefinedSubjectDetails
   editor?: SemanticTextEditor
+  titleAction?: React.ReactNode
 }
 
 const renderMath = (text: string) => <LatexText text={wrapBareMath(text)} />
 
 /** The shared definition header used from both sides of an equation link. */
-export function SemanticSubjectSummary({ details, editor }: SemanticSubjectSummaryProps) {
+export function SemanticSubjectSummary({ details, editor, titleAction }: SemanticSubjectSummaryProps) {
   const { subject, explanation } = details
   return (
     <>
       <header className="semantic-lens-header">
-        <h3 className="semantic-lens-title">
-          <LatexText text={wrapBareMath(subject.label)} />
-        </h3>
+        <div className="semantic-lens-title-row">
+          <h3 className="semantic-lens-title">
+            <LatexText text={wrapBareMath(subject.label)} />
+          </h3>
+          {titleAction}
+        </div>
         {(explanation || editor) && (
           <EditableSemanticText
             as="p"

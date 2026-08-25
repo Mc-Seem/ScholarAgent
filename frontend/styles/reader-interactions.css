@@ -52,7 +52,15 @@
   min-width: 0;
 }
 
+.semantic-lens-title-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  min-width: 0;
+}
+
 .semantic-lens-title {
+  min-width: 0;
   margin: 0;
   overflow-wrap: anywhere;
   font-size: 1rem;
@@ -103,6 +111,32 @@
   font-size: 0.8rem;
   background: transparent;
   border: none;
+}
+
+.semantic-lens-ask {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  margin: 0;
+  margin-left: auto;
+  padding: 0;
+  cursor: pointer;
+  color: var(--theia-foreground, #334155);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 0.25rem;
+}
+
+.semantic-lens-ask:hover {
+  background: var(--theia-toolbar-hoverBackground, rgba(90, 93, 94, 0.31));
+}
+
+.semantic-lens-ask:focus-visible {
+  outline: 1px solid var(--theia-focusBorder, #007fd4);
+  outline-offset: -1px;
 }
 
 .equation-lens-formula {
