@@ -21,6 +21,7 @@ from backend.app.api.main import app
 from backend.app.api import chat_routes
 from backend.app.agents.chat_agent import (
     DefinitionProposal,
+    EntityAdditionProposal,
     GroundedChatResult,
     GroundedCitation,
 )
@@ -95,7 +96,12 @@ def parse_sse(response) -> list[tuple[str, dict]]:
     return events
 
 
-def install_semantic_document(context: ChatApiContext):
+def install_semantic_document(
+    context: ChatApiContext,
+    *,
+    extra_html: str = "",
+    include_sections: bool = False,
+):
     fixture = json.loads(
         (Path(__file__).parent / "fixtures" / "knowledge_graph_baseline.json").read_text(
             encoding="utf-8",
@@ -111,13 +117,20 @@ def install_semantic_document(context: ChatApiContext):
             evidence_ids=[document.objects[0].observation_ids[0]],
         )],
     })
+    body = "".join(
+        f'<p data-id="{item["id"]}">{item["text"]}</p>'
+        for item in fixture["retrieval_corpus"]
+    ) + extra_html
     with context.session_factory() as db:
         paper = db.get(Paper, "paper-one")
         paper.knowledge_graph = document.model_dump(mode="json")
-        paper.html_content = "<article>" + "".join(
-            f'<p data-id="{item["id"]}">{item["text"]}</p>'
-            for item in fixture["retrieval_corpus"]
-        ) + "</article>"
+        paper.html_content = f"<article>{body}</article>"
+        if include_sections:
+            paper.sections_data = [{
+                "id": "sec-1",
+                "title": "Background",
+                "content_html": body,
+            }]
         db.commit()
     return document
 
@@ -151,6 +164,46 @@ def seed_action(
         return action.id
 
 
+def seed_entity_action(
+    context: ChatApiContext,
+    document,
+    *,
+    label: str = "DPO",
+    kind: str = "procedure",
+    version: str | None = None,
+    status: str = "pending",
+) -> int:
+    conversation_id = create_conversation(context)["id"]
+    with context.session_factory() as db:
+        message = ChatMessage(
+            conversation_id=conversation_id,
+            role="assistant",
+            content="Entity preview.",
+        )
+        db.add(message)
+        db.flush()
+        action = ChatAction(
+            source_message_id=message.id,
+            action_type="add_entity",
+            subject_id=None,
+            base_definition=None,
+            proposed_definition="A preference-based alignment procedure.",
+            payload={
+                "label": label,
+                "kind": kind,
+                "quote": "DPO aligns the policy with preference pairs.",
+                "dom_node_id": "p-dpo",
+                "section_id": "sec-1",
+                "section_title": "Background",
+            },
+            knowledge_graph_version=version or knowledge_document_version(document),
+            status=status,
+        )
+        db.add(action)
+        db.commit()
+        return action.id
+
+
 class TestChatModelsAndMigration:
     def test_schema_has_required_foreign_keys_cascades_and_indexes(self):
         conversation_fks = {fk.target_fullname: fk.ondelete for fk in ChatConversation.__table__.foreign_keys}
@@ -161,6 +214,9 @@ class TestChatModelsAndMigration:
         assert message_fks == {"chat_conversations.id": "CASCADE"}
         assert action_fks == {"chat_messages.id": "CASCADE"}
         assert "knowledge_graph_version" in ChatAction.__table__.columns
+        assert "action_type" in ChatAction.__table__.columns
+        assert "payload" in ChatAction.__table__.columns
+        assert ChatAction.__table__.columns["subject_id"].nullable is True
         assert {index.name for index in ChatConversation.__table__.indexes} >= {
             "idx_chat_conversation_paper_user",
         }
@@ -206,6 +262,29 @@ class TestChatModelsAndMigration:
         sql = output.getvalue()
         assert "ADD COLUMN knowledge_graph_version" in sql
         assert "DROP COLUMN knowledge_graph_version" in sql
+
+    def test_entity_action_migration_renders_columns_and_constraint(self):
+        migration = importlib.import_module(
+            "backend.alembic.versions.010_add_chat_action_entity_addition"
+        )
+        output = io.StringIO()
+        context = MigrationContext.configure(
+            url="postgresql://",
+            opts={"as_sql": True, "output_buffer": output},
+        )
+
+        with Operations.context(context):
+            migration.upgrade()
+            migration.downgrade()
+
+        sql = output.getvalue()
+        assert "ADD COLUMN action_type" in sql
+        assert "ADD COLUMN payload" in sql
+        assert "ck_chat_action_type" in sql
+        assert "subject_id DROP NOT NULL" in sql
+        assert "subject_id SET NOT NULL" in sql
+        assert "DROP COLUMN payload" in sql
+        assert "DROP COLUMN action_type" in sql
 
 
 class TestChatConversationApi:
@@ -576,12 +655,57 @@ class TestChatMessageStream:
             events = parse_sse(response)
 
         final = events[-1][1]
+        assert final["pending_action"]["action_type"] == "redefine"
         assert final["pending_action"]["subject_id"] == "quantity:elbo"
         assert final["pending_action"]["status"] == "pending"
         with chat_api.session_factory() as db:
             action = db.query(ChatAction).one()
             assert action.source_message_id == final["message"]["id"]
             assert action.knowledge_graph_version == knowledge_document_version(document)
+
+    def test_stream_persists_entity_addition_proposal(self, chat_api, monkeypatch):
+        document = install_semantic_document(chat_api)
+        conversation_id = create_conversation(chat_api)["id"]
+        monkeypatch.setattr(
+            chat_routes,
+            "run_chat_agent",
+            lambda **_kwargs: GroundedChatResult(
+                content="DPO is a preference alignment procedure.",
+                citations=[],
+                graph_available=True,
+                used_graph=True,
+                entity_proposal=EntityAdditionProposal(
+                    label="DPO",
+                    kind="procedure",
+                    definition="A preference-based alignment procedure.",
+                    quote="DPO aligns the policy with preference pairs.",
+                    dom_node_id="p-dpo",
+                    section_id="sec-1",
+                    section_title="Background",
+                    knowledge_graph_version=knowledge_document_version(document),
+                ),
+            ),
+        )
+
+        with chat_api.client.stream(
+            "POST",
+            f"/api/papers/paper-one/chat/conversations/{conversation_id}/messages",
+            json={"content": "What is DPO?"},
+        ) as response:
+            events = parse_sse(response)
+
+        final = events[-1][1]
+        assert final["pending_action"]["action_type"] == "add_entity"
+        assert final["pending_action"]["subject_id"] is None
+        assert final["pending_action"]["payload"]["label"] == "DPO"
+        assert final["pending_action"]["payload"]["kind"] == "procedure"
+        assert final["pending_action"]["status"] == "pending"
+        with chat_api.session_factory() as db:
+            action = db.query(ChatAction).one()
+            assert action.action_type == "add_entity"
+            assert action.subject_id is None
+            assert action.payload["dom_node_id"] == "p-dpo"
+            assert action.proposed_definition == "A preference-based alignment procedure."
 
 
 class TestChatDefinitionActions:
@@ -685,3 +809,115 @@ class TestChatDefinitionActions:
 
         assert confirm_rejected.status_code == 409
         assert reject_confirmed.status_code == 409
+
+
+DPO_PARAGRAPH = '<p data-id="p-dpo">DPO aligns the policy with preference pairs.</p>'
+
+
+class TestChatEntityAdditionActions:
+    def test_confirm_adds_entity_reanchors_and_injects_occurrences(self, chat_api):
+        document = install_semantic_document(
+            chat_api,
+            extra_html=DPO_PARAGRAPH,
+            include_sections=True,
+        )
+        action_id = seed_entity_action(chat_api, document)
+
+        confirmed = chat_api.client.post(
+            f"/api/papers/paper-one/chat/actions/{action_id}/confirm",
+        )
+
+        assert confirmed.status_code == 200
+        payload = confirmed.json()
+        assert payload["action"]["status"] == "confirmed"
+        assert payload["action"]["action_type"] == "add_entity"
+        subject_id = payload["action"]["subject_id"]
+        assert subject_id and subject_id.startswith("procedure:")
+        assert payload["tooltip"] is None
+        assert payload["subject"]["subject"]["label"] == "DPO"
+
+        with chat_api.session_factory() as db:
+            paper = db.get(Paper, "paper-one")
+            labels = [item["label"] for item in paper.knowledge_graph["objects"]]
+            assert "DPO" in labels
+            assert any(
+                item["subject_id"] == subject_id
+                and item["base_content"] == "A preference-based alignment procedure."
+                for item in paper.knowledge_graph["explanations"]
+            )
+            assert f'data-entity-id="{subject_id}"' in paper.html_content
+            assert "kg-entity" in paper.html_content
+
+        repeated = chat_api.client.post(
+            f"/api/papers/paper-one/chat/actions/{action_id}/confirm",
+        )
+        assert repeated.status_code == 200
+        assert repeated.json()["action"]["subject_id"] == subject_id
+
+    def test_confirm_entity_marks_action_stale_when_graph_version_changed(self, chat_api):
+        document = install_semantic_document(
+            chat_api,
+            extra_html=DPO_PARAGRAPH,
+            include_sections=True,
+        )
+        action_id = seed_entity_action(chat_api, document, version="outdated-version")
+
+        response = chat_api.client.post(
+            f"/api/papers/paper-one/chat/actions/{action_id}/confirm",
+        )
+
+        assert response.status_code == 409
+        assert response.json()["detail"]["code"] == "stale_action"
+        with chat_api.session_factory() as db:
+            assert db.get(ChatAction, action_id).status == "stale"
+            paper = db.get(Paper, "paper-one")
+            assert "kg-entity" not in paper.html_content
+
+    def test_confirm_entity_marks_action_stale_when_label_already_known(self, chat_api):
+        document = install_semantic_document(
+            chat_api,
+            extra_html=DPO_PARAGRAPH,
+            include_sections=True,
+        )
+        # "ELBO" is already an alias of the fixture's evidence-lower-bound entity.
+        action_id = seed_entity_action(chat_api, document, label="ELBO", kind="quantity")
+
+        response = chat_api.client.post(
+            f"/api/papers/paper-one/chat/actions/{action_id}/confirm",
+        )
+
+        assert response.status_code == 409
+        assert response.json()["detail"]["code"] == "stale_action"
+        with chat_api.session_factory() as db:
+            assert db.get(ChatAction, action_id).status == "stale"
+
+    def test_confirm_entity_requires_compiled_sections_and_keeps_action_pending(self, chat_api):
+        document = install_semantic_document(chat_api, extra_html=DPO_PARAGRAPH)
+        action_id = seed_entity_action(chat_api, document)
+
+        response = chat_api.client.post(
+            f"/api/papers/paper-one/chat/actions/{action_id}/confirm",
+        )
+
+        assert response.status_code == 409
+        assert "compiled sections" in response.json()["detail"]
+        with chat_api.session_factory() as db:
+            assert db.get(ChatAction, action_id).status == "pending"
+
+    def test_reject_entity_action_is_idempotent(self, chat_api):
+        document = install_semantic_document(chat_api, extra_html=DPO_PARAGRAPH)
+        action_id = seed_entity_action(chat_api, document)
+
+        first = chat_api.client.post(
+            f"/api/papers/paper-one/chat/actions/{action_id}/reject",
+        )
+        repeated = chat_api.client.post(
+            f"/api/papers/paper-one/chat/actions/{action_id}/reject",
+        )
+
+        assert first.status_code == repeated.status_code == 200
+        assert first.json()["status"] == repeated.json()["status"] == "rejected"
+        with chat_api.session_factory() as db:
+            paper = db.get(Paper, "paper-one")
+            labels = [item["label"] for item in paper.knowledge_graph["objects"]]
+            assert "DPO" not in labels

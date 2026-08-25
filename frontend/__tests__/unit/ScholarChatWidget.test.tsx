@@ -90,8 +90,9 @@ describe('ScholarChatView', () => {
       content: '**Result**\n<script>alert(1)</script>', context: null,
       citations: [{ kind: 'quote', label: 'Evidence', source_id: 'p-1', quote: 'exact phrase' }],
       pending_action: {
-        id: 8, source_message_id: 4, subject_id: 'object:x', base_definition: 'Old',
-        proposed_definition: 'New', knowledge_graph_version: 'v1', status: 'pending',
+        id: 8, source_message_id: 4, action_type: 'redefine', subject_id: 'object:x',
+        base_definition: 'Old', proposed_definition: 'New', payload: null,
+        knowledge_graph_version: 'v1', status: 'pending',
         created_at: '2026-08-23T20:00:00Z', updated_at: '2026-08-23T20:00:00Z',
       }, created_at: '2026-08-23T20:00:00Z',
     }] })} actions={handlers} />)
@@ -103,6 +104,42 @@ describe('ScholarChatView', () => {
     expect(handlers.confirmAction).toHaveBeenCalledWith(8)
     await user.click(screen.getByRole('button', { name: 'Reject definition' }))
     expect(handlers.rejectAction).toHaveBeenCalledWith(8)
+  })
+
+  it('renders pending entity proposals with confirm and reject wiring', async () => {
+    const user = userEvent.setup()
+    const handlers = actions()
+    const pendingAction = {
+      id: 11, source_message_id: 9, action_type: 'add_entity' as const, subject_id: null,
+      base_definition: null, proposed_definition: 'DPO aligns a policy without a reward model.',
+      payload: {
+        label: 'DPO', kind: 'procedure', quote: 'DPO',
+        dom_node_id: 'p-1', section_id: null, section_title: null,
+      },
+      knowledge_graph_version: 'v1', status: 'pending' as const,
+      created_at: '2026-08-23T20:00:00Z', updated_at: '2026-08-23T20:00:00Z',
+    }
+    const { rerender } = render(<ScholarChatView snapshot={snapshot({ messages: [{
+      id: 9, conversation_id: 1, role: 'assistant', content: 'Proposal', context: null,
+      citations: [], pending_action: pendingAction, created_at: '2026-08-23T20:00:00Z',
+    }] })} actions={handlers} />)
+
+    expect(screen.getByText('Entity proposal')).toBeInTheDocument()
+    expect(screen.getByText('Add “DPO” as a procedure entity')).toBeInTheDocument()
+    expect(screen.getByText('DPO aligns a policy without a reward model.')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Confirm entity addition' }))
+    expect(handlers.confirmAction).toHaveBeenCalledWith(11)
+    await user.click(screen.getByRole('button', { name: 'Reject entity addition' }))
+    expect(handlers.rejectAction).toHaveBeenCalledWith(11)
+
+    rerender(<ScholarChatView snapshot={snapshot({ messages: [{
+      id: 9, conversation_id: 1, role: 'assistant', content: 'Proposal', context: null,
+      citations: [],
+      pending_action: { ...pendingAction, status: 'confirmed', subject_id: 'procedure:dpo' },
+      created_at: '2026-08-23T20:00:00Z',
+    }] })} actions={handlers} />)
+    expect(screen.queryByRole('button', { name: 'Confirm entity addition' })).toBeNull()
+    expect(screen.getByText('confirmed')).toHaveClass('scholar-chat-action-status')
   })
 
   it('renders markdown tables and typesets inline and display LaTeX', async () => {

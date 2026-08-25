@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.responses import StreamingResponse
@@ -17,8 +17,18 @@ from backend.app.agents.chat_agent import run_chat_agent
 from backend.app.agents.chat_retrieval import (
     active_knowledge_document,
     knowledge_document_version,
+    known_surface_forms,
 )
+from backend.app.agents.knowledge_graph_canonical import (
+    SEMANTIC_KINDS,
+    canonicalize_observations,
+    normalized_surface_form,
+    stable_identifier,
+)
+from backend.app.agents.knowledge_graph_models import SourceObservation, SourceReference
 from backend.app.api.semantic_routes import SubjectDetailResponse, subject_details
+from backend.app.compiler.ai_html_injection import inject_validated_occurrences
+from backend.app.compiler.html_injection import validate_html_integrity
 from backend.app.database.connection import get_db
 from backend.app.database.models import (
     ChatAction,
@@ -106,9 +116,11 @@ class PendingActionResponse(BaseModel):
 
     id: int
     source_message_id: int
-    subject_id: str
+    action_type: Literal["redefine", "add_entity"]
+    subject_id: str | None
     base_definition: str | None
     proposed_definition: str
+    payload: dict[str, Any] | None
     knowledge_graph_version: str | None
     status: Literal["pending", "confirmed", "rejected", "stale"]
     created_at: datetime
@@ -200,7 +212,7 @@ class SemanticNoteResponse(BaseModel):
 
 class ChatActionConfirmationResponse(BaseModel):
     action: PendingActionResponse
-    tooltip: SemanticNoteResponse
+    tooltip: SemanticNoteResponse | None = None
     subject: SubjectDetailResponse
 
 
@@ -283,12 +295,14 @@ def _confirmation_response(
     paper_id: str,
     action: ChatAction,
 ) -> ChatActionConfirmationResponse:
+    if not action.subject_id:
+        raise HTTPException(status_code=409, detail="Confirmed action has no semantic subject")
     tooltip = semantic_note(db, paper_id, action.subject_id)
-    if tooltip is None:
+    if action.action_type == "redefine" and tooltip is None:
         raise HTTPException(status_code=409, detail="Confirmed semantic note is unavailable")
     return ChatActionConfirmationResponse(
         action=PendingActionResponse.model_validate(action),
-        tooltip=SemanticNoteResponse.model_validate(tooltip),
+        tooltip=SemanticNoteResponse.model_validate(tooltip) if tooltip is not None else None,
         subject=subject_details(
             paper_id=paper_id,
             subject_id=action.subject_id,
@@ -296,6 +310,103 @@ def _confirmation_response(
             db=db,
         ),
     )
+
+
+def _stale_action(db: Session, action: ChatAction, message: str) -> HTTPException:
+    action.status = "stale"
+    action.updated_at = utcnow()
+    db.commit()
+    return HTTPException(
+        status_code=409,
+        detail={"code": "stale_action", "message": message},
+    )
+
+
+def _confirm_entity_addition(
+    db: Session,
+    paper: Paper,
+    action: ChatAction,
+) -> ChatActionConfirmationResponse:
+    """Append one confirmed observation and rebuild the graph deterministically.
+
+    Canonicalization, occurrence anchoring, and validation reuse the exact code
+    the extraction pipeline runs, so a chat confirmation can never persist a
+    document shape the rest of the reader does not understand.
+    """
+    document = active_knowledge_document(paper.knowledge_graph)
+    payload = action.payload if isinstance(action.payload, dict) else {}
+    label = str(payload.get("label") or "").strip()
+    kind = str(payload.get("kind") or "")
+    stale = (
+        document is None
+        or not label
+        or kind not in SEMANTIC_KINDS
+        or action.knowledge_graph_version != knowledge_document_version(document)
+        or normalized_surface_form(label) in known_surface_forms(document)
+    )
+    if stale:
+        raise _stale_action(db, action, "The knowledge graph changed since this proposal was created.")
+    if not paper.sections_data:
+        raise HTTPException(
+            status_code=409,
+            detail="Paper has no compiled sections. Recompile it before adding entities.",
+        )
+
+    try:
+        source = SourceReference(
+            paper_id=paper.id,
+            section_id=str(payload["section_id"]) if payload.get("section_id") else None,
+            section_title=str(payload["section_title"]) if payload.get("section_title") else None,
+            dom_node_id=str(payload["dom_node_id"]) if payload.get("dom_node_id") else None,
+            quote=str(payload.get("quote") or label),
+        )
+        observation = SourceObservation(
+            id=stable_identifier(
+                f"observation-{kind}",
+                label,
+                scope=f"{paper.id}|chat-action-{action.id}",
+            ),
+            kind=kind,
+            label=label,
+            payload={"summary": action.proposed_definition},
+            confidence=1.0,
+            source=source,
+        )
+    except ValueError:
+        raise _stale_action(db, action, "The entity proposal is no longer usable.")
+
+    refreshed = canonicalize_observations(
+        paper.id,
+        [*document.observations, observation],
+        models=document.build.models,
+        sections=paper.sections_data,
+    )
+    subject = next(
+        (item for item in refreshed.objects if observation.id in item.evidence_ids),
+        None,
+    )
+    if subject is None:
+        raise HTTPException(status_code=500, detail="The proposed entity could not be canonicalized")
+
+    if paper.html_content:
+        occurrences = [
+            item.model_dump(mode="json")
+            for item in refreshed.occurrences
+            if item.subject_id == subject.stable_id and item.dom_node_id
+        ]
+        injection = inject_validated_occurrences(paper.html_content, occurrences)
+        is_valid, validation_error = validate_html_integrity(paper.html_content, injection.html)
+        if not is_valid:
+            raise HTTPException(status_code=500, detail=f"HTML validation failed: {validation_error}")
+        paper.html_content = injection.html
+
+    paper.knowledge_graph = refreshed.model_dump(mode="json")
+    action.subject_id = subject.stable_id
+    action.status = "confirmed"
+    action.updated_at = utcnow()
+    db.commit()
+    db.refresh(action)
+    return _confirmation_response(db, paper.id, action)
 
 
 @router.get("/conversations", response_model=list[ChatConversationResponse])
@@ -404,6 +515,8 @@ async def confirm_action(
         return _confirmation_response(db, paper_id, action)
     if action.status != "pending":
         raise HTTPException(status_code=409, detail=f"Chat action is {action.status}")
+    if action.action_type == "add_entity":
+        return _confirm_entity_addition(db, paper, action)
 
     document = active_knowledge_document(paper.knowledge_graph)
     definition = semantic_definition(document, action.subject_id) if document is not None else None
@@ -414,13 +527,7 @@ async def confirm_action(
         or effective_definition(db, paper_id, definition) != action.base_definition
     )
     if stale:
-        action.status = "stale"
-        action.updated_at = utcnow()
-        db.commit()
-        raise HTTPException(
-            status_code=409,
-            detail={"code": "stale_action", "message": "The semantic definition changed."},
-        )
+        raise _stale_action(db, action, "The semantic definition changed.")
 
     tooltip = upsert_semantic_note_record(
         db,
@@ -520,10 +627,29 @@ async def stream_message(
             if result.definition_proposal is not None:
                 proposal = result.definition_proposal
                 assistant_message.action = ChatAction(
+                    action_type="redefine",
                     subject_id=proposal.subject_id,
                     base_definition=proposal.base_definition,
                     proposed_definition=proposal.proposed_definition,
                     knowledge_graph_version=proposal.knowledge_graph_version,
+                    status="pending",
+                )
+            elif result.entity_proposal is not None:
+                entity_proposal = result.entity_proposal
+                assistant_message.action = ChatAction(
+                    action_type="add_entity",
+                    subject_id=None,
+                    base_definition=None,
+                    proposed_definition=entity_proposal.definition,
+                    payload={
+                        "label": entity_proposal.label,
+                        "kind": entity_proposal.kind,
+                        "quote": entity_proposal.quote,
+                        "dom_node_id": entity_proposal.dom_node_id,
+                        "section_id": entity_proposal.section_id,
+                        "section_title": entity_proposal.section_title,
+                    },
+                    knowledge_graph_version=entity_proposal.knowledge_graph_version,
                     status="pending",
                 )
             db.commit()

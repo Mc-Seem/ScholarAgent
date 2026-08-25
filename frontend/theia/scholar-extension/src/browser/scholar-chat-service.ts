@@ -56,7 +56,7 @@ function initialSnapshot(activePaperId: string | null = null): ScholarChatSnapsh
 
 function errorMessage(reason: unknown): string {
   if (reason instanceof ChatApiError && reason.code === 'stale_action') {
-    return 'This definition changed since the proposal was created. Ask for a new proposal.'
+    return 'This proposal is out of date. Ask for a new proposal.'
   }
   return reason instanceof Error && reason.message ? reason.message : 'Chat request failed.'
 }
@@ -350,7 +350,14 @@ export class ScholarChatService {
     try {
       const response = await this.api.confirmAction(paperId, actionId)
       this.replaceAction(response.action)
-      await this.workspace.refreshTooltips(paperId)
+      if (response.action.action_type === 'add_entity') {
+        await Promise.all([
+          this.workspace.refreshPaper(paperId),
+          this.workspace.refreshTooltips(paperId),
+        ])
+      } else {
+        await this.workspace.refreshTooltips(paperId)
+      }
       this.revealSubject(
         paperId,
         response.subject.subject.stable_id,

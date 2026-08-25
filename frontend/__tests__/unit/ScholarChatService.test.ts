@@ -34,6 +34,7 @@ function setup() {
       workspaceListener = listener
       return () => undefined
     }),
+    refreshPaper: vi.fn().mockResolvedValue({}),
     refreshTooltips: vi.fn().mockResolvedValue([]),
     setActiveEntity: vi.fn(),
     setSemanticSelection: vi.fn(),
@@ -215,8 +216,9 @@ describe('ScholarChatService', () => {
   it('confirms and rejects pending definition actions and refreshes semantic notes', async () => {
     const { api, service, workspace, selectionService } = setup()
     const pending = {
-      id: 8, source_message_id: 2, subject_id: 'object:x', base_definition: 'Old',
-      proposed_definition: 'New', knowledge_graph_version: 'v1', status: 'pending' as const,
+      id: 8, source_message_id: 2, action_type: 'redefine' as const, subject_id: 'object:x',
+      base_definition: 'Old', proposed_definition: 'New', payload: null,
+      knowledge_graph_version: 'v1', status: 'pending' as const,
       created_at: '2026-08-23T20:00:00Z', updated_at: '2026-08-23T20:00:00Z',
     }
     vi.mocked(api.listMessages).mockResolvedValue([{
@@ -240,6 +242,7 @@ describe('ScholarChatService', () => {
     await service.confirmAction(8)
     expect(service.getSnapshot().messages[0].pending_action?.status).toBe('confirmed')
     expect(workspace.refreshTooltips).toHaveBeenCalledWith('paper-a')
+    expect(workspace.refreshPaper).not.toHaveBeenCalled()
     expect(selectionService.selection).toEqual(expect.objectContaining({
       payload: expect.objectContaining({ kind: 'node', id: 'object:x' }),
     }))
@@ -249,5 +252,43 @@ describe('ScholarChatService', () => {
     await service.activatePaper('paper-a')
     await service.rejectAction(8)
     expect(service.getSnapshot().messages[0].pending_action?.status).toBe('rejected')
+  })
+
+  it('refreshes the paper HTML after confirming an entity addition', async () => {
+    const { api, service, workspace, selectionService } = setup()
+    const pending = {
+      id: 9, source_message_id: 2, action_type: 'add_entity' as const, subject_id: null,
+      base_definition: null, proposed_definition: 'DPO aligns a policy without a reward model.',
+      payload: {
+        label: 'DPO', kind: 'procedure', quote: 'DPO',
+        dom_node_id: 'p-1', section_id: null, section_title: null,
+      },
+      knowledge_graph_version: 'v1', status: 'pending' as const,
+      created_at: '2026-08-23T20:00:00Z', updated_at: '2026-08-23T20:00:00Z',
+    }
+    vi.mocked(api.listMessages).mockResolvedValue([{
+      ...message(2, 'assistant', 'Proposal'), pending_action: pending,
+    }])
+    vi.mocked(api.confirmAction).mockResolvedValue({
+      action: { ...pending, status: 'confirmed', subject_id: 'procedure:dpo' },
+      tooltip: null,
+      subject: {
+        schema_version: '1',
+        subject: {
+          stable_id: 'procedure:dpo', kind: 'procedure', label: 'DPO', aliases: [], roles: [],
+          facets: [], units: null, constraints: [], object_ids: [],
+        },
+        explanation: null, occurrences: [], evidence: [], occurrence_total: 0,
+        defining_equation: null,
+      },
+    })
+    await service.initialize()
+    await service.confirmAction(9)
+    expect(service.getSnapshot().messages[0].pending_action?.status).toBe('confirmed')
+    expect(workspace.refreshPaper).toHaveBeenCalledWith('paper-a')
+    expect(workspace.refreshTooltips).toHaveBeenCalledWith('paper-a')
+    expect(selectionService.selection).toEqual(expect.objectContaining({
+      payload: expect.objectContaining({ kind: 'node', id: 'procedure:dpo' }),
+    }))
   })
 })

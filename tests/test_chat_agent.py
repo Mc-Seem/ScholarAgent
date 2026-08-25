@@ -9,6 +9,7 @@ import pytest
 from backend.app.agents import chat_agent
 from backend.app.agents.chat_agent import (
     DefinitionProposalOutput,
+    EntityAdditionOutput,
     RouterOutput,
     run_chat_agent,
 )
@@ -66,8 +67,20 @@ class FakeTextModel(FakeModel):
         return SimpleNamespace(content=self._next_output(messages))
 
 
-def install_fake_models(monkeypatch, router_output, answer_output, definition_output=None):
-    captured = {"router": [], "answer": [], "definition": [], "structured_options": []}
+def install_fake_models(
+    monkeypatch,
+    router_output,
+    answer_output,
+    definition_output=None,
+    addition_output=None,
+):
+    captured = {
+        "router": [],
+        "answer": [],
+        "definition": [],
+        "addition": [],
+        "structured_options": [],
+    }
     monkeypatch.setattr(
         chat_agent,
         "get_llm",
@@ -78,8 +91,13 @@ def install_fake_models(monkeypatch, router_output, answer_output, definition_ou
         captured["structured_options"].append((schema, _kwargs))
         if schema is RouterOutput:
             return FakeStructuredModel(router_output, captured["router"])
-        assert schema is DefinitionProposalOutput
-        return FakeStructuredModel(definition_output, captured["definition"])
+        if schema is DefinitionProposalOutput:
+            return FakeStructuredModel(definition_output, captured["definition"])
+        assert schema is EntityAdditionOutput
+        return FakeStructuredModel(
+            addition_output if addition_output is not None else EntityAdditionOutput(),
+            captured["addition"],
+        )
 
     monkeypatch.setattr(chat_agent, "get_structured_llm", structured)
     return captured
@@ -138,6 +156,13 @@ def test_answer_system_prompt_describes_plain_text_markers_and_sentinels():
     assert chat_agent.GENERAL_KNOWLEDGE_SENTINEL in prompt
 
 
+def test_answer_system_prompt_forbids_refusing_entity_or_definition_requests():
+    prompt = chat_agent.ANSWER_SYSTEM_PROMPT
+
+    assert "never refuse such requests or tell the user they are impossible" in prompt
+    assert "confirmable proposal" in prompt
+
+
 def test_multilingual_router_query_drives_passage_retrieval(monkeypatch):
     def answer(messages):
         index = evidence_index(messages, kind="passage", text_contains="lower bound")
@@ -169,7 +194,9 @@ def test_multilingual_router_query_drives_passage_retrieval(monkeypatch):
     assert captured["structured_options"] == [
         (RouterOutput, {"include_raw": True}),
         (DefinitionProposalOutput, {"include_raw": True}),
+        (EntityAdditionOutput, {"include_raw": True}),
     ]
+    assert captured["addition"] == []
 
 
 def test_marker_validation_drops_unknown_indexes_and_falls_back_on_inexact_quotes(monkeypatch):
@@ -358,6 +385,8 @@ def test_definition_proposal_requires_one_verified_entity_subject(monkeypatch):
     assert result.definition_proposal.proposed_definition.startswith("The objective")
     assert len(captured["definition"]) == 1
     assert "UNTRUSTED_ENTITY_EVIDENCE" in str(captured["definition"][0])
+    assert result.entity_proposal is None
+    assert captured["addition"] == []
 
 
 def test_definition_model_is_not_invoked_for_non_definition_intent(monkeypatch):
@@ -449,6 +478,237 @@ def test_definition_model_failure_keeps_grounded_answer(monkeypatch):
     assert "grounded definition preview" in result.content
     assert result.definition_proposal is None
     assert len(captured["definition"]) == 2
+
+
+DPO_HTML = (
+    '<article><section data-id="sec-dom">'
+    '<p data-id="p-dpo">DPO aligns the policy with preference pairs.</p>'
+    "</section></article>"
+)
+
+
+def test_entity_addition_proposed_for_unknown_grounded_term(monkeypatch):
+    fixture, _ = load_graph_fixture()
+    document = build_fixture_document(fixture)
+
+    def answer(messages):
+        index = evidence_index(messages, kind="passage", text_contains="DPO aligns")
+        return (
+            "DPO is a preference alignment procedure. "
+            f'[quote:{index} "DPO aligns the policy with preference pairs."]'
+        )
+
+    def addition(messages):
+        payload = json.loads(messages[-1].content)
+        assert "ELBO" in payload["known_entity_labels"]
+        entry = next(
+            item for item in payload["UNTRUSTED_PASSAGE_EVIDENCE"]
+            if "DPO aligns" in item["text"]
+        )
+        return EntityAdditionOutput(
+            label="DPO",
+            kind="procedure",
+            definition="A preference-based alignment procedure.",
+            evidence_index=entry["index"],
+        )
+
+    captured = install_fake_models(
+        monkeypatch,
+        RouterOutput(intent="entity", retrieval_query="DPO", use_graph=True),
+        answer,
+        addition_output=addition,
+    )
+
+    result = run_chat_agent(
+        question="What is DPO?",
+        html_content=DPO_HTML,
+        sections_data=[],
+        knowledge_graph=document,
+        history=[],
+    )
+
+    proposal = result.entity_proposal
+    assert proposal is not None
+    assert proposal.label == "DPO"
+    assert proposal.kind == "procedure"
+    assert proposal.definition == "A preference-based alignment procedure."
+    assert proposal.dom_node_id == "p-dpo"
+    assert "DPO aligns the policy" in proposal.quote
+    assert proposal.knowledge_graph_version
+    assert result.definition_proposal is None
+    assert len(captured["addition"]) == 1
+
+
+def test_entity_addition_offered_for_plain_question_with_general_knowledge(monkeypatch):
+    fixture, _ = load_graph_fixture()
+    document = build_fixture_document(fixture)
+
+    def answer(messages):
+        index = evidence_index(messages, kind="passage", text_contains="DPO aligns")
+        return (
+            "GENERAL_KNOWLEDGE\n"
+            "DPO stands for Direct Preference Optimization. "
+            f"In the article it aligns the policy with preference pairs. [{index}]"
+        )
+
+    def addition(messages):
+        payload = json.loads(messages[-1].content)
+        entry = next(
+            item for item in payload["UNTRUSTED_PASSAGE_EVIDENCE"]
+            if "DPO aligns" in item["text"]
+        )
+        return EntityAdditionOutput(
+            label="DPO",
+            kind="procedure",
+            definition="A preference-based alignment procedure.",
+            evidence_index=entry["index"],
+        )
+
+    captured = install_fake_models(
+        monkeypatch,
+        RouterOutput(intent="question", retrieval_query="DPO", use_graph=False),
+        answer,
+        addition_output=addition,
+    )
+
+    result = run_chat_agent(
+        question="So what's DPO? Can we add it as a definition?",
+        html_content=DPO_HTML,
+        sections_data=[],
+        knowledge_graph=document,
+        history=[],
+    )
+
+    assert result.content.startswith("[General knowledge")
+    proposal = result.entity_proposal
+    assert proposal is not None
+    assert proposal.label == "DPO"
+    assert proposal.dom_node_id == "p-dpo"
+    assert len(captured["addition"]) == 1
+
+
+def test_entity_addition_dropped_for_already_known_label(monkeypatch):
+    fixture, html = load_graph_fixture()
+    document = build_fixture_document(fixture)
+
+    def answer(messages):
+        index = evidence_index(messages, kind="passage", text_contains="abbreviated ELBO")
+        return f"The ELBO is already described. [{index}]"
+
+    def addition(messages):
+        payload = json.loads(messages[-1].content)
+        entry = next(
+            item for item in payload["UNTRUSTED_PASSAGE_EVIDENCE"]
+            if "abbreviated ELBO" in item["text"]
+        )
+        return EntityAdditionOutput(
+            label="ELBO",
+            kind="quantity",
+            definition="A lower bound on the log evidence.",
+            evidence_index=entry["index"],
+        )
+
+    install_fake_models(
+        monkeypatch,
+        RouterOutput(intent="entity", retrieval_query="ELBO", use_graph=False),
+        answer,
+        addition_output=addition,
+    )
+
+    result = run_chat_agent(
+        question="What is ELBO?",
+        html_content=html,
+        sections_data=[],
+        knowledge_graph=document,
+        history=[],
+    )
+
+    assert result.entity_proposal is None
+
+
+def test_entity_addition_dropped_when_term_not_in_cited_passage(monkeypatch):
+    fixture, _ = load_graph_fixture()
+    document = build_fixture_document(fixture)
+
+    def answer(messages):
+        index = evidence_index(messages, kind="passage", text_contains="DPO aligns")
+        return f"An answer about a different method. [{index}]"
+
+    install_fake_models(
+        monkeypatch,
+        RouterOutput(intent="entity", retrieval_query="DPO", use_graph=False),
+        answer,
+        addition_output=EntityAdditionOutput(
+            label="TRPO",
+            kind="procedure",
+            definition="A trust-region method the article never names.",
+            evidence_index=1,
+        ),
+    )
+
+    result = run_chat_agent(
+        question="What is TRPO?",
+        html_content=DPO_HTML,
+        sections_data=[],
+        knowledge_graph=document,
+        history=[],
+    )
+
+    assert result.entity_proposal is None
+
+
+def test_entity_addition_model_failure_keeps_grounded_answer(monkeypatch):
+    fixture, _ = load_graph_fixture()
+    document = build_fixture_document(fixture)
+
+    def answer(messages):
+        index = evidence_index(messages, kind="passage", text_contains="DPO aligns")
+        return f"DPO is a preference alignment procedure. [{index}]"
+
+    captured = install_fake_models(
+        monkeypatch,
+        RouterOutput(intent="entity", retrieval_query="DPO", use_graph=False),
+        answer,
+        addition_output=[
+            RuntimeError("addition provider failure"),
+            RuntimeError("addition provider failure"),
+        ],
+    )
+
+    result = run_chat_agent(
+        question="What is DPO?",
+        html_content=DPO_HTML,
+        sections_data=[],
+        knowledge_graph=document,
+        history=[],
+    )
+
+    assert "preference alignment procedure" in result.content
+    assert result.entity_proposal is None
+    assert len(captured["addition"]) == 2
+
+
+def test_entity_addition_requires_active_knowledge_document(monkeypatch):
+    def answer(messages):
+        index = evidence_index(messages, kind="passage", text_contains="DPO aligns")
+        return f"DPO is a preference alignment procedure. [{index}]"
+
+    captured = install_fake_models(
+        monkeypatch,
+        RouterOutput(intent="entity", retrieval_query="DPO", use_graph=True),
+        answer,
+    )
+
+    result = run_chat_agent(
+        question="What is DPO?",
+        html_content=DPO_HTML,
+        sections_data=[],
+        knowledge_graph=None,
+        history=[],
+    )
+
+    assert result.entity_proposal is None
+    assert captured["addition"] == []
 
 
 def test_insufficient_evidence_sentinel_yields_explicit_reply(monkeypatch):

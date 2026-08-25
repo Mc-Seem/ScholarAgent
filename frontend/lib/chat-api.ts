@@ -22,12 +22,16 @@ export type ChatCitation = {
 
 export type ChatActionStatus = 'pending' | 'confirmed' | 'rejected' | 'stale'
 
+export type ChatActionType = 'redefine' | 'add_entity'
+
 export interface PendingChatAction {
   id: number
   source_message_id: number
-  subject_id: string
+  action_type: ChatActionType
+  subject_id: string | null
   base_definition: string | null
   proposed_definition: string
+  payload: Record<string, unknown> | null
   knowledge_graph_version: string | null
   status: ChatActionStatus
   created_at: string
@@ -75,7 +79,7 @@ export type ChatStreamEvent = ChatStatusEvent | ChatFinalEvent | ChatErrorEvent
 
 export interface ChatActionConfirmation {
   action: PendingChatAction
-  tooltip: Tooltip
+  tooltip: Tooltip | null
   subject: SemanticSubjectDetails
 }
 
@@ -186,12 +190,25 @@ function parseAction(value: unknown): PendingChatAction {
   if (status !== 'pending' && status !== 'confirmed' && status !== 'rejected' && status !== 'stale') {
     throw new Error('Invalid pending chat action')
   }
+  const actionType = item.action_type === undefined ? 'redefine' : item.action_type
+  if (actionType !== 'redefine' && actionType !== 'add_entity') {
+    throw new Error('Invalid pending chat action')
+  }
+  const payload = item.payload === null || item.payload === undefined
+    ? null
+    : record(item.payload, 'action payload')
+  if (actionType === 'add_entity' && status === 'pending'
+    && (!payload || typeof payload.label !== 'string' || payload.label.length === 0)) {
+    throw new Error('Invalid action payload')
+  }
   return {
     id: integer(item.id, 'action id'),
     source_message_id: integer(item.source_message_id, 'source message id'),
-    subject_id: string(item.subject_id, 'action subject id'),
+    action_type: actionType,
+    subject_id: nullableString(item.subject_id, 'action subject id'),
     base_definition: nullableString(item.base_definition, 'base definition'),
     proposed_definition: string(item.proposed_definition, 'proposed definition'),
+    payload,
     knowledge_graph_version: nullableString(item.knowledge_graph_version, 'knowledge graph version'),
     status,
     created_at: string(item.created_at, 'action created_at'),
@@ -315,6 +332,24 @@ export async function parseChatSse(
   }
 }
 
+function parseTooltip(value: unknown): Tooltip {
+  const tooltip = record(value, 'semantic tooltip')
+  return {
+    id: string(tooltip.id, 'tooltip id'),
+    paper_id: string(tooltip.paper_id, 'tooltip paper_id'),
+    dom_node_id: nullableString(tooltip.dom_node_id, 'tooltip dom_node_id'),
+    entity_id: nullableString(tooltip.entity_id, 'tooltip entity_id'),
+    user_id: string(tooltip.user_id, 'tooltip user_id'),
+    target_text: nullableString(tooltip.target_text, 'tooltip target_text'),
+    content: string(tooltip.content, 'tooltip content'),
+    is_user_override: tooltip.is_user_override === true,
+    is_pinned: tooltip.is_pinned === true,
+    display_order: tooltip.display_order === null ? null : integer(tooltip.display_order, 'tooltip display_order'),
+    created_at: string(tooltip.created_at, 'tooltip created_at'),
+    updated_at: string(tooltip.updated_at, 'tooltip updated_at'),
+  }
+}
+
 async function apiError(response: Response): Promise<ChatApiError> {
   let message = response.statusText || 'Chat request failed'
   let code: string | undefined
@@ -396,24 +431,10 @@ export class HttpChatApi implements ChatApi {
     const item = record(await this.json(this.path(paperId, `/actions/${actionId}/confirm`), {
       method: 'POST',
     }), 'chat action confirmation')
-    const tooltip = record(item.tooltip, 'semantic tooltip')
     const subject = record(item.subject, 'semantic subject details')
     return {
       action: parseAction(item.action),
-      tooltip: {
-        id: string(tooltip.id, 'tooltip id'),
-        paper_id: string(tooltip.paper_id, 'tooltip paper_id'),
-        dom_node_id: nullableString(tooltip.dom_node_id, 'tooltip dom_node_id'),
-        entity_id: nullableString(tooltip.entity_id, 'tooltip entity_id'),
-        user_id: string(tooltip.user_id, 'tooltip user_id'),
-        target_text: nullableString(tooltip.target_text, 'tooltip target_text'),
-        content: string(tooltip.content, 'tooltip content'),
-        is_user_override: tooltip.is_user_override === true,
-        is_pinned: tooltip.is_pinned === true,
-        display_order: tooltip.display_order === null ? null : integer(tooltip.display_order, 'tooltip display_order'),
-        created_at: string(tooltip.created_at, 'tooltip created_at'),
-        updated_at: string(tooltip.updated_at, 'tooltip updated_at'),
-      },
+      tooltip: item.tooltip === null || item.tooltip === undefined ? null : parseTooltip(item.tooltip),
       subject: subject as unknown as SemanticSubjectDetails,
     }
   }

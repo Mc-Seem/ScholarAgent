@@ -4,6 +4,7 @@ import {
   ChatApiError,
   HttpChatApi,
   parseChatSse,
+  validateChatMessage,
   type ChatStreamEvent,
 } from '@/lib/chat-api'
 
@@ -51,6 +52,69 @@ describe('chat API SSE parser', () => {
       streamResponse(['event: status\ndata: {"type":"status","stage":"wrong"}\n\n']),
       () => undefined,
     )).rejects.toThrow('Invalid chat status event')
+  })
+
+  it('parses add_entity actions and defaults a missing action_type to redefine', () => {
+    const baseAction = {
+      id: 8, source_message_id: 4, subject_id: null, base_definition: null,
+      proposed_definition: 'DPO aligns a policy without a reward model.',
+      knowledge_graph_version: 'v1', status: 'pending',
+      created_at: '2026-08-25T20:00:00Z', updated_at: '2026-08-25T20:00:00Z',
+    }
+    const message = (pending_action: unknown) => ({
+      id: 4, conversation_id: 1, role: 'assistant', content: 'Answer',
+      context: null, citations: [], pending_action, created_at: '2026-08-25T20:00:00Z',
+    })
+
+    const parsed = validateChatMessage(message({
+      ...baseAction,
+      action_type: 'add_entity',
+      payload: {
+        label: 'DPO', kind: 'procedure', quote: 'DPO',
+        dom_node_id: 'p-1', section_id: null, section_title: null,
+      },
+    }))
+    expect(parsed.pending_action).toMatchObject({
+      action_type: 'add_entity',
+      subject_id: null,
+      payload: { label: 'DPO', kind: 'procedure' },
+    })
+
+    const legacy = validateChatMessage(message({ ...baseAction, subject_id: 'object:x' }))
+    expect(legacy.pending_action).toMatchObject({ action_type: 'redefine', payload: null })
+
+    expect(() => validateChatMessage(message({ ...baseAction, action_type: 'add_entity', payload: null })))
+      .toThrow('Invalid action payload')
+    expect(() => validateChatMessage(message({
+      ...baseAction, action_type: 'add_entity', payload: { kind: 'procedure' },
+    }))).toThrow('Invalid action payload')
+    expect(() => validateChatMessage(message({ ...baseAction, action_type: 'wrong' })))
+      .toThrow('Invalid pending chat action')
+  })
+
+  it('accepts a null tooltip in add_entity confirmations', async () => {
+    const api = new HttpChatApi('http://backend')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({
+      action: {
+        id: 8, source_message_id: 4, action_type: 'add_entity', subject_id: 'procedure:dpo',
+        base_definition: null, proposed_definition: 'DPO aligns a policy without a reward model.',
+        payload: {
+          label: 'DPO', kind: 'procedure', quote: 'DPO',
+          dom_node_id: 'p-1', section_id: null, section_title: null,
+        },
+        knowledge_graph_version: 'v1', status: 'confirmed',
+        created_at: '2026-08-25T20:00:00Z', updated_at: '2026-08-25T20:00:00Z',
+      },
+      tooltip: null,
+      subject: { subject: { stable_id: 'procedure:dpo', kind: 'procedure', label: 'DPO' } },
+    }), { status: 200, headers: { 'content-type': 'application/json' } })))
+
+    const confirmation = await api.confirmAction('paper-a', 8)
+    expect(confirmation.tooltip).toBeNull()
+    expect(confirmation.action).toMatchObject({
+      action_type: 'add_entity', status: 'confirmed', subject_id: 'procedure:dpo',
+    })
+    vi.unstubAllGlobals()
   })
 
   it('surfaces structured HTTP errors and supports abort', async () => {

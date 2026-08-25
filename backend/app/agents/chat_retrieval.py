@@ -10,6 +10,7 @@ from typing import Any, Literal, Mapping, Sequence
 
 from bs4 import BeautifulSoup, Tag
 
+from backend.app.agents.knowledge_graph_canonical import normalized_surface_form
 from backend.app.agents.knowledge_graph_models import KnowledgeGraphDocument
 from backend.app.agents.knowledge_graph_projection import (
     LegacyKnowledgeGraphError,
@@ -119,6 +120,21 @@ def active_knowledge_document(
         return parse_document(value)
     except (LegacyKnowledgeGraphError, MalformedKnowledgeGraphError, ValueError, TypeError):
         return None
+
+
+def known_surface_forms(document: KnowledgeGraphDocument) -> set[str]:
+    """Normalized labels, aliases, and notation symbols already covered by the graph."""
+    surfaces: set[str] = set()
+    for entity in document.entities:
+        for value in [entity.label, *entity.aliases]:
+            normalized = normalized_surface_form(value)
+            if normalized:
+                surfaces.add(normalized)
+    for notation in document.notation:
+        normalized = normalized_surface_form(notation.symbol)
+        if normalized:
+            surfaces.add(normalized)
+    return surfaces
 
 
 def knowledge_document_version(document: KnowledgeGraphDocument) -> str:

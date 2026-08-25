@@ -673,6 +673,11 @@ def cross_type_label_collisions(entities: list[CanonicalEntity]) -> list[dict[st
     return _cross_type_label_collisions(entities)
 
 
+def normalized_surface_form(value: str | None) -> str:
+    """Public accessor for the label normalization rule used by entity dedup."""
+    return _normalize_text(value)
+
+
 def canonicalize_observations(
     paper_id: str,
     observations: Iterable[SourceObservation | dict[str, Any]],

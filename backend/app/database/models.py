@@ -214,7 +214,7 @@ class ChatMessage(Base):
 
 
 class ChatAction(Base):
-    """Two-phase semantic definition proposal attached to an assistant message."""
+    """Two-phase chat proposal (definition rewrite or entity addition) on an assistant message."""
     __tablename__ = "chat_actions"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -223,9 +223,13 @@ class ChatAction(Base):
         ForeignKey("chat_messages.id", ondelete="CASCADE"),
         nullable=False,
     )
-    subject_id = Column(String(128), nullable=False)
+    action_type = Column(String(32), nullable=False, default="redefine", server_default="redefine")
+    # Null while an add_entity action is pending; set to the created subject on confirm.
+    subject_id = Column(String(128), nullable=True)
     base_definition = Column(Text, nullable=True)
     proposed_definition = Column(Text, nullable=False)
+    # Action-type-specific data; add_entity stores label, kind, and the source anchor.
+    payload = Column(JSON, nullable=True)
     knowledge_graph_version = Column(String(64), nullable=True)
     status = Column(String(16), nullable=False, default="pending")
     created_at = Column(DateTime, default=utcnow, nullable=False)
@@ -237,6 +241,10 @@ class ChatAction(Base):
         CheckConstraint(
             "status IN ('pending', 'confirmed', 'rejected', 'stale')",
             name="ck_chat_action_status",
+        ),
+        CheckConstraint(
+            "action_type IN ('redefine', 'add_entity')",
+            name="ck_chat_action_type",
         ),
         UniqueConstraint("source_message_id", name="uq_chat_action_source_message"),
     )

@@ -319,11 +319,56 @@ function CitationChip({ citation, onClick }: {
   )
 }
 
+function AddEntityAction({ action, busy, actions }: {
+  action: PendingChatAction
+  busy: boolean
+  actions: ScholarChatActions
+}): React.ReactNode {
+  const payloadLabel = action.payload?.label
+  const label = typeof payloadLabel === 'string' ? payloadLabel : action.subject_id ?? ''
+  const payloadKind = action.payload?.kind
+  const kind = typeof payloadKind === 'string' ? payloadKind : null
+  return (
+    <section className={`scholar-chat-definition scholar-chat-definition-${action.status}`}>
+      <strong>Entity proposal</strong>
+      <div className="scholar-chat-definition-row">
+        <span>Entity</span>
+        <p>{kind ? `Add “${label}” as a ${kind} entity` : `Add “${label}”`}</p>
+      </div>
+      <div className="scholar-chat-definition-row scholar-chat-definition-proposed">
+        <span>Definition</span>
+        <p>{action.proposed_definition}</p>
+      </div>
+      {action.status === 'pending' ? (
+        <div className="scholar-chat-definition-actions">
+          <button
+            type="button"
+            className="theia-button"
+            disabled={busy}
+            aria-label="Confirm entity addition"
+            onClick={() => runAction(() => actions.confirmAction(action.id))}
+          >Confirm</button>
+          <button
+            type="button"
+            className="theia-button secondary"
+            disabled={busy}
+            aria-label="Reject entity addition"
+            onClick={() => runAction(() => actions.rejectAction(action.id))}
+          >Reject</button>
+        </div>
+      ) : <span className="scholar-chat-action-status">{action.status}</span>}
+    </section>
+  )
+}
+
 function DefinitionAction({ action, busy, actions }: {
   action: PendingChatAction
   busy: boolean
   actions: ScholarChatActions
 }): React.ReactNode {
+  if (action.action_type === 'add_entity') {
+    return <AddEntityAction action={action} busy={busy} actions={actions} />
+  }
   return (
     <section className={`scholar-chat-definition scholar-chat-definition-${action.status}`}>
       <strong>Definition proposal</strong>

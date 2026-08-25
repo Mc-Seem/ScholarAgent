@@ -95,6 +95,7 @@
 - [x] **Independent semantic projections** — Graph, Equation Lens, glossary, annotations, and Theia details share one document
 
 ### User Interaction
+- [x] **Chat-proposed entity additions** — When a chat question is about a term the graph does not cover, a small gated structured call proposes it; the label is mechanically verified against cited passage evidence and known labels, and confirming appends one observation, re-runs `canonicalize_observations`, and injects the new anchors (two-phase `add_entity` chat action)
 - [ ] **User-added definitions** — Allow users to manually add entities to the knowledge graph
   - "Add to Knowledge Graph" context menu on selected text
   - Triggers incremental extraction for that selection
