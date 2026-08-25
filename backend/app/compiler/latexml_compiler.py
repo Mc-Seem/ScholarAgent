@@ -573,39 +573,53 @@ class LaTeXMLCompiler:
         return html
 
     def _compile_locally(self, source_dir: Path, main_tex: Path, output_dir: Path) -> str:
-        """Compile using local latexml installation."""
-        output_xml = output_dir / "output.xml"
-        output_html = output_dir / "output.html"
-
-        # Run latexml
-        latexml_cmd = [
-            "latexml",
-            f"--dest={output_xml}",
-            str(main_tex)
-        ]
-
-        result = subprocess.run(
-            latexml_cmd,
-            capture_output=True,
-            text=True,
-            timeout=300,
-            cwd=source_dir
+        """Compile using a local LaTeXML installation."""
+        latexmlc = shutil.which("latexmlc")
+        missing_latexmlc = (
+            "Local LaTeXML compiler 'latexmlc' was not found. "
+            "Install it with `brew install latexml` and ensure `latexmlc` is on PATH."
         )
-        if result.returncode != 0:
-            raise RuntimeError(f"latexml failed: {result.stderr}")
+        if latexmlc is None:
+            raise RuntimeError(missing_latexmlc)
 
-        # Run latexmlpost
-        latexmlpost_cmd = [
-            "latexmlpost",
+        output_html = output_dir / "output.html"
+        timeout_seconds = 300
+        command = [
+            latexmlc,
+            str(main_tex),
             f"--dest={output_html}",
             "--format=html5",
-            "--mathml",
-            str(output_xml)
+            "--pmml",
+            "--cmml",
         ]
 
-        result = subprocess.run(latexmlpost_cmd, capture_output=True, text=True, timeout=300)
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds,
+                cwd=source_dir,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"latexmlc timed out after {timeout_seconds} seconds while compiling {main_tex.name}."
+            ) from exc
+        except FileNotFoundError as exc:
+            raise RuntimeError(missing_latexmlc) from exc
+
         if result.returncode != 0:
-            raise RuntimeError(f"latexmlpost failed: {result.stderr}")
+            details = "\n".join(
+                output.strip() for output in (result.stderr, result.stdout) if output and output.strip()
+            )
+            if not details:
+                details = "LaTeXML produced no diagnostic output."
+            raise RuntimeError(f"latexmlc failed with exit code {result.returncode}: {details}")
+
+        if not output_html.is_file():
+            raise RuntimeError(
+                f"latexmlc completed without creating the expected HTML output: {output_html}"
+            )
 
         html = output_html.read_text(encoding="utf-8")
         return self._extract_body(html)

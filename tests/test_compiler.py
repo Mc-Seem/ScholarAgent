@@ -2,12 +2,14 @@
 Tests for the LaTeXML compiler service.
 """
 
+import subprocess
 import tarfile
 import zipfile
 from pathlib import Path
 
 import pytest
 
+from backend.app.compiler import latexml_compiler
 from backend.app.compiler.latexml_compiler import (
     LaTeXMLCompiler,
     DataIdInjector,
@@ -178,6 +180,89 @@ class TestEquationExtraction:
 
 class TestLaTeXMLCompiler:
     """Tests for the LaTeXML compiler."""
+
+    def test_compile_locally_uses_latexmlc_with_html5_and_mathml(self, tmp_path, monkeypatch):
+        source_dir = tmp_path / "source"
+        output_dir = tmp_path / "output"
+        source_dir.mkdir()
+        output_dir.mkdir()
+        main_tex = source_dir / "main.tex"
+        main_tex.write_text(r"\documentclass{article}\begin{document}Test\end{document}")
+        captured = {}
+
+        monkeypatch.setattr(latexml_compiler.shutil, "which", lambda command: "/opt/homebrew/bin/latexmlc")
+
+        def run(command, **kwargs):
+            captured["command"] = command
+            captured["kwargs"] = kwargs
+            (output_dir / "output.html").write_text(
+                "<html><body><p>Compiled</p><math><semantics>"
+                '<annotation-xml encoding="MathML-Content"><ci>x</ci></annotation-xml>'
+                "</semantics></math></body></html>"
+            )
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+        monkeypatch.setattr(latexml_compiler.subprocess, "run", run)
+
+        result = LaTeXMLCompiler(use_docker=False)._compile_locally(source_dir, main_tex, output_dir)
+
+        assert captured["command"] == [
+            "/opt/homebrew/bin/latexmlc",
+            str(main_tex),
+            f"--dest={output_dir / 'output.html'}",
+            "--format=html5",
+            "--pmml",
+            "--cmml",
+        ]
+        assert captured["kwargs"] == {
+            "capture_output": True,
+            "text": True,
+            "timeout": 300,
+            "cwd": source_dir,
+        }
+        assert result.startswith("<p>Compiled</p>")
+        assert "MathML-Content" in result
+        assert "<body" not in result
+
+    def test_compile_locally_reports_missing_latexmlc(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(latexml_compiler.shutil, "which", lambda command: None)
+
+        def unexpected_run(*args, **kwargs):
+            pytest.fail("subprocess.run must not be called without latexmlc")
+
+        monkeypatch.setattr(latexml_compiler.subprocess, "run", unexpected_run)
+
+        with pytest.raises(RuntimeError, match=r"latexmlc.*brew install latexml.*PATH"):
+            LaTeXMLCompiler(use_docker=False)._compile_locally(tmp_path, tmp_path / "main.tex", tmp_path)
+
+    def test_compile_locally_reports_timeout(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(latexml_compiler.shutil, "which", lambda command: "/usr/local/bin/latexmlc")
+
+        def time_out(command, **kwargs):
+            raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+
+        monkeypatch.setattr(latexml_compiler.subprocess, "run", time_out)
+
+        with pytest.raises(RuntimeError, match=r"latexmlc timed out after 300 seconds"):
+            LaTeXMLCompiler(use_docker=False)._compile_locally(tmp_path, tmp_path / "main.tex", tmp_path)
+
+    def test_compile_locally_reports_nonzero_exit(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(latexml_compiler.shutil, "which", lambda command: "/usr/local/bin/latexmlc")
+        monkeypatch.setattr(
+            latexml_compiler.subprocess,
+            "run",
+            lambda command, **kwargs: subprocess.CompletedProcess(
+                command, 2, stdout="conversion summary", stderr="undefined control sequence"
+            ),
+        )
+
+        with pytest.raises(RuntimeError) as exc_info:
+            LaTeXMLCompiler(use_docker=False)._compile_locally(tmp_path, tmp_path / "main.tex", tmp_path)
+
+        message = str(exc_info.value)
+        assert "latexmlc failed with exit code 2" in message
+        assert "undefined control sequence" in message
+        assert "conversion summary" in message
 
     def test_find_main_tex_single_file(self, simple_tex_file):
         """Test finding main tex when only one file exists."""

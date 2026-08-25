@@ -82,10 +82,10 @@ That's it! The application will be running with:
 ### Prerequisites
 
 **Required:**
-- Python 3.12+ with `uv` package manager
-- `mise` (installs the project-pinned Node.js 24.18.0 and npm)
+- `mise` (installs the project-pinned Python 3.12 and Node.js 24.18.0)
+- `uv` package manager
 - PostgreSQL 14+
-- Docker (for LaTeXML compilation)
+- LaTeXML (`latexmlc`) or Docker as a compatibility fallback
 - Git
 
 **Platform-specific installation:**
@@ -115,20 +115,12 @@ sudo usermod -aG docker $USER  # Re-login after this
 </details>
 
 <details>
-<summary>macOS</summary>
+<summary>macOS (Apple Silicon)</summary>
 
-```bash
-# Install Homebrew if not already installed
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-
-# Install dependencies
-brew install python mise postgresql git
-pip3 install uv
-brew services start postgresql
-
-# Install Docker Desktop for Mac from:
-# https://docs.docker.com/desktop/install/mac-install/
-```
+Use the dedicated [native Apple Silicon source guide](docs/macos-apple-silicon.md).
+It covers Homebrew PostgreSQL and LaTeXML, role/database creation without Linux
+commands, environment diagnostics, migrations, smoke checks, and both Theia
+launch targets. Docker and Rosetta are not required.
 </details>
 
 <details>
@@ -146,23 +138,30 @@ For best experience, use WSL2 (Windows Subsystem for Linux) and follow Linux ins
 
 ### Installation
 
+> Apple Silicon users should follow the complete
+> [macOS guide](docs/macos-apple-silicon.md) rather than the generic database
+> examples below.
+
 ```bash
 # 1. Clone repository
 git clone <repository-url>
 cd ScholarAgent
 
-# 2. Trust the project config and install Node.js 24.18.0
+# 2. Trust the project config and install Python 3.12 + Node.js 24.18.0
 mise trust
 mise install
 
 # 3. Install Python dependencies
-uv sync
+mise exec -- uv sync
 
 # 4. Install frontend dependencies exactly from package-lock.json
 mise run bootstrap
 
-# 5. Start PostgreSQL (choose one):
-# Option A: Docker
+# 5. Configure environment
+cp .env.example .env
+# Edit .env with your API key; source defaults select local PostgreSQL and latexmlc.
+
+# 6. Start PostgreSQL (generic Docker example)
 docker run -d --name scholaragent-db \
   -e POSTGRES_DB=scholaragent \
   -e POSTGRES_USER=scholaragent \
@@ -170,32 +169,28 @@ docker run -d --name scholaragent-db \
   -p 5432:5432 \
   postgres:16
 
-# Option B: System PostgreSQL (Linux/macOS)
+# Or use system PostgreSQL on Linux:
 sudo systemctl start postgresql  # Linux
-# or: brew services start postgresql  # macOS
 sudo -u postgres psql -c "CREATE DATABASE scholaragent;"
 sudo -u postgres psql -c "CREATE USER scholaragent WITH PASSWORD 'scholaragent';"
 sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE scholaragent TO scholaragent;"
 
-# 6. Configure environment
-cp .env.example .env
-# Edit .env with your settings
-
 # 7. Run database migrations
-cd backend && alembic upgrade head && cd ..
+uv run alembic -c backend/alembic.ini upgrade head
 
-# 8. Pull LaTeXML Docker image
-docker pull latexml/ar5ivist
+# 8. Install/configure LaTeXML for your platform. To use the optional fallback:
+docker pull latexml/ar5ivist:latest
+# Then set LATEXML_USE_DOCKER=true in .env.
 ```
 
 ### Running from Source
 
 ```bash
 # Recommended: Theia browser workbench + backend (from project root)
-mise exec -- npm --prefix frontend run dev:theia
+mise run dev-theia-browser
 
 # Recommended desktop app + backend
-mise exec -- npm --prefix frontend run dev:theia:desktop
+mise run dev-theia-desktop
 ```
 
 The browser workbench is available at the URL printed by Theia during startup.
@@ -244,7 +239,8 @@ Create a `.env` file in the same directory as `docker-compose.yml`:
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `ANTHROPIC_API_KEY` | **Yes** | - | Your Anthropic API key from [console.anthropic.com](https://console.anthropic.com/) |
-| `DATABASE_URL` | No | Auto-configured | PostgreSQL connection string (only needed for source setup) |
+| `DATABASE_URL` | Source setup | Local scholaragent URL | PostgreSQL connection string; Docker Compose overrides it inside containers |
+| `LATEXML_USE_DOCKER` | No | `false` in `.env.example` | Use native `latexmlc`; set `true` for the Docker fallback |
 | `KG_MAX_SECTIONS` | No | `0` | Limit sections processed in knowledge graph (0 = all sections) |
 | `KG_DEBUG` | No | - | Enable knowledge graph extraction debug logs (set to `1`) |
 | `HTML_INJECTION_DEBUG` | No | `false` | Enable HTML span injection debug logs (set to `true`) |
@@ -268,7 +264,7 @@ arXiv .tar.gz → LaTeXML → HTML5 + MathML → PostgreSQL
 - **Backend**: FastAPI, PostgreSQL, SQLAlchemy, LangGraph
 - **Frontend**: Theia Platform; React, MathJax 4, Framer Motion; deprecated Next.js legacy client
 - **AI**: Claude Sonnet via Anthropic API
-- **Compilation**: LaTeXML (Docker)
+- **Compilation**: native LaTeXML or Docker compatibility fallback
 
 ## Key Features
 
@@ -426,6 +422,7 @@ ScholarAgent/
 
 All reference docs are in `docs/`:
 
+- `docs/macos-apple-silicon.md` - Native M-series source setup and Theia launches
 - `docs/backend-architecture.md` - Backend module structure, models, API endpoints
 - `docs/frontend-architecture.md` - Frontend component tree, data flow, entity styling
 - `docs/kg-pipeline.md` - Knowledge graph extraction pipeline architecture

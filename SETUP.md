@@ -7,10 +7,10 @@ Complete guide to setting up Scholar Agent development environment.
 ## Prerequisites
 
 ### Required
-- **Python 3.12+** with `uv` package manager
-- **mise** (installs the project-pinned Node.js 24.18.0 and npm)
+- **mise** (installs the project-pinned Python 3.12 and Node.js 24.18.0)
+- **uv** package manager
 - **PostgreSQL 14+**
-- **Docker** (for LaTeXML compilation)
+- **LaTeXML** (`latexmlc`) or Docker as a compatibility fallback
 - **Git**
 
 ### System-Specific Notes
@@ -33,9 +33,14 @@ sudo usermod -aG docker $USER  # Re-login after this
 
 #### macOS
 ```bash
-brew install python mise postgresql docker git
-brew services start postgresql
+brew install git mise uv postgresql@17 latexml
+export PATH="$(brew --prefix postgresql@17)/bin:$PATH"
+brew services start postgresql@17
 ```
+
+Apple Silicon users should follow the complete
+[native M-series guide](docs/macos-apple-silicon.md). It avoids Rosetta, Docker,
+and Linux-only PostgreSQL administration commands.
 
 ---
 
@@ -71,7 +76,7 @@ mise install
 mise run bootstrap
 ```
 
-The root `mise.toml` pins Node.js 24.18.0. `mise run bootstrap` and
+The root `mise.toml` pins Python 3.12 and Node.js 24.18.0. `mise run bootstrap` and
 `mise run verify` work without shell activation. To make ordinary `node` and
 `npm` commands automatically use that version in Fish, add
 `mise activate fish | source` to `~/.config/fish/config.fish` and restart the
@@ -79,7 +84,14 @@ shell.
 
 ### 4. PostgreSQL Setup
 
-#### Option A: Docker (Recommended)
+#### Option A: Native PostgreSQL (recommended on Apple Silicon)
+
+For Homebrew service, role, and database commands, follow
+[macOS Apple Silicon source setup](docs/macos-apple-silicon.md#3-create-the-postgresql-role-and-database).
+On Linux, start the system service and create the role/database with the tools
+provided by the distribution.
+
+#### Option B: Docker
 ```bash
 # Start PostgreSQL in Docker
 docker run -d \
@@ -100,23 +112,6 @@ After reboot, restart the container:
 docker start scholaragent-db
 ```
 
-#### Option B: System PostgreSQL
-```bash
-# Linux
-sudo systemctl start postgresql
-sudo systemctl enable postgresql
-
-# macOS
-brew services start postgresql
-
-# Create database and user
-sudo -u postgres psql
-CREATE DATABASE scholaragent;
-CREATE USER scholaragent WITH PASSWORD 'scholaragent';
-GRANT ALL PRIVILEGES ON DATABASE scholaragent TO scholaragent;
-\q
-```
-
 #### Configure database connection
 Create `.env` file in project root:
 ```bash
@@ -125,31 +120,35 @@ cp .env.example .env
 
 Edit `.env`:
 ```
-DATABASE_URL=postgresql://scholaragent:scholaragent@localhost/scholaragent
+DATABASE_URL=postgresql://scholaragent:scholaragent@localhost:5432/scholaragent
 ```
 
 ### 5. Database Migrations
 
 ```bash
-cd backend
-
-# Initialize Alembic (first time only)
-alembic init alembic
-
-# Create initial migration
-alembic revision --autogenerate -m "Initial schema: papers and tooltips"
-
-# Apply migrations
-alembic upgrade head
-
-cd ..
+# From the repository root; migrations are already checked in.
+uv run alembic -c backend/alembic.ini upgrade head
 ```
 
-### 6. Docker Setup for LaTeXML
+### 6. LaTeXML Setup
 
-#### Pull LaTeXML image (ar5ivist - official arXiv converter)
+#### Native LaTeXML (recommended on Apple Silicon)
+
 ```bash
-docker pull latexml/ar5ivist
+brew install latexml
+# Keep LATEXML_USE_DOCKER=false in .env
+latexmlc --VERSION
+mise run doctor
+```
+
+See the [native compiler smoke test](docs/macos-apple-silicon.md#5-native-latexml-smoke-test)
+for HTML5 plus Presentation/Content MathML validation.
+
+#### Docker fallback
+
+```bash
+docker pull latexml/ar5ivist:latest
+# Set LATEXML_USE_DOCKER=true in .env
 ```
 
 #### Test LaTeXML (optional)
@@ -157,17 +156,18 @@ docker pull latexml/ar5ivist
 # Test with a sample .tex file
 # ar5ivist has latexmlc as entrypoint, so no need to specify it
 docker run --rm \
-  -v $(pwd)/test:/source:ro \
+  -v "$(pwd)/tests/fixtures:/source:ro" \
   -v $(pwd)/output:/output \
-  latexml/ar5ivist \
-  /source/test.tex \
+  latexml/ar5ivist:latest \
+  /source/simple_paper.tex \
   --dest=/output/output.html \
   --format=html5 \
   --pmml \
   --cmml
 ```
 
-**Note**: The application will automatically use this Docker image for compiling LaTeX papers.
+The Docker image is `linux/amd64` and runs through emulation on Apple Silicon;
+reserve it for papers that need its additional TeX packages.
 
 ---
 
@@ -177,7 +177,7 @@ docker run --rm \
 
 #### Option 1: Theia desktop + FastAPI (recommended)
 ```bash
-mise exec -- npm --prefix frontend run dev:theia:desktop
+mise run dev-theia-desktop
 ```
 
 This will start:
@@ -186,7 +186,7 @@ This will start:
 
 #### Option 2: Theia browser + FastAPI (recommended)
 ```bash
-mise exec -- npm --prefix frontend run dev:theia
+mise run dev-theia-browser
 ```
 
 #### Option 3: Backend only
@@ -261,8 +261,7 @@ mise exec -- npm --prefix frontend start
 
 ### Backend
 ```bash
-curl http://localhost:8000/
-# Expected: {"message": "Welcome to Scholar Agent API"}
+curl http://localhost:8000/health
 ```
 
 ### Frontend
@@ -278,9 +277,9 @@ mise run verify
 psql -U scholaragent -d scholaragent -c "SELECT version();"
 ```
 
-### Docker
+### Native LaTeXML
 ```bash
-docker run --rm arxivvanity/engrafo latexml --version
+latexmlc --VERSION
 ```
 
 ---
@@ -304,9 +303,10 @@ docker start scholaragent-db       # Start if stopped
 docker logs scholaragent-db        # Check for errors
 
 # If using system PostgreSQL:
-sudo systemctl status postgresql
-sudo systemctl start postgresql
-psql -U postgres -l | grep scholaragent
+# Linux: sudo systemctl status postgresql
+# macOS:
+brew services list
+psql 'postgresql://scholaragent:scholaragent@localhost:5432/scholaragent' -c 'SELECT 1;'
 ```
 
 ### Issue: Docker permission denied
@@ -342,8 +342,7 @@ CREATE SCHEMA public;
 \q
 
 # Re-run migrations
-cd backend
-alembic upgrade head
+uv run alembic -c backend/alembic.ini upgrade head
 ```
 
 ---
@@ -352,7 +351,8 @@ alembic upgrade head
 
 ### Required (`.env`)
 ```bash
-DATABASE_URL=postgresql://scholaragent:password@localhost/scholaragent
+DATABASE_URL=postgresql://scholaragent:scholaragent@localhost:5432/scholaragent
+LATEXML_USE_DOCKER=false
 ```
 
 ### Optional
@@ -365,8 +365,8 @@ DEBUG=true
 # Frontend
 NEXT_PUBLIC_API_URL=http://localhost:8000
 
-# Docker
-LATEXML_IMAGE=arxivvanity/engrafo
+# Optional Docker LaTeXML fallback
+LATEXML_USE_DOCKER=true
 ```
 
 ---
@@ -375,14 +375,8 @@ LATEXML_IMAGE=arxivvanity/engrafo
 
 ### Backend Tests
 ```bash
-# Create test database
-sudo -u postgres psql
-CREATE DATABASE scholaragent_test;
-GRANT ALL PRIVILEGES ON DATABASE scholaragent_test TO scholaragent;
-\q
-
-# Run tests
-pytest tests/
+# From the repository root
+.venv/bin/pytest tests/
 ```
 
 ### Frontend Tests
@@ -403,7 +397,7 @@ mise exec -- npm --prefix frontend test -- --run
 
 3. **Run tests**:
    ```bash
-   pytest tests/
+   .venv/bin/pytest tests/
    mise run verify
    ```
 
@@ -444,7 +438,7 @@ psql -U scholaragent scholaragent < backup.sql
 
 # Reset database (DEV ONLY)
 dropdb scholaragent && createdb scholaragent
-cd backend && alembic upgrade head
+uv run alembic -c backend/alembic.ini upgrade head
 ```
 
 ### Docker
@@ -531,7 +525,7 @@ pg_dump -U scholaragent scholaragent > ~/backups/scholaragent_$(date +%Y%m%d).sq
 ### Docker Image Updates
 ```bash
 # Update LaTeXML
-docker pull latexml/ar5ivist
+docker pull latexml/ar5ivist:latest
 
 # Update PostgreSQL (backup first!)
 pg_dump -U scholaragent scholaragent > backup.sql

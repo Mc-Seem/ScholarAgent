@@ -1,5 +1,10 @@
 [tools]
 node = "24.18.0"
+python = "3.12"
+
+[tasks.doctor]
+description = "Check the Apple Silicon source-development environment"
+run = "python scripts/check_environment.py"
 
 [tasks.bootstrap]
 description = "Install frontend dependencies from the lockfile"
