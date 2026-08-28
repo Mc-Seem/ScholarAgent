@@ -16,6 +16,7 @@ Interactive academic paper reader that compiles arXiv LaTeX sources into HTML5 w
 ## Key Commands
 - **Run Tests**: `.venv/bin/pytest tests/` (backend) | `mise exec -- npm --prefix frontend test -- --run` (frontend)
 - **Verify Frontend**: `mise run verify` (tests + Next.js + Theia browser/Electron builds)
+- **Visual Regression**: `mise run visual-check` (Playwright screenshots + local-VLM triage; see the `visual-check` skill) | `mise run visual-baseline` (update baselines)
 - **Database**: `cd backend && alembic upgrade head` | `alembic revision -m "description"`
 
 ## Architecture

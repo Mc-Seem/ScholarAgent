@@ -73,6 +73,33 @@ Theia browser/Electron production builds with Node.js 24.18.0.
 .venv/bin/pytest tests/ -q && cd frontend && npm test -- --run && cd ..
 ```
 
+### Visual Regression (Playwright + local VLM)
+
+```bash
+# Run the visual suite and triage any diffs with the local VLM
+mise run visual-check
+
+# Re-capture baselines after an intentional UI change
+mise run visual-baseline
+
+# Triage-only (re-run the VLM on existing failure artifacts)
+mise exec -- npm --prefix frontend run visual:triage
+```
+
+- Spec: `frontend/e2e/visual.spec.ts` (Playwright `toHaveScreenshot`); config: `frontend/playwright.config.ts`.
+- Baselines are committed under `frontend/e2e/__screenshots__/` and are **per-platform**
+  (`*-darwin.png`, `*-linux.png`, ...) because font rasterization differs across OSes.
+  On a machine without baselines for its platform, run `mise run visual-baseline` once
+  and commit the new PNGs. Failure artifacts
+  (`*-expected/actual/diff.png`) land in `frontend/e2e/test-results/` (gitignored).
+- `frontend/scripts/visual-triage.mjs` sends each failure triplet to an OpenAI-compatible
+  vision endpoint (default: Junie Local at `http://localhost:19239/v1`; override with
+  `SCHOLAR_VLM_BASE_URL` / `SCHOLAR_VLM_MODEL`) and writes `frontend/e2e/visual-report.md`
+  with per-failure classification (`regression` / `intentional-looking-change` / `rendering-noise`).
+- Prerequisites: Postgres with at least one paper imported, and a built Theia browser bundle
+  (`npm run theia:build:browser`). Playwright starts/reuses the backend and Theia servers itself.
+- Full workflow reference: `.junie/skills/visual-check/SKILL.md`.
+
 ---
 
 ## Test Directory Structure

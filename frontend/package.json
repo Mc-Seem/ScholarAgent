@@ -28,6 +28,9 @@
     "test:ui": "vitest --ui",
     "test:watch": "vitest --watch",
     "test:coverage": "vitest --coverage",
+    "visual": "playwright test",
+    "visual:baseline": "playwright test --update-snapshots",
+    "visual:triage": "node scripts/visual-triage.mjs",
     "benchmark:kg": "node scripts/benchmark-knowledge-graph.mjs",
     "benchmark:kg:overview": "node scripts/benchmark-knowledge-graph.mjs --nodes 30 --edges 60"
   },
@@ -55,13 +58,14 @@
     "tailwind-merge": "^3.4.0"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4.1.18",
+    "@playwright/test": "^1.62.1",
     "@tailwindcss/cli": "4.1.18",
-    "@theia/core": "1.73.0",
-    "@theia/electron": "1.73.0",
+    "@tailwindcss/postcss": "^4.1.18",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
+    "@theia/core": "1.73.0",
+    "@theia/electron": "1.73.0",
     "@types/node": "^25.2.2",
     "@types/react": "^19.2.13",
     "@types/react-dom": "^19.2.3",

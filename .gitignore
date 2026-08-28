@@ -59,6 +59,9 @@ frontend/theia/*/src-gen/
 frontend/theia/*/gen-esbuild.*.mjs
 frontend/theia/*/esbuild.mjs
 frontend/.browser_modules/
+frontend/e2e/test-results/
+frontend/e2e/visual-report.md
+frontend/playwright-report/
 
 # OS
 .DS_Store
@@ -68,6 +71,22 @@ Thumbs.db
 *~
 
 # Agentic Stuff
-.junie/
+# .junie: commit project-shareable config (guidelines, skills, MCP, commands),
+# keep machine/session-local state (sessions, logs, settings, credentials) ignored.
+.junie/*
+!.junie/AGENTS.md
+!.junie/guidelines.md
+!.junie/guidelines/
+!.junie/playbook.md
+!.junie/rules/
+!.junie/mcp/
+!.junie/skills/
+!.junie/commands/
+!.junie/agents/
+!.junie/models/
+!.junie/config.json
+!.junie/extensions.json
+!.junie/demo.md
+!.junie/vms/
 .agentbridge
 .background_output_*.txt
