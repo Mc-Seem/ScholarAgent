@@ -35,8 +35,8 @@ run = "npm run visual:baseline"
 description = "Run visual regression tests, then triage diffs with the local VLM"
 dir = "{{ config_root }}/frontend"
 run = """
-npm run visual
-status=$?
+status=0
+npm run visual || status=$?
 npm run visual:triage
 exit $status
 """

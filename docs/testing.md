@@ -94,8 +94,11 @@ mise exec -- npm --prefix frontend run visual:triage
   (`*-expected/actual/diff.png`) land in `frontend/e2e/test-results/` (gitignored).
 - `frontend/scripts/visual-triage.mjs` sends each failure triplet to an OpenAI-compatible
   vision endpoint (default: Junie Local at `http://localhost:19239/v1`; override with
-  `SCHOLAR_VLM_BASE_URL` / `SCHOLAR_VLM_MODEL`) and writes `frontend/e2e/visual-report.md`
-  with per-failure classification (`regression` / `intentional-looking-change` / `rendering-noise`).
+  `SCHOLAR_VLM_BASE_URL` / `SCHOLAR_VLM_MODEL` / `SCHOLAR_VLM_API_KEY`) and writes
+  `frontend/e2e/visual-report.md` with per-failure classification
+  (`regression` / `intentional-looking-change` / `rendering-noise`). Against Junie Local
+  the script auto-reads the API key from `~/.local/share/junie-local/server-config.json`
+  and skips the speculative-decoding draft model when auto-discovering via `/models`.
 - Prerequisites: Postgres with at least one paper imported, and a built Theia browser bundle
   (`npm run theia:build:browser`). Playwright starts/reuses the backend and Theia servers itself.
 - Full workflow reference: `.junie/skills/visual-check/SKILL.md`.

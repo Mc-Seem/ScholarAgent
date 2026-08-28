@@ -29,8 +29,11 @@ It replaces manual "screenshot and describe the inconsistency" loops.
   (required after any frontend code change; Playwright auto-starts the backend and Theia servers, but does not rebuild).
 - For triage: Junie Local running (Qwen3.6-27B-4bit via mlx-vlm; the user installs it once with the
   `/local` command). When installed, manage it with `~/.local/share/junie-local/current/serverctl.sh`
-  (`status` / `start` / `health` / `wait`); probe readiness via `curl http://localhost:19239/v1/models`.
-  Alternatively set `SCHOLAR_VLM_BASE_URL` / `SCHOLAR_VLM_MODEL` to another OpenAI-compatible vision
+  (`status` / `start` / `health` / `wait`). The endpoint requires a bearer token; the triage script
+  auto-reads it from `~/.local/share/junie-local/server-config.json` (`api_key` field). Probe readiness:
+  `curl -H "Authorization: Bearer $(sed -n 's/.*"api_key": "\([^"]*\)".*/\1/p' ~/.local/share/junie-local/server-config.json)" http://localhost:19239/v1/models`.
+  Model auto-discovery skips the `*-MTP-*` speculative-decoding draft model.
+  Alternatively set `SCHOLAR_VLM_BASE_URL` / `SCHOLAR_VLM_MODEL` / `SCHOLAR_VLM_API_KEY` to another OpenAI-compatible vision
   endpoint. On the Linux/CachyOS machine (RX 9070 XT, 16 GB VRAM) use Ollama with ROCm:
   `SCHOLAR_VLM_BASE_URL=http://localhost:11434/v1 SCHOLAR_VLM_MODEL=qwen2.5vl:7b`.
   Triage is optional — without a reachable VLM the tests still run and diffs can be reviewed manually.
@@ -50,6 +53,8 @@ It replaces manual "screenshot and describe the inconsistency" loops.
   being worked on and update baselines if it is expected; ignore `rendering-noise` unless recurring
   (then mask the flaky region in the spec or raise `maxDiffPixelRatio`).
 - The VLM only describes diffs found by the pixel comparison — do not ask it to find differences itself.
+- Screenshots must not include state that varies with the backend database (e.g. persisted chat
+  conversations): mask such widgets in the spec (`mask: [page.locator('[id="scholar-agent:chat"]')]`).
 
 ##### Extending coverage
 

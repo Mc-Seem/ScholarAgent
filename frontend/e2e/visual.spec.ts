@@ -58,5 +58,9 @@ test('paper reader', async ({ page }) => {
     .catch(() => undefined)
   await page.waitForTimeout(2_000)
 
-  await expect(page).toHaveScreenshot('paper-reader.png')
+  // The chat panel renders persisted conversations (backend DB state), so its
+  // content is not deterministic across machines/runs — mask the whole widget.
+  await expect(page).toHaveScreenshot('paper-reader.png', {
+    mask: [page.locator('[id="scholar-agent:chat"]')],
+  })
 })

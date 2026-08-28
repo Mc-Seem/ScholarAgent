@@ -11,10 +11,13 @@
  * Qwen3.6-27B-4bit at http://localhost:19239/v1). Override with:
  *   SCHOLAR_VLM_BASE_URL  e.g. http://localhost:11434/v1 (Ollama)
  *   SCHOLAR_VLM_MODEL     e.g. qwen2.5vl:7b (otherwise auto-discovered via /models)
- *   SCHOLAR_VLM_API_KEY   optional bearer token
+ *   SCHOLAR_VLM_API_KEY   optional bearer token (auto-read from Junie Local's
+ *                         server-config.json when targeting the default endpoint)
  */
 
+import { readFileSync } from 'node:fs'
 import { readdir, readFile, writeFile } from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
@@ -24,7 +27,19 @@ const RESULTS_DIR = path.join(FRONTEND_DIR, 'e2e', 'test-results')
 const REPORT_PATH = path.join(FRONTEND_DIR, 'e2e', 'visual-report.md')
 
 const BASE_URL = (process.env.SCHOLAR_VLM_BASE_URL ?? 'http://localhost:19239/v1').replace(/\/$/, '')
-const API_KEY = process.env.SCHOLAR_VLM_API_KEY
+const API_KEY = process.env.SCHOLAR_VLM_API_KEY ?? junieLocalApiKey()
+
+/** Junie Local generates a bearer token at install time; pick it up so the
+ *  default configuration keeps working without any env vars. */
+function junieLocalApiKey() {
+  if (!/\/\/(localhost|127\.0\.0\.1):19239\b/.test(BASE_URL)) return undefined
+  try {
+    const configPath = path.join(os.homedir(), '.local', 'share', 'junie-local', 'server-config.json')
+    return JSON.parse(readFileSync(configPath, 'utf8')).api_key ?? undefined
+  } catch {
+    return undefined
+  }
+}
 
 const SYSTEM_PROMPT = `You are a meticulous UI visual-regression triage assistant for Scholar Agent,
 an academic paper reader built on Eclipse Theia (IDE-like shell: side panels, tabs, a paper view with
@@ -68,7 +83,9 @@ async function resolveModel() {
   const response = await fetch(`${BASE_URL}/models`, { headers: authHeaders() })
   if (!response.ok) throw new Error(`GET ${BASE_URL}/models -> ${response.status}`)
   const body = await response.json()
-  const model = body?.data?.[0]?.id
+  const models = (body?.data ?? []).map((m) => m?.id).filter(Boolean)
+  // Skip speculative-decoding draft models (e.g. Junie Local's `...-MTP-...`).
+  const model = models.find((id) => !/\bmtp\b|draft/i.test(id)) ?? models[0]
   if (!model) throw new Error(`No models reported by ${BASE_URL}/models`)
   return model
 }
