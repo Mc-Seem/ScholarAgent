@@ -214,7 +214,7 @@ class ChatMessage(Base):
 
 
 class ChatAction(Base):
-    """Two-phase chat proposal (definition rewrite or entity addition) on an assistant message."""
+    """Two-phase chat proposal (definition rewrite, entity addition, or markup) on an assistant message."""
     __tablename__ = "chat_actions"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -225,6 +225,7 @@ class ChatAction(Base):
     )
     action_type = Column(String(32), nullable=False, default="redefine", server_default="redefine")
     # Null while an add_entity action is pending; set to the created subject on confirm.
+    # An annotate_entity action targets an existing subject, so it is set up front.
     subject_id = Column(String(128), nullable=True)
     base_definition = Column(Text, nullable=True)
     proposed_definition = Column(Text, nullable=False)
@@ -243,7 +244,7 @@ class ChatAction(Base):
             name="ck_chat_action_status",
         ),
         CheckConstraint(
-            "action_type IN ('redefine', 'add_entity')",
+            "action_type IN ('redefine', 'add_entity', 'annotate_entity')",
             name="ck_chat_action_type",
         ),
         UniqueConstraint("source_message_id", name="uq_chat_action_source_message"),

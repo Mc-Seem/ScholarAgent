@@ -22,12 +22,13 @@ from backend.app.api import chat_routes
 from backend.app.agents.chat_agent import (
     DefinitionProposal,
     EntityAdditionProposal,
+    EntityAnnotationProposal,
     GroundedChatResult,
     GroundedCitation,
 )
 from backend.app.agents.chat_retrieval import knowledge_document_version
 from backend.app.agents.knowledge_graph_retrieval import build_fixture_document
-from backend.app.agents.knowledge_graph_models import SemanticExplanation
+from backend.app.agents.knowledge_graph_models import SemanticExplanation, SemanticOccurrence
 from backend.app.database.connection import get_db
 from backend.app.database.models import (
     Base,
@@ -101,6 +102,7 @@ def install_semantic_document(
     *,
     extra_html: str = "",
     include_sections: bool = False,
+    include_occurrences: bool = False,
 ):
     fixture = json.loads(
         (Path(__file__).parent / "fixtures" / "knowledge_graph_baseline.json").read_text(
@@ -117,6 +119,22 @@ def install_semantic_document(
             evidence_ids=[document.objects[0].observation_ids[0]],
         )],
     })
+    if include_occurrences:
+        source = next(
+            item for item in fixture["retrieval_corpus"] if item["id"] == "p-elbo-definition"
+        )
+        start = source["text"].index("ELBO")
+        document = document.model_copy(update={
+            "occurrences": [SemanticOccurrence(
+                stable_id="occurrence:quantity:elbo:p-elbo-definition",
+                subject_id="quantity:elbo",
+                dom_node_id="p-elbo-definition",
+                start=start,
+                end=start + len("ELBO"),
+                text="ELBO",
+                scope_id="sec-1",
+            )],
+        })
     body = "".join(
         f'<p data-id="{item["id"]}">{item["text"]}</p>'
         for item in fixture["retrieval_corpus"]
@@ -157,6 +175,38 @@ def seed_action(
             base_definition=base_definition,
             proposed_definition="A user-friendly grounded definition.",
             knowledge_graph_version=knowledge_document_version(document),
+            status=status,
+        )
+        db.add(action)
+        db.commit()
+        return action.id
+
+
+def seed_annotation_action(
+    context: ChatApiContext,
+    document,
+    *,
+    subject_id: str = "quantity:elbo",
+    version: str | None = None,
+    status: str = "pending",
+) -> int:
+    conversation_id = create_conversation(context)["id"]
+    with context.session_factory() as db:
+        message = ChatMessage(
+            conversation_id=conversation_id,
+            role="assistant",
+            content="Annotation preview.",
+        )
+        db.add(message)
+        db.flush()
+        action = ChatAction(
+            source_message_id=message.id,
+            action_type="annotate_entity",
+            subject_id=subject_id,
+            base_definition=None,
+            proposed_definition="A lower bound on the log evidence.",
+            payload={"label": "Evidence lower bound", "occurrence_count": 1},
+            knowledge_graph_version=version or knowledge_document_version(document),
             status=status,
         )
         db.add(action)
@@ -262,6 +312,24 @@ class TestChatModelsAndMigration:
         sql = output.getvalue()
         assert "ADD COLUMN knowledge_graph_version" in sql
         assert "DROP COLUMN knowledge_graph_version" in sql
+
+    def test_annotation_action_migration_rewrites_type_constraint(self):
+        migration = importlib.import_module(
+            "backend.alembic.versions.011_add_chat_action_entity_annotation"
+        )
+        output = io.StringIO()
+        context = MigrationContext.configure(
+            url="postgresql://",
+            opts={"as_sql": True, "output_buffer": output},
+        )
+
+        with Operations.context(context):
+            migration.upgrade()
+            migration.downgrade()
+
+        sql = output.getvalue()
+        assert sql.count("DROP CONSTRAINT ck_chat_action_type") == 2
+        assert "'annotate_entity'" in sql
 
     def test_entity_action_migration_renders_columns_and_constraint(self):
         migration = importlib.import_module(
@@ -707,6 +775,48 @@ class TestChatMessageStream:
             assert action.payload["dom_node_id"] == "p-dpo"
             assert action.proposed_definition == "A preference-based alignment procedure."
 
+    def test_stream_persists_entity_annotation_proposal(self, chat_api, monkeypatch):
+        document = install_semantic_document(chat_api, include_occurrences=True)
+        conversation_id = create_conversation(chat_api)["id"]
+        monkeypatch.setattr(
+            chat_routes,
+            "run_chat_agent",
+            lambda **_kwargs: GroundedChatResult(
+                content="The ELBO is the variational objective.",
+                citations=[],
+                graph_available=True,
+                used_graph=True,
+                annotation_proposal=EntityAnnotationProposal(
+                    subject_id="quantity:elbo",
+                    label="Evidence lower bound",
+                    definition="A lower bound on the log evidence.",
+                    occurrence_count=1,
+                    knowledge_graph_version=knowledge_document_version(document),
+                ),
+            ),
+        )
+
+        with chat_api.client.stream(
+            "POST",
+            f"/api/papers/paper-one/chat/conversations/{conversation_id}/messages",
+            json={"content": "What is ELBO?"},
+        ) as response:
+            events = parse_sse(response)
+
+        final = events[-1][1]
+        assert final["pending_action"]["action_type"] == "annotate_entity"
+        assert final["pending_action"]["subject_id"] == "quantity:elbo"
+        assert final["pending_action"]["payload"] == {
+            "label": "Evidence lower bound",
+            "occurrence_count": 1,
+        }
+        assert final["pending_action"]["status"] == "pending"
+        with chat_api.session_factory() as db:
+            action = db.query(ChatAction).one()
+            assert action.action_type == "annotate_entity"
+            assert action.subject_id == "quantity:elbo"
+            assert action.proposed_definition == "A lower bound on the log evidence."
+
 
 class TestChatDefinitionActions:
     def test_confirm_applies_shared_semantic_override_and_returns_refresh_payload(self, chat_api):
@@ -921,3 +1031,79 @@ class TestChatEntityAdditionActions:
             paper = db.get(Paper, "paper-one")
             labels = [item["label"] for item in paper.knowledge_graph["objects"]]
             assert "DPO" not in labels
+
+
+class TestChatEntityAnnotationActions:
+    def test_confirm_injects_stored_occurrences_without_touching_graph(self, chat_api):
+        document = install_semantic_document(chat_api, include_occurrences=True)
+        action_id = seed_annotation_action(chat_api, document)
+
+        confirmed = chat_api.client.post(
+            f"/api/papers/paper-one/chat/actions/{action_id}/confirm",
+        )
+
+        assert confirmed.status_code == 200
+        payload = confirmed.json()
+        assert payload["action"]["status"] == "confirmed"
+        assert payload["action"]["action_type"] == "annotate_entity"
+        assert payload["action"]["subject_id"] == "quantity:elbo"
+        assert payload["tooltip"] is None
+        assert payload["subject"]["subject"]["label"] == "Evidence lower bound"
+
+        with chat_api.session_factory() as db:
+            paper = db.get(Paper, "paper-one")
+            assert 'data-entity-id="quantity:elbo"' in paper.html_content
+            assert 'data-occurrence-id="occurrence:quantity:elbo:p-elbo-definition"' in paper.html_content
+            # The graph is untouched: annotation only anchors what is already stored.
+            assert paper.knowledge_graph == document.model_dump(mode="json")
+
+        repeated = chat_api.client.post(
+            f"/api/papers/paper-one/chat/actions/{action_id}/confirm",
+        )
+        assert repeated.status_code == 200
+        assert repeated.json()["action"]["subject_id"] == "quantity:elbo"
+        with chat_api.session_factory() as db:
+            paper = db.get(Paper, "paper-one")
+            assert paper.html_content.count("data-occurrence-id=") == 1
+
+    def test_confirm_annotation_marks_action_stale_when_graph_version_changed(self, chat_api):
+        document = install_semantic_document(chat_api, include_occurrences=True)
+        action_id = seed_annotation_action(chat_api, document, version="outdated-version")
+
+        response = chat_api.client.post(
+            f"/api/papers/paper-one/chat/actions/{action_id}/confirm",
+        )
+
+        assert response.status_code == 409
+        assert response.json()["detail"]["code"] == "stale_action"
+        with chat_api.session_factory() as db:
+            assert db.get(ChatAction, action_id).status == "stale"
+            paper = db.get(Paper, "paper-one")
+            assert "kg-entity" not in paper.html_content
+
+    def test_confirm_annotation_marks_action_stale_without_anchorable_occurrences(self, chat_api):
+        document = install_semantic_document(chat_api)
+        action_id = seed_annotation_action(chat_api, document)
+
+        response = chat_api.client.post(
+            f"/api/papers/paper-one/chat/actions/{action_id}/confirm",
+        )
+
+        assert response.status_code == 409
+        assert response.json()["detail"]["code"] == "stale_action"
+        with chat_api.session_factory() as db:
+            assert db.get(ChatAction, action_id).status == "stale"
+
+    def test_reject_annotation_action_leaves_html_untouched(self, chat_api):
+        document = install_semantic_document(chat_api, include_occurrences=True)
+        action_id = seed_annotation_action(chat_api, document)
+
+        rejected = chat_api.client.post(
+            f"/api/papers/paper-one/chat/actions/{action_id}/reject",
+        )
+
+        assert rejected.status_code == 200
+        assert rejected.json()["status"] == "rejected"
+        with chat_api.session_factory() as db:
+            paper = db.get(Paper, "paper-one")
+            assert "kg-entity" not in paper.html_content

@@ -96,6 +96,8 @@
 
 ### User Interaction
 - [x] **Chat-proposed entity additions** — When a chat question is about a term the graph does not cover, a small gated structured call proposes it; the label is mechanically verified against cited passage evidence and known labels, and confirming appends one observation, re-runs `canonicalize_observations`, and injects the new anchors (two-phase `add_entity` chat action)
+- [x] **Chat-proposed term highlighting** — When the asked-about term is already covered by the graph but carries no visible anchors, the same gated call now yields an `annotate_entity` proposal instead of a silent collision drop; confirming injects the subject's stored occurrences into the HTML without touching the graph (no semantic note is created — the anchors open Semantic Lens)
+- [x] **Chat-proposed definition deepening** — Asking about a term that is already highlighted means its stored definition did not help the reader, so a gated deepening call drafts a self-contained replacement that keeps the article-specific facts and adds background from the draft answer and general knowledge; the result rides the existing two-phase `redefine` action (reversible semantic-note override, canonical graph definition untouched)
 - [ ] **User-added definitions** — Allow users to manually add entities to the knowledge graph
   - "Add to Knowledge Graph" context menu on selected text
   - Triggers incremental extraction for that selection

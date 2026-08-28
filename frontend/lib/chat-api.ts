@@ -22,7 +22,7 @@ export type ChatCitation = {
 
 export type ChatActionStatus = 'pending' | 'confirmed' | 'rejected' | 'stale'
 
-export type ChatActionType = 'redefine' | 'add_entity'
+export type ChatActionType = 'redefine' | 'add_entity' | 'annotate_entity'
 
 export interface PendingChatAction {
   id: number
@@ -191,13 +191,13 @@ function parseAction(value: unknown): PendingChatAction {
     throw new Error('Invalid pending chat action')
   }
   const actionType = item.action_type === undefined ? 'redefine' : item.action_type
-  if (actionType !== 'redefine' && actionType !== 'add_entity') {
+  if (actionType !== 'redefine' && actionType !== 'add_entity' && actionType !== 'annotate_entity') {
     throw new Error('Invalid pending chat action')
   }
   const payload = item.payload === null || item.payload === undefined
     ? null
     : record(item.payload, 'action payload')
-  if (actionType === 'add_entity' && status === 'pending'
+  if ((actionType === 'add_entity' || actionType === 'annotate_entity') && status === 'pending'
     && (!payload || typeof payload.label !== 'string' || payload.label.length === 0)) {
     throw new Error('Invalid action payload')
   }

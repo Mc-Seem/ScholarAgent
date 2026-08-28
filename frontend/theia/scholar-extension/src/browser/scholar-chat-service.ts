@@ -350,7 +350,7 @@ export class ScholarChatService {
     try {
       const response = await this.api.confirmAction(paperId, actionId)
       this.replaceAction(response.action)
-      if (response.action.action_type === 'add_entity') {
+      if (response.action.action_type !== 'redefine') {
         await Promise.all([
           this.workspace.refreshPaper(paperId),
           this.workspace.refreshTooltips(paperId),

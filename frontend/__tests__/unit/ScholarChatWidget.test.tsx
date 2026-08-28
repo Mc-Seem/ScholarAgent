@@ -142,6 +142,39 @@ describe('ScholarChatView', () => {
     expect(screen.getByText('confirmed')).toHaveClass('scholar-chat-action-status')
   })
 
+  it('renders pending highlight proposals with confirm and reject wiring', async () => {
+    const user = userEvent.setup()
+    const handlers = actions()
+    const pendingAction = {
+      id: 12, source_message_id: 10, action_type: 'annotate_entity' as const, subject_id: 'procedure:dpo',
+      base_definition: null, proposed_definition: 'DPO aligns a policy without a reward model.',
+      payload: { label: 'DPO', occurrence_count: 12 },
+      knowledge_graph_version: 'v1', status: 'pending' as const,
+      created_at: '2026-08-23T20:00:00Z', updated_at: '2026-08-23T20:00:00Z',
+    }
+    const { rerender } = render(<ScholarChatView snapshot={snapshot({ messages: [{
+      id: 10, conversation_id: 1, role: 'assistant', content: 'Proposal', context: null,
+      citations: [], pending_action: pendingAction, created_at: '2026-08-23T20:00:00Z',
+    }] })} actions={handlers} />)
+
+    expect(screen.getByText('Highlight proposal')).toBeInTheDocument()
+    expect(screen.getByText('Highlight “DPO” (12 occurrences)')).toBeInTheDocument()
+    expect(screen.getByText('DPO aligns a policy without a reward model.')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Confirm highlight' }))
+    expect(handlers.confirmAction).toHaveBeenCalledWith(12)
+    await user.click(screen.getByRole('button', { name: 'Reject highlight' }))
+    expect(handlers.rejectAction).toHaveBeenCalledWith(12)
+
+    rerender(<ScholarChatView snapshot={snapshot({ messages: [{
+      id: 10, conversation_id: 1, role: 'assistant', content: 'Proposal', context: null,
+      citations: [],
+      pending_action: { ...pendingAction, status: 'confirmed' },
+      created_at: '2026-08-23T20:00:00Z',
+    }] })} actions={handlers} />)
+    expect(screen.queryByRole('button', { name: 'Confirm highlight' })).toBeNull()
+    expect(screen.getByText('confirmed')).toHaveClass('scholar-chat-action-status')
+  })
+
   it('renders markdown tables and typesets inline and display LaTeX', async () => {
     const typesetPromise = vi.fn().mockResolvedValue(undefined)
     const typesetClear = vi.fn()

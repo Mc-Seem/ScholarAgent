@@ -361,6 +361,48 @@ function AddEntityAction({ action, busy, actions }: {
   )
 }
 
+function AnnotateEntityAction({ action, busy, actions }: {
+  action: PendingChatAction
+  busy: boolean
+  actions: ScholarChatActions
+}): React.ReactNode {
+  const payloadLabel = action.payload?.label
+  const label = typeof payloadLabel === 'string' ? payloadLabel : action.subject_id ?? ''
+  const payloadCount = action.payload?.occurrence_count
+  const count = typeof payloadCount === 'number' ? payloadCount : null
+  return (
+    <section className={`scholar-chat-definition scholar-chat-definition-${action.status}`}>
+      <strong>Highlight proposal</strong>
+      <div className="scholar-chat-definition-row">
+        <span>Entity</span>
+        <p>{count !== null ? `Highlight “${label}” (${count} occurrences)` : `Highlight “${label}”`}</p>
+      </div>
+      <div className="scholar-chat-definition-row scholar-chat-definition-proposed">
+        <span>Definition</span>
+        <p>{action.proposed_definition}</p>
+      </div>
+      {action.status === 'pending' ? (
+        <div className="scholar-chat-definition-actions">
+          <button
+            type="button"
+            className="theia-button"
+            disabled={busy}
+            aria-label="Confirm highlight"
+            onClick={() => runAction(() => actions.confirmAction(action.id))}
+          >Confirm</button>
+          <button
+            type="button"
+            className="theia-button secondary"
+            disabled={busy}
+            aria-label="Reject highlight"
+            onClick={() => runAction(() => actions.rejectAction(action.id))}
+          >Reject</button>
+        </div>
+      ) : <span className="scholar-chat-action-status">{action.status}</span>}
+    </section>
+  )
+}
+
 function DefinitionAction({ action, busy, actions }: {
   action: PendingChatAction
   busy: boolean
@@ -368,6 +410,9 @@ function DefinitionAction({ action, busy, actions }: {
 }): React.ReactNode {
   if (action.action_type === 'add_entity') {
     return <AddEntityAction action={action} busy={busy} actions={actions} />
+  }
+  if (action.action_type === 'annotate_entity') {
+    return <AnnotateEntityAction action={action} busy={busy} actions={actions} />
   }
   return (
     <section className={`scholar-chat-definition scholar-chat-definition-${action.status}`}>

@@ -8,13 +8,14 @@ import pytest
 
 from backend.app.agents import chat_agent
 from backend.app.agents.chat_agent import (
+    DefinitionDeepeningOutput,
     DefinitionProposalOutput,
     EntityAdditionOutput,
     RouterOutput,
     run_chat_agent,
 )
 from backend.app.agents.knowledge_graph_retrieval import build_fixture_document
-from backend.app.agents.knowledge_graph_models import SemanticExplanation
+from backend.app.agents.knowledge_graph_models import SemanticExplanation, SemanticOccurrence
 
 
 ARTICLE_HTML = """
@@ -35,6 +36,24 @@ def with_elbo_definition(document):
             base_content="A lower bound on the log evidence.",
             expertise="intermediate",
             evidence_ids=[document.objects[0].observation_ids[0]],
+        )],
+    })
+
+
+def with_elbo_occurrence(document, fixture):
+    source = next(
+        item for item in fixture["retrieval_corpus"] if item["id"] == "p-elbo-definition"
+    )
+    start = source["text"].index("ELBO")
+    return document.model_copy(update={
+        "occurrences": [SemanticOccurrence(
+            stable_id="occurrence:quantity:elbo:p-elbo-definition",
+            subject_id="quantity:elbo",
+            dom_node_id="p-elbo-definition",
+            start=start,
+            end=start + len("ELBO"),
+            text="ELBO",
+            scope_id="sec-method",
         )],
     })
 
@@ -73,11 +92,13 @@ def install_fake_models(
     answer_output,
     definition_output=None,
     addition_output=None,
+    deepening_output=None,
 ):
     captured = {
         "router": [],
         "answer": [],
         "definition": [],
+        "deepening": [],
         "addition": [],
         "structured_options": [],
     }
@@ -93,6 +114,11 @@ def install_fake_models(
             return FakeStructuredModel(router_output, captured["router"])
         if schema is DefinitionProposalOutput:
             return FakeStructuredModel(definition_output, captured["definition"])
+        if schema is DefinitionDeepeningOutput:
+            return FakeStructuredModel(
+                deepening_output if deepening_output is not None else DefinitionDeepeningOutput(),
+                captured["deepening"],
+            )
         assert schema is EntityAdditionOutput
         return FakeStructuredModel(
             addition_output if addition_output is not None else EntityAdditionOutput(),
@@ -194,6 +220,7 @@ def test_multilingual_router_query_drives_passage_retrieval(monkeypatch):
     assert captured["structured_options"] == [
         (RouterOutput, {"include_raw": True}),
         (DefinitionProposalOutput, {"include_raw": True}),
+        (DefinitionDeepeningOutput, {"include_raw": True}),
         (EntityAdditionOutput, {"include_raw": True}),
     ]
     assert captured["addition"] == []
@@ -587,16 +614,14 @@ def test_entity_addition_offered_for_plain_question_with_general_knowledge(monke
     assert len(captured["addition"]) == 1
 
 
-def test_entity_addition_dropped_for_already_known_label(monkeypatch):
-    fixture, html = load_graph_fixture()
-    document = build_fixture_document(fixture)
-
+def elbo_addition_models(monkeypatch, deepening_output=None):
     def answer(messages):
         index = evidence_index(messages, kind="passage", text_contains="abbreviated ELBO")
-        return f"The ELBO is already described. [{index}]"
+        return f'The ELBO is already described. [quote:{index} "abbreviated ELBO"]'
 
     def addition(messages):
         payload = json.loads(messages[-1].content)
+        assert "ELBO" in payload["known_entity_labels"]
         entry = next(
             item for item in payload["UNTRUSTED_PASSAGE_EVIDENCE"]
             if "abbreviated ELBO" in item["text"]
@@ -608,12 +633,33 @@ def test_entity_addition_dropped_for_already_known_label(monkeypatch):
             evidence_index=entry["index"],
         )
 
-    install_fake_models(
+    return install_fake_models(
         monkeypatch,
         RouterOutput(intent="entity", retrieval_query="ELBO", use_graph=False),
         answer,
         addition_output=addition,
+        deepening_output=deepening_output,
     )
+
+
+def highlighted_elbo_fixture():
+    fixture, html = load_graph_fixture()
+    document = with_elbo_occurrence(
+        with_elbo_definition(build_fixture_document(fixture)), fixture
+    )
+    highlighted_html = html.replace(
+        "</article>",
+        '<p data-id="p-elbo-anchor">The <span class="kg-entity"'
+        ' data-subject-id="quantity:elbo" data-entity-id="quantity:elbo">ELBO</span>'
+        " anchor already exists.</p></article>",
+    )
+    return document, highlighted_html
+
+
+def test_known_label_without_anchorable_occurrences_yields_no_proposal(monkeypatch):
+    fixture, html = load_graph_fixture()
+    document = build_fixture_document(fixture)
+    elbo_addition_models(monkeypatch)
 
     result = run_chat_agent(
         question="What is ELBO?",
@@ -624,6 +670,135 @@ def test_entity_addition_dropped_for_already_known_label(monkeypatch):
     )
 
     assert result.entity_proposal is None
+    assert result.annotation_proposal is None
+
+
+def test_known_term_yields_annotation_proposal_for_unhighlighted_entity(monkeypatch):
+    fixture, html = load_graph_fixture()
+    document = with_elbo_occurrence(
+        with_elbo_definition(build_fixture_document(fixture)), fixture
+    )
+    elbo_addition_models(monkeypatch)
+
+    result = run_chat_agent(
+        question="What is ELBO?",
+        html_content=html,
+        sections_data=[],
+        knowledge_graph=document,
+        history=[],
+    )
+
+    proposal = result.annotation_proposal
+    assert proposal is not None
+    assert proposal.subject_id == "quantity:elbo"
+    assert proposal.label == "Evidence lower bound"
+    assert proposal.definition == "A lower bound on the log evidence."
+    assert proposal.occurrence_count == 1
+    assert proposal.knowledge_graph_version
+    assert result.entity_proposal is None
+    assert result.definition_proposal is None
+
+
+def test_already_highlighted_term_without_deepening_yields_no_proposal(monkeypatch):
+    document, highlighted_html = highlighted_elbo_fixture()
+    captured = elbo_addition_models(monkeypatch)
+
+    result = run_chat_agent(
+        question="What is ELBO?",
+        html_content=highlighted_html,
+        sections_data=[],
+        knowledge_graph=document,
+        history=[],
+    )
+
+    assert result.entity_proposal is None
+    assert result.annotation_proposal is None
+    assert result.definition_proposal is None
+    assert len(captured["deepening"]) == 1
+
+
+def test_already_highlighted_term_yields_definition_deepening_proposal(monkeypatch):
+    document, highlighted_html = highlighted_elbo_fixture()
+
+    def deepening(messages):
+        payload = json.loads(messages[-1].content)
+        assert payload["term"] == "Evidence lower bound"
+        assert payload["current_definition"] == "A lower bound on the log evidence."
+        assert "already described" in payload["draft_answer"]
+        return DefinitionDeepeningOutput(
+            proposed_definition=(
+                "A lower bound on the log evidence, maximized as the variational training objective."
+            ),
+        )
+
+    captured = elbo_addition_models(monkeypatch, deepening_output=deepening)
+
+    result = run_chat_agent(
+        question="What is ELBO?",
+        html_content=highlighted_html,
+        sections_data=[],
+        knowledge_graph=document,
+        history=[],
+    )
+
+    proposal = result.definition_proposal
+    assert proposal is not None
+    assert proposal.subject_id == "quantity:elbo"
+    assert proposal.target_text == "Evidence lower bound"
+    assert proposal.base_definition == "A lower bound on the log evidence."
+    assert "variational training objective" in proposal.proposed_definition
+    assert proposal.knowledge_graph_version
+    assert result.entity_proposal is None
+    assert result.annotation_proposal is None
+    assert len(captured["deepening"]) == 1
+
+
+def test_definition_deepening_uses_reader_override_as_base(monkeypatch):
+    document, highlighted_html = highlighted_elbo_fixture()
+
+    def deepening(messages):
+        payload = json.loads(messages[-1].content)
+        assert payload["current_definition"] == "Reader override for the ELBO."
+        return DefinitionDeepeningOutput(
+            proposed_definition="Reader override for the ELBO, deepened with background.",
+        )
+
+    elbo_addition_models(monkeypatch, deepening_output=deepening)
+
+    result = run_chat_agent(
+        question="What is ELBO?",
+        html_content=highlighted_html,
+        sections_data=[],
+        knowledge_graph=document,
+        history=[],
+        semantic_overrides={"quantity:elbo": "Reader override for the ELBO."},
+    )
+
+    proposal = result.definition_proposal
+    assert proposal is not None
+    assert proposal.base_definition == "Reader override for the ELBO."
+    assert proposal.proposed_definition.endswith("deepened with background.")
+
+
+def test_definition_deepening_dropped_when_output_matches_current_definition(monkeypatch):
+    document, highlighted_html = highlighted_elbo_fixture()
+    elbo_addition_models(
+        monkeypatch,
+        deepening_output=DefinitionDeepeningOutput(
+            proposed_definition="A lower bound on the log evidence.",
+        ),
+    )
+
+    result = run_chat_agent(
+        question="What is ELBO?",
+        html_content=highlighted_html,
+        sections_data=[],
+        knowledge_graph=document,
+        history=[],
+    )
+
+    assert result.definition_proposal is None
+    assert result.annotation_proposal is None
 
 
 def test_entity_addition_dropped_when_term_not_in_cited_passage(monkeypatch):

@@ -92,6 +92,38 @@ describe('chat API SSE parser', () => {
       .toThrow('Invalid pending chat action')
   })
 
+  it('parses annotate_entity actions and requires a pending payload label', () => {
+    const baseAction = {
+      id: 12, source_message_id: 6, subject_id: 'procedure:dpo', base_definition: null,
+      proposed_definition: 'DPO aligns a policy without a reward model.',
+      knowledge_graph_version: 'v1', status: 'pending',
+      created_at: '2026-08-25T20:00:00Z', updated_at: '2026-08-25T20:00:00Z',
+    }
+    const message = (pending_action: unknown) => ({
+      id: 6, conversation_id: 1, role: 'assistant', content: 'Answer',
+      context: null, citations: [], pending_action, created_at: '2026-08-25T20:00:00Z',
+    })
+
+    const parsed = validateChatMessage(message({
+      ...baseAction,
+      action_type: 'annotate_entity',
+      payload: { label: 'DPO', occurrence_count: 12 },
+    }))
+    expect(parsed.pending_action).toMatchObject({
+      action_type: 'annotate_entity',
+      subject_id: 'procedure:dpo',
+      payload: { label: 'DPO', occurrence_count: 12 },
+    })
+
+    expect(() => validateChatMessage(message({ ...baseAction, action_type: 'annotate_entity', payload: null })))
+      .toThrow('Invalid action payload')
+    expect(() => validateChatMessage(message({
+      ...baseAction, action_type: 'annotate_entity', payload: { occurrence_count: 12 },
+    }))).toThrow('Invalid action payload')
+    expect(() => validateChatMessage(message({ ...baseAction, action_type: 'wrong' })))
+      .toThrow('Invalid pending chat action')
+  })
+
   it('accepts a null tooltip in add_entity confirmations', async () => {
     const api = new HttpChatApi('http://backend')
     vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({

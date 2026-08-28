@@ -116,7 +116,7 @@ class PendingActionResponse(BaseModel):
 
     id: int
     source_message_id: int
-    action_type: Literal["redefine", "add_entity"]
+    action_type: Literal["redefine", "add_entity", "annotate_entity"]
     subject_id: str | None
     base_definition: str | None
     proposed_definition: str
@@ -322,6 +322,53 @@ def _stale_action(db: Session, action: ChatAction, message: str) -> HTTPExceptio
     )
 
 
+def _inject_subject_anchors(paper: Paper, occurrences: list[dict[str, Any]]) -> None:
+    """Anchor validated occurrences into the paper HTML, refusing corrupted output."""
+    if not paper.html_content or not occurrences:
+        return
+    injection = inject_validated_occurrences(paper.html_content, occurrences)
+    is_valid, validation_error = validate_html_integrity(paper.html_content, injection.html)
+    if not is_valid:
+        raise HTTPException(status_code=500, detail=f"HTML validation failed: {validation_error}")
+    paper.html_content = injection.html
+
+
+def _confirm_entity_annotation(
+    db: Session,
+    paper: Paper,
+    action: ChatAction,
+) -> ChatActionConfirmationResponse:
+    """Anchor the stored occurrences of an already known subject into the HTML.
+
+    The knowledge graph itself is untouched: the occurrences were validated when
+    the document was built, so confirming injects exactly the anchors the
+    ``/tooltips/apply`` flow would, just for one subject the reader asked about.
+    """
+    document = active_knowledge_document(paper.knowledge_graph)
+    stale = (
+        document is None
+        or not action.subject_id
+        or action.knowledge_graph_version != knowledge_document_version(document)
+        or all(item.stable_id != action.subject_id for item in document.entities)
+    )
+    if stale:
+        raise _stale_action(db, action, "The knowledge graph changed since this proposal was created.")
+    occurrences = [
+        item.model_dump(mode="json")
+        for item in document.occurrences
+        if item.subject_id == action.subject_id and item.dom_node_id
+    ]
+    if not occurrences:
+        raise _stale_action(db, action, "The entity no longer has anchorable occurrences.")
+
+    _inject_subject_anchors(paper, occurrences)
+    action.status = "confirmed"
+    action.updated_at = utcnow()
+    db.commit()
+    db.refresh(action)
+    return _confirmation_response(db, paper.id, action)
+
+
 def _confirm_entity_addition(
     db: Session,
     paper: Paper,
@@ -388,18 +435,11 @@ def _confirm_entity_addition(
     if subject is None:
         raise HTTPException(status_code=500, detail="The proposed entity could not be canonicalized")
 
-    if paper.html_content:
-        occurrences = [
-            item.model_dump(mode="json")
-            for item in refreshed.occurrences
-            if item.subject_id == subject.stable_id and item.dom_node_id
-        ]
-        injection = inject_validated_occurrences(paper.html_content, occurrences)
-        is_valid, validation_error = validate_html_integrity(paper.html_content, injection.html)
-        if not is_valid:
-            raise HTTPException(status_code=500, detail=f"HTML validation failed: {validation_error}")
-        paper.html_content = injection.html
-
+    _inject_subject_anchors(paper, [
+        item.model_dump(mode="json")
+        for item in refreshed.occurrences
+        if item.subject_id == subject.stable_id and item.dom_node_id
+    ])
     paper.knowledge_graph = refreshed.model_dump(mode="json")
     action.subject_id = subject.stable_id
     action.status = "confirmed"
@@ -517,6 +557,8 @@ async def confirm_action(
         raise HTTPException(status_code=409, detail=f"Chat action is {action.status}")
     if action.action_type == "add_entity":
         return _confirm_entity_addition(db, paper, action)
+    if action.action_type == "annotate_entity":
+        return _confirm_entity_annotation(db, paper, action)
 
     document = active_knowledge_document(paper.knowledge_graph)
     definition = semantic_definition(document, action.subject_id) if document is not None else None
@@ -650,6 +692,20 @@ async def stream_message(
                         "section_title": entity_proposal.section_title,
                     },
                     knowledge_graph_version=entity_proposal.knowledge_graph_version,
+                    status="pending",
+                )
+            elif result.annotation_proposal is not None:
+                annotation_proposal = result.annotation_proposal
+                assistant_message.action = ChatAction(
+                    action_type="annotate_entity",
+                    subject_id=annotation_proposal.subject_id,
+                    base_definition=None,
+                    proposed_definition=annotation_proposal.definition,
+                    payload={
+                        "label": annotation_proposal.label,
+                        "occurrence_count": annotation_proposal.occurrence_count,
+                    },
+                    knowledge_graph_version=annotation_proposal.knowledge_graph_version,
                     status="pending",
                 )
             db.commit()
