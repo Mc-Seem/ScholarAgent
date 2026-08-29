@@ -11,6 +11,10 @@ import type { SemanticTextEditor } from './EditableSemanticText'
 import { EquationLens } from './EquationLens'
 import { EvidenceLocations } from './EvidenceLocations'
 import { LatexText } from './LatexText'
+import {
+  SemanticLensOtherPapers,
+  type SemanticLensOtherPapersProps,
+} from './SemanticLensOtherPapers'
 import { SemanticSubjectSummary } from './SemanticSubjectSummary'
 
 interface SemanticDetailsProps {
@@ -25,6 +29,12 @@ interface SemanticDetailsProps {
    * read rather than in a second card next to it.
    */
   editor?: SemanticTextEditor
+  /**
+   * How other papers of a reading set name the selected term. Only the Theia
+   * lens supplies this; without it the section simply does not exist, so the
+   * deprecated web reader keeps its single-paper behaviour.
+   */
+  otherPapers?: SemanticLensOtherPapersProps | null
   onBack?: () => void
   onNavigate?: (domNodeId: string) => void
 }
@@ -47,6 +57,7 @@ export function SemanticDetails({
   loading = false,
   error,
   editor,
+  otherPapers,
   onBack,
   onNavigate,
 }: SemanticDetailsProps) {
@@ -64,12 +75,15 @@ export function SemanticDetails({
       )}
       {!loading && !error && (selection.kind === 'occurrence' || selection.kind === 'node') && subjectDetails && (
         subjectDetails.defining_equation ? (
-          <EquationLens
-            details={subjectDetails.defining_equation}
-            definedSubject={subjectDetails}
-            onNavigate={onNavigate}
-            editor={editor}
-          />
+          <>
+            <EquationLens
+              details={subjectDetails.defining_equation}
+              definedSubject={subjectDetails}
+              onNavigate={onNavigate}
+              editor={editor}
+            />
+            {otherPapers && <SemanticLensOtherPapers {...otherPapers} />}
+          </>
         ) : (
           <div className="semantic-lens" data-testid="semantic-subject">
             <SemanticSubjectSummary details={subjectDetails} editor={editor} />
@@ -78,6 +92,7 @@ export function SemanticDetails({
               redundantQuote={subjectDetails.subject.label}
               onNavigate={onNavigate}
             />
+            {otherPapers && <SemanticLensOtherPapers {...otherPapers} />}
           </div>
         )
       )}

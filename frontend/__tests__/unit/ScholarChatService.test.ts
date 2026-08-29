@@ -1,7 +1,18 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import type { ChatApi, ChatConversation, ChatMessage } from '@/lib/chat-api'
-import { ScholarChatService } from '@/theia/scholar-extension/src/browser/scholar-chat-service'
+import type { ReadingSet } from '@/lib/reading-set-api'
+import type { ScholarChatService as ScholarChatServiceClass } from '@/theia/scholar-extension/src/browser/scholar-chat-service'
+
+let ScholarChatService: typeof ScholarChatServiceClass
+
+beforeAll(async () => {
+  vi.stubGlobal('DragEvent', class DragEvent extends Event {})
+  document.queryCommandSupported = vi.fn(() => false)
+  ;({ ScholarChatService } = await import(
+    '@/theia/scholar-extension/src/browser/scholar-chat-service'
+  ))
+})
 
 function conversation(id: number, paperId = 'paper-a'): ChatConversation {
   return {
@@ -61,8 +72,30 @@ function setup() {
     confirmAction: vi.fn(),
     rejectAction: vi.fn(),
   }
-  const service = new ScholarChatService(api, workspace as never, selectionService as never)
-  return { api, service, workspace, selectionService, notifyWorkspace: () => workspaceListener?.() }
+  const citations = { openPaper: vi.fn().mockResolvedValue(undefined) }
+  const service = new ScholarChatService(
+    api, workspace as never, selectionService as never, citations as never,
+  )
+  return { api, service, workspace, selectionService, citations, notifyWorkspace: () => workspaceListener?.() }
+}
+
+function readingSet(): ReadingSet {
+  return {
+    id: 'set-1',
+    name: 'Preference Optimization',
+    created_at: '2026-08-29T10:00:00Z',
+    updated_at: '2026-08-29T10:00:00Z',
+    papers: [
+      {
+        id: 'paper-a', filename: 'paper-a.tar.gz', arxiv_id: null, title: 'Paper Alpha',
+        has_html: true, has_knowledge_graph: true, added_at: '2026-08-29T10:00:00Z',
+      },
+      {
+        id: 'paper-b', filename: 'paper-b.tar.gz', arxiv_id: null, title: 'Paper Beta',
+        has_html: true, has_knowledge_graph: false, added_at: '2026-08-29T10:00:00Z',
+      },
+    ],
+  }
 }
 
 describe('ScholarChatService', () => {
@@ -227,5 +260,76 @@ describe('ScholarChatService', () => {
     await service.activatePaper('paper-a')
     await service.rejectAction(8)
     expect(service.getSnapshot().messages[0].pending_action?.status).toBe('rejected')
+  })
+
+  it('pins a reading-set scope that survives paper switches until closed', async () => {
+    const { api, service, workspace, notifyWorkspace } = setup()
+    await service.initialize()
+
+    await service.activateReadingSet(readingSet())
+    expect(api.listConversations).toHaveBeenLastCalledWith({ readingSetId: 'set-1' })
+    expect(service.getSnapshot().readingSet).toMatchObject({
+      id: 'set-1',
+      name: 'Preference Optimization',
+      paperTitles: { 'paper-a': 'Paper Alpha', 'paper-b': 'Paper Beta' },
+    })
+
+    workspace.getSnapshot.mockReturnValue({ activePaperId: 'paper-b' })
+    notifyWorkspace()
+    expect(service.getSnapshot().readingSet?.id).toBe('set-1')
+    expect(api.listConversations).toHaveBeenLastCalledWith({ readingSetId: 'set-1' })
+
+    await service.closeReadingSetChat()
+    expect(service.getSnapshot().readingSet).toBeNull()
+    expect(api.listConversations).toHaveBeenLastCalledWith('paper-b')
+  })
+
+  it('creates conversations and streams messages against the reading-set routes', async () => {
+    const { api, service } = setup()
+    vi.mocked(api.listConversations).mockResolvedValue([])
+    vi.mocked(api.createConversation).mockResolvedValue({
+      id: 7, reading_set_id: 'set-1', title: 'Compare methods',
+      created_at: '2026-08-29T10:00:00Z', updated_at: '2026-08-29T10:00:00Z',
+    })
+    await service.activateReadingSet(readingSet())
+
+    await service.sendMessage('Compare methods')
+    expect(api.createConversation).toHaveBeenCalledWith({ readingSetId: 'set-1' }, 'Compare methods')
+    expect(api.streamMessage).toHaveBeenCalledWith(
+      { readingSetId: 'set-1' }, 7, expect.any(Object), expect.any(Function), expect.any(AbortSignal),
+    )
+  })
+
+  it('tags one-shot context with the source paper while in reading-set scope', async () => {
+    const { service } = setup()
+    await service.activateReadingSet(readingSet())
+
+    service.setNextContextForPaper('paper-b', { kind: 'selection', data_id: 'p-9', quote: 'phrase' })
+    expect(service.getSnapshot().nextContext).toEqual({
+      kind: 'selection', data_id: 'p-9', quote: 'phrase', paper_id: 'paper-b',
+    })
+
+    service.setNextContextForPaper('paper-x', { kind: 'selection', data_id: 'p-1', quote: 'other' })
+    expect(service.getSnapshot().nextContext?.paper_id).toBe('paper-b')
+  })
+
+  it('opens the cited paper tab and reveals the passage for reading-set citations', async () => {
+    const { service, citations } = setup()
+    await service.activateReadingSet(readingSet())
+    document.body.innerHTML = `
+      <div data-scholar-paper-id="paper-b">
+        <section data-id="sec-9"><p data-id="p-9">The exact cross-paper phrase is here.</p></section>
+      </div>`
+    const target = document.querySelector<HTMLElement>('[data-id="p-9"]')!
+    target.scrollIntoView = vi.fn()
+
+    service.requestCitation({
+      kind: 'quote', label: 'Evidence', source_id: 'p-9',
+      quote: 'exact cross-paper phrase', paper_id: 'paper-b',
+    })
+    await vi.waitFor(() => expect(citations.openPaper).toHaveBeenCalledWith('paper-b'))
+    await vi.waitFor(() => expect(target.scrollIntoView).toHaveBeenCalled())
+    expect(target.querySelector('mark.scholar-chat-quote-highlight')?.textContent)
+      .toBe('exact cross-paper phrase')
   })
 })

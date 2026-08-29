@@ -33,7 +33,7 @@ import {
   type QuickPickItem,
   type QuickPickSeparator,
 } from '@theia/core/lib/browser/quick-input/quick-input-service'
-import { inject, injectable } from '@theia/core/shared/inversify'
+import { inject, injectable, optional } from '@theia/core/shared/inversify'
 
 import type { Paper, PaperDetail } from '../../../../hooks/usePapers'
 import type { Tooltip } from '../../../../hooks/useTooltips'
@@ -63,6 +63,15 @@ import {
   ScholarAnnotationService,
   isScholarAnnotationTarget,
 } from './scholar-annotation-service'
+import { ScholarReadingSetService } from './scholar-reading-set-service'
+import { SharedTermHighlighter } from './scholar-shared-term-highlighter'
+import {
+  SCHOLAR_READING_SET_CONTEXT_MENU,
+  SCHOLAR_READING_SETS_WIDGET_ID,
+  ScholarReadingSetWidget,
+  isScholarReadingSetPaperTreeNode,
+  isScholarReadingSetTreeNode,
+} from './scholar-reading-set-widget'
 import {
   SCHOLAR_ANNOTATION_EDITOR_WIDGET_ID,
   SCHOLAR_TREE_CONTEXT_MENU,
@@ -84,6 +93,7 @@ import {
 } from './scholar-paper-graph-widget'
 import { SCHOLAR_SEMANTIC_LENS_WIDGET_ID } from './scholar-semantic-lens-widget'
 import { SCHOLAR_CHAT_WIDGET_ID } from './scholar-chat-widget'
+import { ScholarChatService } from './scholar-chat-service'
 import { ScholarSuggestionService } from './scholar-suggestion-service'
 import {
   SCHOLAR_SUGGESTION_EDITOR_WIDGET_ID,
@@ -113,6 +123,10 @@ interface GraphFilterQuickPickItem extends QuickPickItem {
   filterType: string
 }
 
+interface ReadingSetQuickPickItem extends QuickPickItem {
+  id: string
+}
+
 @injectable()
 export class ScholarContribution implements
   FrontendApplicationContribution,
@@ -129,10 +143,12 @@ export class ScholarContribution implements
   private pendingUploadInput: HTMLInputElement | undefined
   private pendingUploadCleanup: (() => void) | undefined
   private semanticLensReveal: Promise<void> = Promise.resolve()
+  private readonly sharedTermHighlighter = new SharedTermHighlighter()
 
   constructor(
     @inject(ScholarWorkspaceService) private readonly store: ScholarWorkspaceService,
     @inject(ScholarAnnotationService) private readonly annotations: ScholarAnnotationService,
+    @inject(ScholarReadingSetService) private readonly readingSets: ScholarReadingSetService,
     @inject(ScholarSuggestionService) private readonly suggestions: ScholarSuggestionService,
     @inject(ScholarLlmSettingsService) private readonly llmSettings: ScholarLlmSettingsService,
     @inject(WidgetManager) private readonly widgetManager: WidgetManager,
@@ -141,6 +157,7 @@ export class ScholarContribution implements
     @inject(MessageService) private readonly messageService: MessageService,
     @inject(QuickInputService) private readonly quickInputService: QuickInputService,
     @inject(SelectionService) private readonly selectionService: SelectionService,
+    @inject(ScholarChatService) @optional() private readonly chat?: ScholarChatService,
   ) {
     this.toDispose.push(this.onToolbarItemsChangedEmitter)
     this.toDispose.push(Disposable.create(() => this.activePaperSearchWidgetSubscription.dispose()))
@@ -195,8 +212,9 @@ export class ScholarContribution implements
   }
 
   async initializeLayout(app: FrontendApplication): Promise<void> {
-    const [library, navigation, chat, semanticLens, annotations, tooltipDrafts] = await Promise.all([
+    const [library, readingSets, navigation, chat, semanticLens, annotations, tooltipDrafts] = await Promise.all([
       this.widgetManager.getOrCreateWidget(SCHOLAR_LIBRARY_WIDGET_ID),
+      this.widgetManager.getOrCreateWidget(SCHOLAR_READING_SETS_WIDGET_ID),
       this.widgetManager.getOrCreateWidget(SCHOLAR_NAVIGATION_WIDGET_ID),
       this.widgetManager.getOrCreateWidget(SCHOLAR_CHAT_WIDGET_ID),
       this.widgetManager.getOrCreateWidget(SCHOLAR_SEMANTIC_LENS_WIDGET_ID),
@@ -205,10 +223,15 @@ export class ScholarContribution implements
     ])
 
     await app.shell.addWidget(library, { area: 'left', rank: 100 })
-    await app.shell.addWidget(navigation, {
+    await app.shell.addWidget(readingSets, {
       area: 'left',
       mode: 'tab-after',
       ref: library,
+    })
+    await app.shell.addWidget(navigation, {
+      area: 'left',
+      mode: 'tab-after',
+      ref: readingSets,
     })
     await app.shell.addWidget(chat, { area: 'right', rank: CHAT_RANK })
     await app.shell.addWidget(semanticLens, { area: 'right', rank: SEMANTIC_LENS_RANK })
@@ -241,6 +264,8 @@ export class ScholarContribution implements
   registerCommands(commands: CommandRegistry): void {
     const isLibraryCommandVisible = (argument: unknown): boolean => argument === undefined
       || argument instanceof ScholarLibraryWidget
+    const isReadingSetsCommandVisible = (argument: unknown): boolean => argument === undefined
+      || argument instanceof ScholarReadingSetWidget
     const isLlmSettingsCommandVisible = (argument: unknown): boolean => argument === undefined
       || argument instanceof ScholarLlmSettingsWidget
 
@@ -258,6 +283,61 @@ export class ScholarContribution implements
     })
     commands.registerCommand(ScholarCommands.SHOW_ANNOTATIONS, {
       execute: () => this.showView(SCHOLAR_ANNOTATIONS_WIDGET_ID, 'right'),
+    })
+    commands.registerCommand(ScholarCommands.SHOW_READING_SETS, {
+      execute: () => this.showView(SCHOLAR_READING_SETS_WIDGET_ID, 'left'),
+    })
+    commands.registerCommand(ScholarCommands.CREATE_READING_SET, {
+      execute: () => this.createReadingSet(),
+      isVisible: isReadingSetsCommandVisible,
+    })
+    commands.registerCommand(ScholarCommands.REFRESH_READING_SETS, {
+      execute: () => this.readingSets.refresh(),
+      isVisible: isReadingSetsCommandVisible,
+    })
+    commands.registerCommand(ScholarCommands.RENAME_READING_SET, {
+      execute: (argument: unknown) => this.renameReadingSetFromWidget(argument),
+      isEnabled: isScholarReadingSetTreeNode,
+      isVisible: isScholarReadingSetTreeNode,
+    })
+    commands.registerCommand(ScholarCommands.DELETE_READING_SET, {
+      execute: (argument: unknown) => this.deleteReadingSetFromWidget(argument),
+      isEnabled: isScholarReadingSetTreeNode,
+      isVisible: isScholarReadingSetTreeNode,
+    })
+    commands.registerCommand(ScholarCommands.ADD_PAPER_TO_READING_SET, {
+      execute: (argument: unknown) => this.addPaperToReadingSet(argument),
+      isEnabled: (argument: unknown) => Boolean(this.paperIdOf(argument)),
+      isVisible: (argument: unknown) => Boolean(this.paperIdOf(argument))
+        && !isScholarReadingSetPaperTreeNode(argument),
+    })
+    commands.registerCommand(ScholarCommands.REMOVE_PAPER_FROM_READING_SET, {
+      execute: (argument: unknown) => this.removePaperFromReadingSet(argument),
+      isEnabled: isScholarReadingSetPaperTreeNode,
+      isVisible: isScholarReadingSetPaperTreeNode,
+    })
+    commands.registerCommand(ScholarCommands.LINK_READING_SET_TERMS, {
+      execute: (argument: unknown) => this.linkReadingSetTerms(argument),
+      isEnabled: (argument: unknown) => isScholarReadingSetTreeNode(argument)
+        && !this.readingSets.isLinkingTerms(argument.readingSetId),
+      isVisible: (argument: unknown) => isScholarReadingSetTreeNode(argument)
+        && !this.readingSets.isLinkingTerms(argument.readingSetId),
+    })
+    commands.registerCommand(ScholarCommands.STOP_READING_SET_TERMS, {
+      execute: (argument: unknown) => this.stopReadingSetTerms(argument),
+      isEnabled: (argument: unknown) => isScholarReadingSetTreeNode(argument)
+        && this.readingSets.isLinkingTerms(argument.readingSetId),
+      isVisible: (argument: unknown) => isScholarReadingSetTreeNode(argument)
+        && this.readingSets.isLinkingTerms(argument.readingSetId),
+    })
+    commands.registerCommand(ScholarCommands.OPEN_READING_SET_CHAT, {
+      execute: (argument: unknown) => this.openReadingSetChat(argument),
+      isEnabled: isScholarReadingSetTreeNode,
+      isVisible: isScholarReadingSetTreeNode,
+    })
+    commands.registerCommand(ScholarCommands.HIGHLIGHT_SHARED_TERMS, {
+      execute: () => this.toggleSharedTermHighlights(),
+      isEnabled: () => this.canHighlightSharedTerms(),
     })
     commands.registerCommand(ScholarCommands.SHOW_TOOLTIP_DRAFTS, {
       execute: () => this.showView(SCHOLAR_TOOLTIP_DRAFTS_WIDGET_ID, 'right'),
@@ -558,6 +638,20 @@ export class ScholarContribution implements
       onDidChange: this.onToolbarItemsChangedEmitter.event,
     }))
     this.toDispose.push(registry.registerItem({
+      id: ScholarCommands.CREATE_READING_SET.id,
+      command: ScholarCommands.CREATE_READING_SET.id,
+      group: 'navigation',
+      priority: 10,
+      onDidChange: this.onToolbarItemsChangedEmitter.event,
+    }))
+    this.toDispose.push(registry.registerItem({
+      id: ScholarCommands.REFRESH_READING_SETS.id,
+      command: ScholarCommands.REFRESH_READING_SETS.id,
+      group: 'navigation',
+      priority: 20,
+      onDidChange: this.onToolbarItemsChangedEmitter.event,
+    }))
+    this.toDispose.push(registry.registerItem({
       id: ScholarCommands.UPLOAD_LATEX.id,
       command: ScholarCommands.UPLOAD_LATEX.id,
       group: 'navigation',
@@ -650,6 +744,10 @@ export class ScholarContribution implements
       order: 'a10',
     })
     menus.registerMenuAction(CommonMenus.VIEW_VIEWS, {
+      commandId: ScholarCommands.SHOW_READING_SETS.id,
+      order: 'a15',
+    })
+    menus.registerMenuAction(CommonMenus.VIEW_VIEWS, {
       commandId: ScholarCommands.SHOW_NAVIGATION.id,
       order: 'a20',
     })
@@ -698,8 +796,44 @@ export class ScholarContribution implements
       order: 'b22',
     })
     menus.registerMenuAction(SCHOLAR_LIBRARY_CONTEXT_MENU, {
+      commandId: ScholarCommands.ADD_PAPER_TO_READING_SET.id,
+      order: 'a30',
+    })
+    menus.registerMenuAction(SCHOLAR_LIBRARY_CONTEXT_MENU, {
       commandId: ScholarCommands.DELETE_PAPER.id,
       order: 'c10',
+    })
+    menus.registerMenuAction(SCHOLAR_READING_SET_CONTEXT_MENU, {
+      commandId: ScholarCommands.OPEN_PAPER.id,
+      order: 'a10',
+    })
+    menus.registerMenuAction(SCHOLAR_READING_SET_CONTEXT_MENU, {
+      commandId: ScholarCommands.OPEN_PAPER_TO_SIDE.id,
+      order: 'a20',
+    })
+    menus.registerMenuAction(SCHOLAR_READING_SET_CONTEXT_MENU, {
+      commandId: ScholarCommands.REMOVE_PAPER_FROM_READING_SET.id,
+      order: 'b10',
+    })
+    menus.registerMenuAction(SCHOLAR_READING_SET_CONTEXT_MENU, {
+      commandId: ScholarCommands.LINK_READING_SET_TERMS.id,
+      order: 'b20',
+    })
+    menus.registerMenuAction(SCHOLAR_READING_SET_CONTEXT_MENU, {
+      commandId: ScholarCommands.STOP_READING_SET_TERMS.id,
+      order: 'b21',
+    })
+    menus.registerMenuAction(SCHOLAR_READING_SET_CONTEXT_MENU, {
+      commandId: ScholarCommands.OPEN_READING_SET_CHAT.id,
+      order: 'b30',
+    })
+    menus.registerMenuAction(SCHOLAR_READING_SET_CONTEXT_MENU, {
+      commandId: ScholarCommands.RENAME_READING_SET.id,
+      order: 'c10',
+    })
+    menus.registerMenuAction(SCHOLAR_READING_SET_CONTEXT_MENU, {
+      commandId: ScholarCommands.DELETE_READING_SET.id,
+      order: 'c20',
     })
     menus.registerMenuAction(SCHOLAR_PAPER_CONTEXT_MENU, {
       commandId: ScholarCommands.ADD_ANNOTATION.id,
@@ -1275,6 +1409,232 @@ export class ScholarContribution implements
       void this.messageService.info('Paper deleted')
     } catch (reason) {
       await this.messageService.error(`Could not delete paper: ${errorMessage(reason)}`)
+    }
+  }
+
+  private async createReadingSet(): Promise<string | undefined> {
+    const name = await this.quickInputService.input({
+      title: 'New Reading Set',
+      placeHolder: 'Reading set name',
+      prompt: 'Group papers to read together across multi-paper features.',
+    })
+    const trimmed = name?.trim()
+    if (!trimmed) {
+      return undefined
+    }
+    try {
+      const created = await this.readingSets.createReadingSet(trimmed)
+      return created.id
+    } catch (reason) {
+      await this.messageService.error(`Could not create reading set: ${errorMessage(reason)}`)
+      return undefined
+    }
+  }
+
+  private async renameReadingSetFromWidget(argument: unknown): Promise<void> {
+    if (!isScholarReadingSetTreeNode(argument)) {
+      return
+    }
+    const current = this.readingSets.readingSetOf(argument.readingSetId)
+    const name = await this.quickInputService.input({
+      title: 'Rename Reading Set',
+      placeHolder: 'Reading set name',
+      value: current?.name,
+    })
+    const trimmed = name?.trim()
+    if (!trimmed || trimmed === current?.name) {
+      return
+    }
+    try {
+      await this.readingSets.renameReadingSet(argument.readingSetId, trimmed)
+    } catch (reason) {
+      await this.messageService.error(`Could not rename reading set: ${errorMessage(reason)}`)
+    }
+  }
+
+  private async deleteReadingSetFromWidget(argument: unknown): Promise<void> {
+    if (!isScholarReadingSetTreeNode(argument)) {
+      return
+    }
+    const confirmed = await new ConfirmDialog({
+      title: 'Delete Reading Set',
+      msg: 'Delete this reading set? The papers themselves stay in the library.',
+      ok: 'Delete',
+    }).open()
+    if (!confirmed) {
+      return
+    }
+    try {
+      await this.readingSets.deleteReadingSet(argument.readingSetId)
+    } catch (reason) {
+      await this.messageService.error(`Could not delete reading set: ${errorMessage(reason)}`)
+    }
+  }
+
+  private async addPaperToReadingSet(argument: unknown): Promise<void> {
+    const paperId = this.paperIdOf(argument)
+    if (!paperId) {
+      return
+    }
+    await this.readingSets.initialize()
+    const readingSetId = await this.pickReadingSet(paperId)
+    if (!readingSetId) {
+      return
+    }
+    try {
+      const updated = await this.readingSets.addPaperToReadingSet(readingSetId, paperId)
+      void this.messageService.info(`Added to reading set "${updated.name}"`)
+    } catch (reason) {
+      await this.messageService.error(`Could not add paper to reading set: ${errorMessage(reason)}`)
+    }
+  }
+
+  /**
+   * Offers existing reading sets (marking those that already contain the
+   * paper) plus a "create new" escape hatch, and resolves to the chosen
+   * reading set id.
+   */
+  private async pickReadingSet(paperId: string): Promise<string | undefined> {
+    const CREATE_NEW = 'scholar-agent:create-new-reading-set'
+    const items: ReadingSetQuickPickItem[] = this.readingSets.getSnapshot().readingSets.map(set => ({
+      id: set.id,
+      label: set.name,
+      description: set.papers.some(paper => paper.id === paperId)
+        ? 'Already contains this paper'
+        : `${set.papers.length} paper${set.papers.length === 1 ? '' : 's'}`,
+    }))
+    items.push({ id: CREATE_NEW, label: 'New Reading Set…', iconClasses: ['codicon', 'codicon-add'] })
+    const selected = await this.quickInputService.pick(items, {
+      title: 'Add to Reading Set',
+      placeHolder: 'Choose a reading set',
+      canPickMany: false,
+    })
+    if (!selected) {
+      return undefined
+    }
+    return selected.id === CREATE_NEW ? this.createReadingSet() : selected.id
+  }
+
+  /**
+   * Runs "Link terms" for a reading set and reports the outcome. Progress is
+   * rendered by the Reading Sets tree from the service snapshot; this handler
+   * only owns the terminal notification.
+   */
+  private async linkReadingSetTerms(argument: unknown): Promise<void> {
+    if (!isScholarReadingSetTreeNode(argument)) {
+      return
+    }
+    const name = this.readingSets.readingSetOf(argument.readingSetId)?.name ?? 'reading set'
+    try {
+      const result = await this.readingSets.linkTerms(argument.readingSetId)
+      if (result.stage === 'complete') {
+        const counts = `${result.alignmentCount} term link${result.alignmentCount === 1 ? '' : 's'}`
+        void this.messageService.info(`Linked terms in "${name}": ${counts}`)
+        if (result.skippedPapers.length > 0) {
+          const skipped = result.skippedPapers
+            .map(paper => paper.filename)
+            .join(', ')
+          void this.messageService.warn(
+            `Skipped papers without a knowledge graph: ${skipped}. `
+            + 'Build their knowledge graphs and run Link Terms again.',
+          )
+        }
+      } else if (result.stage === 'cancelled') {
+        void this.messageService.info(`Term linking cancelled for "${name}"`)
+      } else {
+        await this.messageService.error(
+          `Could not link terms: ${result.error ?? 'Unknown error'}`,
+        )
+      }
+    } catch (reason) {
+      await this.messageService.error(`Could not link terms: ${errorMessage(reason)}`)
+    }
+  }
+
+  /**
+   * The toggle is available while a highlight is active (so it can always be
+   * removed) or when at least two open papers belong to one reading set.
+   */
+  private canHighlightSharedTerms(): boolean {
+    if (this.sharedTermHighlighter.isActive()) {
+      return true
+    }
+    return Boolean(SharedTermHighlighter.candidateSet(
+      this.readingSets.getSnapshot().readingSets,
+      this.openPaperIds(),
+    ))
+  }
+
+  /** Ids of the open paper widgets, the active one first. */
+  private openPaperIds(): string[] {
+    const ids = this.widgetManager.getWidgets(SCHOLAR_PAPER_FACTORY_ID)
+      .filter((widget): widget is ScholarPaperWidget => widget instanceof ScholarPaperWidget
+        && !widget.isDisposed)
+      .map(widget => widget.options.paperId)
+    const active = this.activePaperWidget?.options.paperId
+    return active ? [active, ...ids.filter(id => id !== active)] : ids
+  }
+
+  private async toggleSharedTermHighlights(): Promise<void> {
+    try {
+      const outcome = await this.sharedTermHighlighter.toggle(this.readingSets, this.openPaperIds())
+      if (outcome.kind === 'no-set') {
+        await this.messageService.info(
+          'Open at least two papers from the same reading set to highlight shared terms.',
+        )
+      } else if (outcome.kind === 'no-terms') {
+        await this.messageService.info(
+          `No linked terms to highlight in "${outcome.readingSetName}". Run Link Terms first.`,
+        )
+      } else if (outcome.kind === 'highlighted') {
+        const groups = `${outcome.groupCount} shared term group${outcome.groupCount === 1 ? '' : 's'}`
+        void this.messageService.info(
+          `Highlighted ${groups} across ${outcome.paperCount} papers in "${outcome.readingSetName}". `
+          + 'Run the command again to remove the highlight.',
+        )
+      }
+    } catch (reason) {
+      await this.messageService.error(`Could not highlight shared terms: ${errorMessage(reason)}`)
+    }
+  }
+
+  private async openReadingSetChat(argument: unknown): Promise<void> {
+    if (!isScholarReadingSetTreeNode(argument) || !this.chat) {
+      return
+    }
+    const readingSet = this.readingSets.readingSetOf(argument.readingSetId)
+    if (!readingSet) {
+      return
+    }
+    try {
+      await this.chat.activateReadingSet(readingSet)
+      await this.showView(SCHOLAR_CHAT_WIDGET_ID, 'right')
+    } catch (reason) {
+      await this.messageService.error(`Could not open reading set chat: ${errorMessage(reason)}`)
+    }
+  }
+
+  private async stopReadingSetTerms(argument: unknown): Promise<void> {
+    if (!isScholarReadingSetTreeNode(argument)) {
+      return
+    }
+    try {
+      await this.readingSets.cancelLinkTerms(argument.readingSetId)
+    } catch (reason) {
+      await this.messageService.error(`Could not stop term linking: ${errorMessage(reason)}`)
+    }
+  }
+
+  private async removePaperFromReadingSet(argument: unknown): Promise<void> {
+    if (!isScholarReadingSetPaperTreeNode(argument)) {
+      return
+    }
+    try {
+      await this.readingSets.removePaperFromReadingSet(argument.readingSetId, argument.paperId)
+    } catch (reason) {
+      await this.messageService.error(
+        `Could not remove paper from reading set: ${errorMessage(reason)}`,
+      )
     }
   }
 

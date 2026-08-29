@@ -275,6 +275,85 @@
   color: var(--theia-foreground, #334155);
 }
 
+/* "In other papers": the reading-set connections of the active term. Rows
+   reuse the location button shell so a place in this paper and a place in
+   another paper read as the same kind of destination. */
+.semantic-other-papers {
+  min-width: 0;
+  color: var(--theia-descriptionForeground, #64748b);
+  font-size: 0.75rem;
+}
+
+.semantic-other-papers-list {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.semantic-other-paper-open em {
+  font-style: italic;
+}
+
+.semantic-other-paper-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.2rem;
+}
+
+/* Confidence wears its level in the text; the tint only supports it. */
+.semantic-confidence-badge {
+  padding: 0 0.3rem;
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: 1px solid currentcolor;
+  border-radius: 0.5rem;
+}
+
+.semantic-confidence-high {
+  color: var(--theia-successBackground, #047857);
+}
+
+.semantic-confidence-medium {
+  color: var(--theia-editorWarning-foreground, #b45309);
+}
+
+.semantic-confidence-low {
+  color: var(--theia-errorForeground, #b91c1c);
+}
+
+.semantic-other-paper-action {
+  padding: 0 0.25rem;
+  cursor: pointer;
+  color: var(--theia-textLink-foreground, #4338ca);
+  font-family: inherit;
+  font-size: 0.7rem;
+  font-weight: 500;
+  background: transparent;
+  border: 1px solid var(--theia-widget-border, #cbd5e1);
+  border-radius: 0.25rem;
+}
+
+.semantic-other-paper-action:hover:not(:disabled) {
+  color: var(--theia-textLink-activeForeground, #312e81);
+  background: var(--theia-list-hoverBackground, #f1f5f9);
+}
+
+.semantic-other-paper-action:disabled {
+  cursor: default;
+  color: var(--theia-descriptionForeground, #94a3b8);
+}
+
+.semantic-other-paper-confirmed {
+  color: var(--theia-successBackground, #047857);
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
 .semantic-editable {
   position: relative;
   min-width: 0;

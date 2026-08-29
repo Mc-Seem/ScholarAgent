@@ -1,4 +1,4 @@
-"""Bounded passage-first evidence retrieval for chat over one active paper."""
+"""Bounded passage-first evidence retrieval for chat over one active paper or a reading set."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
+from math import ceil
 from typing import Any, Literal, Mapping, Sequence
 
 from bs4 import BeautifulSoup, Tag
@@ -22,6 +23,7 @@ from backend.app.agents.knowledge_graph_retrieval import hybrid_retrieve, passag
 PASSAGE_LIMIT = 5
 PASSAGE_CONTEXT_RADIUS = 3
 GRAPH_EVIDENCE_LIMIT = 6
+ALIGNMENT_EVIDENCE_LIMIT = 4
 TOTAL_EVIDENCE_LIMIT = 12
 MAX_EVIDENCE_CHARS = 12_000
 MAX_RECORD_CHARS = 3_000
@@ -34,13 +36,14 @@ PASSAGE_TAGS = {
 @dataclass(frozen=True)
 class EvidenceRecord:
     handle: str
-    kind: Literal["passage", "entity"]
+    kind: Literal["passage", "entity", "alignment"]
     label: str
     text: str
     source_id: str | None = None
     section_id: str | None = None
     section_title: str | None = None
     subject_id: str | None = None
+    paper_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -49,6 +52,14 @@ class ChatRetrievalResult:
     graph_available: bool
     used_graph: bool
     expansion_depth: int
+
+
+@dataclass(frozen=True)
+class PaperCorpus:
+    """Passage corpus of one reading-set paper; empty when the paper has no HTML."""
+    paper_id: str
+    title: str
+    corpus: list[dict[str, Any]]
 
 
 def _normalized_text(element: Tag) -> str:
@@ -140,16 +151,27 @@ def _context_value(context: Any, field: str) -> Any:
     return getattr(context, field, None)
 
 
-def _passage_record(source: Mapping[str, Any], *, text: str | None = None) -> EvidenceRecord:
+def _passage_record(
+    source: Mapping[str, Any],
+    *,
+    text: str | None = None,
+    paper_id: str | None = None,
+) -> EvidenceRecord:
     section_title = source.get("section_title")
+    handle = (
+        f"paper:{paper_id}:passage:{source['id']}"
+        if paper_id
+        else f"passage:{source['id']}"
+    )
     return EvidenceRecord(
-        handle=f"passage:{source['id']}",
+        handle=handle,
         kind="passage",
         label=str(section_title or source.get("id")),
         text=str(text if text is not None else source["text"]),
         source_id=str(source["id"]),
         section_id=str(source["section_id"]) if source.get("section_id") else None,
         section_title=str(section_title) if section_title else None,
+        paper_id=paper_id,
     )
 
 
@@ -375,4 +397,126 @@ def retrieve_chat_evidence(
         graph_available=parsed_document is not None,
         used_graph=graph_enabled,
         expansion_depth=expansion_depth,
+    )
+
+
+def build_multi_paper_corpus(papers: Sequence[Any]) -> list[PaperCorpus]:
+    """Build one passage corpus per reading-set paper; papers without HTML stay empty."""
+    corpora: list[PaperCorpus] = []
+    for paper in papers:
+        paper_id = str(_context_value(paper, "id") or "").strip()
+        if not paper_id:
+            continue
+        title_value = _context_value(paper, "title")
+        title = str(title_value).strip() if title_value and str(title_value).strip() else paper_id
+        corpora.append(PaperCorpus(
+            paper_id=paper_id,
+            title=title,
+            corpus=build_chat_corpus(
+                _context_value(paper, "html_content"),
+                _context_value(paper, "sections_data"),
+            ),
+        ))
+    return corpora
+
+
+def _alignment_records(
+    alignments: Sequence[Any],
+    titles_by_paper_id: Mapping[str, str],
+) -> list[EvidenceRecord]:
+    """Active cross-paper terminology links as compact, non-citable evidence."""
+    records: list[EvidenceRecord] = []
+    for alignment in alignments:
+        if str(_context_value(alignment, "status") or "") in {"rejected", "stale"}:
+            continue
+        paper_a_id = str(_context_value(alignment, "paper_a_id") or "")
+        paper_b_id = str(_context_value(alignment, "paper_b_id") or "")
+        label_a = str(_context_value(alignment, "label_a") or "")
+        label_b = str(_context_value(alignment, "label_b") or "")
+        if not (paper_a_id and paper_b_id and label_a and label_b):
+            continue
+        title_a = titles_by_paper_id.get(paper_a_id, paper_a_id)
+        title_b = titles_by_paper_id.get(paper_b_id, paper_b_id)
+        confidence = str(_context_value(alignment, "confidence") or "unknown")
+        rationale = _context_value(alignment, "rationale")
+        text = f"{title_a}'s '{label_a}' ≈ {title_b}'s '{label_b}' ({confidence} confidence)."
+        if rationale and str(rationale).strip():
+            text = f"{text} {str(rationale).strip()}"
+        records.append(EvidenceRecord(
+            handle=f"alignment:{_context_value(alignment, 'id')}",
+            kind="alignment",
+            label=f"{label_a} ≈ {label_b}",
+            text=text[:MAX_RECORD_CHARS],
+        ))
+        if len(records) >= ALIGNMENT_EVIDENCE_LIMIT:
+            break
+    return records
+
+
+def retrieve_reading_set_evidence(
+    query: str,
+    paper_corpora: Sequence[PaperCorpus],
+    *,
+    alignments: Sequence[Any] | None = None,
+    context: Any = None,
+) -> ChatRetrievalResult:
+    """Fan passage retrieval out across the set's papers within the single-paper budgets."""
+    searchable = [item for item in paper_corpora if item.corpus]
+    per_paper_limit = ceil(PASSAGE_LIMIT / len(searchable)) + 1 if searchable else 0
+    ordered: list[EvidenceRecord] = []
+
+    context_kind = _context_value(context, "kind")
+    context_paper_id = _context_value(context, "paper_id")
+    context_paper = next(
+        (item for item in searchable if item.paper_id == str(context_paper_id)),
+        None,
+    ) if context_paper_id else None
+    if context_paper is not None and context_kind == "selection" and _context_value(context, "quote"):
+        context_source_id = str(_context_value(context, "data_id") or "")
+        quote = str(_context_value(context, "quote"))
+        source = next(
+            (item for item in context_paper.corpus if str(item["id"]) == context_source_id),
+            None,
+        )
+        if source is not None and quote in str(source["text"]):
+            ordered.append(_passage_record(source, text=quote, paper_id=context_paper.paper_id))
+    if context_paper is not None and context_kind == "section":
+        context_section_id = _context_value(context, "section_id")
+        for source in context_paper.corpus:
+            if source.get("section_id") == context_section_id:
+                ordered.append(_passage_record(source, paper_id=context_paper.paper_id))
+                if len(ordered) >= 2:
+                    break
+
+    ordered.extend(_alignment_records(
+        alignments or [],
+        {item.paper_id: item.title for item in paper_corpora},
+    ))
+
+    per_paper_hits: list[list[EvidenceRecord]] = []
+    for item in searchable:
+        retrieval = passage_retrieve(query, item.corpus, limit=per_paper_limit)
+        source_by_id = {str(source["id"]): source for source in item.corpus}
+        hits = [
+            _passage_record(source_by_id[source_id], paper_id=item.paper_id)
+            for source_id in retrieval.source_ids
+            if source_id in source_by_id
+        ]
+        hits.extend(
+            _passage_record(source, paper_id=item.paper_id)
+            for source in _section_neighbors(item.corpus, retrieval.source_ids)
+        )
+        per_paper_hits.append(hits)
+
+    # Interleave papers so no single paper crowds the bounded budget out.
+    for rank in range(max((len(hits) for hits in per_paper_hits), default=0)):
+        for hits in per_paper_hits:
+            if rank < len(hits):
+                ordered.append(hits[rank])
+
+    return ChatRetrievalResult(
+        evidence=_bounded(ordered),
+        graph_available=False,
+        used_graph=False,
+        expansion_depth=0,
     )

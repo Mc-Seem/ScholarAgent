@@ -5,15 +5,22 @@
 ```
 backend/
 ├── app/
-│   ├── api/main.py           # FastAPI paper/KG/tooltip endpoints
+│   ├── api/main.py           # FastAPI application and core paper endpoints
 │   ├── api/semantic_routes.py # Bounded semantic reader projections
 │   ├── api/settings_routes.py # Draft-aware LLM settings endpoints
+│   ├── api/reading_set_routes.py # Reading Set CRUD and term-alignment SSE
+│   ├── api/citation_routes.py # Bibliography cards and cached cross-paper targets
+│   ├── api/chat_routes.py     # Per-paper and Reading Set chat endpoints
 │   ├── agents/               # LangGraph pipelines
 │   │   ├── knowledge_graph.py    # Coordinated section extraction workflow
 │   │   ├── knowledge_graph_models.py # Versioned canonical contracts
 │   │   ├── knowledge_graph_canonical.py # Equation anchoring and stable canonicalization
 │   │   ├── knowledge_graph_projection.py # Bounded ranking/search/subgraphs
 │   │   ├── knowledge_graph_retrieval.py # Offline passage/hybrid evaluation
+│   │   ├── paper_alignment.py    # Deterministic + LLM cross-paper term alignment
+│   │   ├── citation_resolver.py  # Lazy citation-context target resolution
+│   │   ├── chat_retrieval.py     # Per-paper and budgeted multi-paper retrieval
+│   │   ├── chat_agent.py         # Grounded paper and Reading Set chat workflows
 │   │   ├── tooltip_suggestion.py # Explanation-subject expertise filtering
 │   │   └── utils.py              # Shared utilities (retry, strip_html)
 │   ├── compiler/
@@ -72,6 +79,21 @@ Runtime resolution is centralized in `utils/llm_settings.py` and
 legacy value, then that provider's recommendation. OpenAI, Ollama, and custom
 connections never inherit an Anthropic model fallback; custom connections with
 no explicit or compatible legacy model fail clearly.
+
+### Multi-Paper Persistence
+
+`ReadingSet` names an explicit group of papers; `ReadingSetPaper` stores its
+many-to-many membership with cascading foreign keys. `EntityAlignment` stores
+one canonically oriented cross-paper subject pair per set, denormalized labels,
+the deterministic/LLM method, score, confidence, rationale, and review status
+(`auto`, `confirmed`, `rejected`, or `stale`). Rebuilding alignments marks links
+from older KG versions stale rather than exposing them as current evidence.
+
+`CitationLink` lazily caches a bibliography reference from one paper onto a
+section or passage in another. The target HTML hash invalidates the cache after
+recompilation. A `ChatConversation` belongs to exactly one paper or one Reading
+Set; Reading Set chat citations carry `paper_id`, and definition-proposal
+actions remain available only in single-paper scope.
 
 ## Knowledge Graph Pipeline
 
@@ -150,6 +172,43 @@ the compiled `sections_data` section sequence, each section's `data-id` DOM
 sequence, and the source `char_start`. The order of `evidence_ids` is not a UI
 order: parallel extraction and canonical merging may arrange those IDs
 arbitrarily.
+
+### Reading Sets and Cross-Paper Navigation
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET/POST | `/api/reading-sets` | List or create Reading Sets |
+| GET/PUT/DELETE | `/api/reading-sets/{set}` | Read, rename, or delete a set |
+| POST/DELETE | `/api/reading-sets/{set}/papers/{paper}` | Add or remove a member paper |
+| POST | `/api/reading-sets/{set}/alignments/build` | Start deterministic + LLM term alignment |
+| GET | `/api/reading-sets/{set}/alignments/build/progress` | Alignment progress SSE |
+| POST | `/api/reading-sets/{set}/alignments/build/cancel` | Cooperatively cancel alignment |
+| GET | `/api/reading-sets/{set}/alignments` | List links, optionally filtered by paper/subject |
+| POST | `/api/reading-sets/{set}/alignments/{alignment}/confirm` | Confirm a proposed link |
+| POST | `/api/reading-sets/{set}/alignments/{alignment}/reject` | Reject a proposed link |
+| GET | `/api/papers/{paper}/citations/{key}/card` | Return bibliography text and a library match |
+| POST | `/api/papers/{paper}/citations/{key}/resolve` | Resolve and cache the referenced target fragment |
+
+The aligner profiles KG subjects, blocks obvious non-matches, resolves
+ambiguous candidates with the configured LLM, and commits only a complete,
+uncancelled build. Papers without a KG are reported as skipped. The current
+retrieval and pairwise-alignment budgets are intended for Reading Sets of about
+five papers; larger sets are accepted but can increase latency and evidence
+competition.
+
+### Reading Set Chat
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET/POST | `/api/reading-sets/{set}/chat/conversations` | List or create set-scoped conversations |
+| PATCH/DELETE | `/api/reading-sets/{set}/chat/conversations/{conversation}` | Rename or delete a conversation |
+| GET | `/api/reading-sets/{set}/chat/conversations/{conversation}/messages` | Load message history |
+| POST | `/api/reading-sets/{set}/chat/conversations/{conversation}/messages` | Stream a grounded multi-paper answer over SSE |
+
+Multi-paper retrieval preserves the existing total evidence limits while
+reserving a per-paper passage budget, and adds active term alignments as
+evidence for terminology questions. Every returned citation identifies its
+source paper so the Theia client can activate the correct tab and anchor.
 
 ### Tooltips
 | Method | Path | Description |

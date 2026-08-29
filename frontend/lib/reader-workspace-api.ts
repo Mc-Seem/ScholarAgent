@@ -10,6 +10,16 @@ import type {
 } from './reader-workspace-store'
 import { HttpSemanticApi } from './semantic-api'
 import type { EquationDetails, SectionAnnotationsResponse, SemanticSubjectDetails } from './semantic-api'
+import { HttpReadingSetApi } from './reading-set-api'
+import type {
+  EntityAlignment,
+  ReadingSet,
+  ReadingSetAlignmentFilter,
+  ReadingSetAlignmentProgress,
+  ReadingSetApi,
+} from './reading-set-api'
+import { HttpCitationApi } from './citation-api'
+import type { CitationApi, CitationCard, CitationResolution } from './citation-api'
 
 interface PaperListResponse {
   papers: Paper[]
@@ -229,11 +239,15 @@ function parseApplyTooltipSuggestionsResponse(value: unknown): ApplyTooltipSugge
   return value as unknown as ApplyTooltipSuggestionsResponse
 }
 
-export class HttpReaderWorkspaceApi implements ReaderWorkspaceApi, TooltipSuggestionApi {
+export class HttpReaderWorkspaceApi implements ReaderWorkspaceApi, TooltipSuggestionApi, ReadingSetApi, CitationApi {
   private readonly semanticApi: HttpSemanticApi
+  private readonly readingSetApi: HttpReadingSetApi
+  private readonly citationApi: HttpCitationApi
 
   constructor(private readonly apiBase = API_BASE) {
     this.semanticApi = new HttpSemanticApi(apiBase)
+    this.readingSetApi = new HttpReadingSetApi(apiBase)
+    this.citationApi = new HttpCitationApi(apiBase)
   }
 
   async listPapers(): Promise<Paper[]> {
@@ -370,6 +384,73 @@ export class HttpReaderWorkspaceApi implements ReaderWorkspaceApi, TooltipSugges
 
   getEquationDetails(paperId: string, equationId: string): Promise<EquationDetails> {
     return this.semanticApi.equationDetails(paperId, equationId)
+  }
+
+  listReadingSets(): Promise<ReadingSet[]> {
+    return this.readingSetApi.listReadingSets()
+  }
+
+  createReadingSet(name: string): Promise<ReadingSet> {
+    return this.readingSetApi.createReadingSet(name)
+  }
+
+  renameReadingSet(readingSetId: string, name: string): Promise<ReadingSet> {
+    return this.readingSetApi.renameReadingSet(readingSetId, name)
+  }
+
+  deleteReadingSet(readingSetId: string): Promise<void> {
+    return this.readingSetApi.deleteReadingSet(readingSetId)
+  }
+
+  addPaperToReadingSet(readingSetId: string, paperId: string): Promise<ReadingSet> {
+    return this.readingSetApi.addPaperToReadingSet(readingSetId, paperId)
+  }
+
+  removePaperFromReadingSet(readingSetId: string, paperId: string): Promise<ReadingSet> {
+    return this.readingSetApi.removePaperFromReadingSet(readingSetId, paperId)
+  }
+
+  buildReadingSetAlignments(readingSetId: string): Promise<void> {
+    return this.readingSetApi.buildReadingSetAlignments(readingSetId)
+  }
+
+  cancelReadingSetAlignments(readingSetId: string): Promise<void> {
+    return this.readingSetApi.cancelReadingSetAlignments(readingSetId)
+  }
+
+  listReadingSetAlignments(
+    readingSetId: string,
+    filter?: ReadingSetAlignmentFilter,
+  ): Promise<EntityAlignment[]> {
+    return this.readingSetApi.listReadingSetAlignments(readingSetId, filter)
+  }
+
+  confirmReadingSetAlignment(readingSetId: string, alignmentId: string): Promise<EntityAlignment> {
+    return this.readingSetApi.confirmReadingSetAlignment(readingSetId, alignmentId)
+  }
+
+  rejectReadingSetAlignment(readingSetId: string, alignmentId: string): Promise<EntityAlignment> {
+    return this.readingSetApi.rejectReadingSetAlignment(readingSetId, alignmentId)
+  }
+
+  watchReadingSetAlignments(
+    readingSetId: string,
+    onProgress: (progress: ReadingSetAlignmentProgress) => void,
+    onConnectionError: () => void,
+  ): () => void {
+    return this.readingSetApi.watchReadingSetAlignments(readingSetId, onProgress, onConnectionError)
+  }
+
+  getCitationCard(paperId: string, citeKey: string): Promise<CitationCard> {
+    return this.citationApi.getCitationCard(paperId, citeKey)
+  }
+
+  resolveCitation(
+    paperId: string,
+    citeKey: string,
+    targetPaperId: string,
+  ): Promise<CitationResolution> {
+    return this.citationApi.resolveCitation(paperId, citeKey, targetPaperId)
   }
 
   async listTooltipSuggestions(paperId: string): Promise<TooltipSuggestion[]> {

@@ -1,4 +1,4 @@
-"""Paper-scoped persistence and wire contracts for grounded chat."""
+"""Paper- and reading-set-scoped persistence and wire contracts for grounded chat."""
 
 from __future__ import annotations
 
@@ -10,9 +10,9 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
-from backend.app.agents.chat_agent import run_chat_agent
+from backend.app.agents.chat_agent import run_chat_agent, run_reading_set_chat_agent
 from backend.app.agents.chat_retrieval import (
     active_knowledge_document,
     knowledge_document_version,
@@ -23,7 +23,10 @@ from backend.app.database.models import (
     ChatAction,
     ChatConversation,
     ChatMessage,
+    EntityAlignment,
     Paper,
+    ReadingSet,
+    ReadingSetPaper,
     Tooltip,
     User,
     utcnow,
@@ -53,6 +56,7 @@ class ChatContext(BaseModel):
     subject_id: str | None = Field(default=None, min_length=1, max_length=128)
     label: str | None = Field(default=None, min_length=1, max_length=512)
     quote: str | None = Field(default=None, min_length=1, max_length=10_000)
+    paper_id: str | None = Field(default=None, min_length=1, max_length=64)
 
     @model_validator(mode="after")
     def validate_kind_fields(self):
@@ -81,6 +85,7 @@ class Citation(BaseModel):
     section_id: str | None = Field(default=None, min_length=1, max_length=256)
     subject_id: str | None = Field(default=None, min_length=1, max_length=128)
     quote: str | None = Field(default=None, min_length=1, max_length=10_000)
+    paper_id: str | None = Field(default=None, min_length=1, max_length=64)
 
     @model_validator(mode="after")
     def validate_kind_fields(self):
@@ -131,7 +136,8 @@ class ChatConversationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    paper_id: str
+    paper_id: str | None = None
+    reading_set_id: str | None = None
     title: str
     created_at: datetime
     updated_at: datetime
@@ -540,6 +546,276 @@ async def stream_message(
             logger.exception(
                 "Chat response generation failed for paper %s, conversation %s",
                 paper_id,
+                conversation_id,
+            )
+            yield _sse(
+                "error",
+                ChatErrorEvent(message="The chat response could not be generated."),
+            )
+
+    return StreamingResponse(
+        generate_events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# =============================================================================
+# Reading-set chat
+# =============================================================================
+#
+# The reading-set routes mirror the per-paper chat: a conversation is bound to
+# a reading_set_id instead of a paper_id and retrieval fans out over the set's
+# papers. Definition-proposal actions are disabled in this scope, so there are
+# no action routes under this prefix.
+
+reading_set_chat_router = APIRouter(
+    prefix="/api/reading-sets/{reading_set_id}/chat",
+    tags=["reading-set-chat"],
+)
+
+
+def _reading_set_or_404(db: Session, reading_set_id: str) -> ReadingSet:
+    reading_set = (
+        db.query(ReadingSet)
+        .options(selectinload(ReadingSet.memberships).selectinload(ReadingSetPaper.paper))
+        .filter(ReadingSet.id == reading_set_id)
+        .first()
+    )
+    if reading_set is None:
+        raise HTTPException(status_code=404, detail="Reading set not found")
+    return reading_set
+
+
+def _set_conversation_or_404(
+    db: Session,
+    reading_set_id: str,
+    conversation_id: int,
+) -> ChatConversation:
+    conversation = (
+        db.query(ChatConversation)
+        .filter(
+            ChatConversation.id == conversation_id,
+            ChatConversation.reading_set_id == reading_set_id,
+            ChatConversation.user_id == CURRENT_USER_ID,
+        )
+        .first()
+    )
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return conversation
+
+
+def _paper_title(paper: Paper) -> str | None:
+    metadata = paper.paper_metadata if isinstance(paper.paper_metadata, dict) else {}
+    title = metadata.get("title")
+    return title if isinstance(title, str) and title.strip() else None
+
+
+def _reading_set_papers_snapshot(reading_set: ReadingSet) -> list[dict]:
+    memberships = sorted(
+        reading_set.memberships,
+        key=lambda membership: (membership.added_at, membership.paper_id),
+    )
+    return [
+        {
+            "id": membership.paper.id,
+            "title": _paper_title(membership.paper) or membership.paper.filename,
+            "html_content": membership.paper.html_content,
+            "sections_data": membership.paper.sections_data,
+        }
+        for membership in memberships
+    ]
+
+
+def _active_alignments(db: Session, reading_set_id: str) -> list[dict]:
+    """Active alignments as plain snapshots that survive the streaming commits."""
+    alignments = (
+        db.query(EntityAlignment)
+        .filter(
+            EntityAlignment.reading_set_id == reading_set_id,
+            EntityAlignment.status.not_in(["rejected", "stale"]),
+        )
+        .order_by(EntityAlignment.created_at, EntityAlignment.id)
+        .all()
+    )
+    return [
+        {
+            "id": alignment.id,
+            "status": alignment.status,
+            "paper_a_id": alignment.paper_a_id,
+            "label_a": alignment.label_a,
+            "paper_b_id": alignment.paper_b_id,
+            "label_b": alignment.label_b,
+            "confidence": alignment.confidence,
+            "rationale": alignment.rationale,
+        }
+        for alignment in alignments
+    ]
+
+
+@reading_set_chat_router.get("/conversations", response_model=list[ChatConversationResponse])
+async def list_set_conversations(reading_set_id: str, db: Session = Depends(get_db)):
+    _reading_set_or_404(db, reading_set_id)
+    return (
+        db.query(ChatConversation)
+        .filter(
+            ChatConversation.reading_set_id == reading_set_id,
+            ChatConversation.user_id == CURRENT_USER_ID,
+        )
+        .order_by(ChatConversation.updated_at.desc(), ChatConversation.id.desc())
+        .all()
+    )
+
+
+@reading_set_chat_router.post(
+    "/conversations",
+    response_model=ChatConversationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_set_conversation(
+    reading_set_id: str,
+    request: ChatConversationCreate,
+    db: Session = Depends(get_db),
+):
+    _reading_set_or_404(db, reading_set_id)
+    _ensure_current_user(db)
+    conversation = ChatConversation(
+        reading_set_id=reading_set_id,
+        user_id=CURRENT_USER_ID,
+        title=request.title,
+    )
+    db.add(conversation)
+    db.commit()
+    db.refresh(conversation)
+    return conversation
+
+
+@reading_set_chat_router.patch(
+    "/conversations/{conversation_id}",
+    response_model=ChatConversationResponse,
+)
+async def rename_set_conversation(
+    reading_set_id: str,
+    conversation_id: int,
+    request: ChatConversationUpdate,
+    db: Session = Depends(get_db),
+):
+    _reading_set_or_404(db, reading_set_id)
+    conversation = _set_conversation_or_404(db, reading_set_id, conversation_id)
+    conversation.title = request.title
+    conversation.updated_at = utcnow()
+    db.commit()
+    db.refresh(conversation)
+    return conversation
+
+
+@reading_set_chat_router.delete(
+    "/conversations/{conversation_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_set_conversation(
+    reading_set_id: str,
+    conversation_id: int,
+    db: Session = Depends(get_db),
+):
+    _reading_set_or_404(db, reading_set_id)
+    conversation = _set_conversation_or_404(db, reading_set_id, conversation_id)
+    db.delete(conversation)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@reading_set_chat_router.get(
+    "/conversations/{conversation_id}/messages",
+    response_model=list[ChatMessageResponse],
+)
+async def list_set_messages(
+    reading_set_id: str,
+    conversation_id: int,
+    db: Session = Depends(get_db),
+):
+    _reading_set_or_404(db, reading_set_id)
+    _set_conversation_or_404(db, reading_set_id, conversation_id)
+    return (
+        db.query(ChatMessage)
+        .filter(ChatMessage.conversation_id == conversation_id)
+        .order_by(ChatMessage.id)
+        .all()
+    )
+
+
+@reading_set_chat_router.post("/conversations/{conversation_id}/messages")
+async def stream_set_message(
+    reading_set_id: str,
+    conversation_id: int,
+    request: ChatMessageCreate,
+    db: Session = Depends(get_db),
+):
+    reading_set = _reading_set_or_404(db, reading_set_id)
+    conversation = _set_conversation_or_404(db, reading_set_id, conversation_id)
+    history_rows = list(reversed(
+        db.query(ChatMessage)
+        .filter(ChatMessage.conversation_id == conversation.id)
+        .order_by(ChatMessage.id.desc())
+        .limit(HISTORY_QUERY_LIMIT)
+        .all()
+    ))
+    history = [
+        {"role": message.role, "content": message.content}
+        for message in history_rows
+    ]
+    papers = _reading_set_papers_snapshot(reading_set)
+    alignments = _active_alignments(db, reading_set_id)
+    user_message = ChatMessage(
+        conversation_id=conversation.id,
+        role="user",
+        content=request.content,
+        context_snapshot=request.context.model_dump(mode="json") if request.context else None,
+        citations=[],
+    )
+    conversation.updated_at = utcnow()
+    db.add(user_message)
+    db.commit()
+
+    async def generate_events():
+        yield _sse(
+            "status",
+            ChatStatusEvent(stage="retrieval", message="Preparing reading set evidence."),
+        )
+        yield _sse(
+            "status",
+            ChatStatusEvent(stage="answer", message="Preparing grounded answer."),
+        )
+        try:
+            result = run_reading_set_chat_agent(
+                question=request.content,
+                papers=papers,
+                alignments=alignments,
+                history=history,
+                context=request.context,
+            )
+            assistant_message = _grounded_assistant_message(conversation.id, result)
+            conversation.updated_at = utcnow()
+            db.add(assistant_message)
+            # Definition-proposal actions are disabled in reading-set scope, so
+            # any proposal on the result is intentionally not persisted.
+            db.commit()
+            db.refresh(assistant_message)
+            response = ChatMessageResponse.model_validate(assistant_message)
+            yield _sse(
+                "final",
+                ChatFinalEvent(
+                    message=response,
+                    citations=response.citations,
+                    pending_action=None,
+                ),
+            )
+        except Exception:
+            db.rollback()
+            logger.exception(
+                "Chat response generation failed for reading set %s, conversation %s",
+                reading_set_id,
                 conversation_id,
             )
             yield _sse(

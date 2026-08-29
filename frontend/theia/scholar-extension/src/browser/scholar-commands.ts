@@ -21,6 +21,60 @@ export const ScholarCommands = {
     id: 'scholar-agent.show-annotations',
     label: 'Scholar Agent: Show Annotations',
   } satisfies Command,
+  SHOW_READING_SETS: {
+    id: 'scholar-agent.show-reading-sets',
+    label: 'Scholar Agent: Show Reading Sets',
+  } satisfies Command,
+  CREATE_READING_SET: {
+    id: 'scholar-agent.create-reading-set',
+    label: 'Scholar Agent: New Reading Set',
+    iconClass: 'codicon codicon-add',
+  } satisfies Command,
+  REFRESH_READING_SETS: {
+    id: 'scholar-agent.refresh-reading-sets',
+    label: 'Scholar Agent: Refresh Reading Sets',
+    iconClass: 'codicon codicon-refresh',
+  } satisfies Command,
+  RENAME_READING_SET: {
+    id: 'scholar-agent.rename-reading-set',
+    label: 'Rename Reading Set',
+    iconClass: 'codicon codicon-edit',
+  } satisfies Command,
+  DELETE_READING_SET: {
+    id: 'scholar-agent.delete-reading-set',
+    label: 'Delete Reading Set',
+    iconClass: 'codicon codicon-trash',
+  } satisfies Command,
+  ADD_PAPER_TO_READING_SET: {
+    id: 'scholar-agent.add-paper-to-reading-set',
+    label: 'Add to Reading Set…',
+    iconClass: 'codicon codicon-folder-library',
+  } satisfies Command,
+  REMOVE_PAPER_FROM_READING_SET: {
+    id: 'scholar-agent.remove-paper-from-reading-set',
+    label: 'Remove from Reading Set',
+    iconClass: 'codicon codicon-remove',
+  } satisfies Command,
+  LINK_READING_SET_TERMS: {
+    id: 'scholar-agent.link-reading-set-terms',
+    label: 'Link Terms',
+    iconClass: 'codicon codicon-link',
+  } satisfies Command,
+  STOP_READING_SET_TERMS: {
+    id: 'scholar-agent.stop-reading-set-terms',
+    label: 'Stop Linking Terms',
+    iconClass: 'codicon codicon-stop-circle',
+  } satisfies Command,
+  OPEN_READING_SET_CHAT: {
+    id: 'scholar-agent.open-reading-set-chat',
+    label: 'Chat About Set',
+    iconClass: 'codicon codicon-comment-discussion',
+  } satisfies Command,
+  HIGHLIGHT_SHARED_TERMS: {
+    id: 'scholar-agent.highlight-shared-terms',
+    label: 'Scholar Agent: Highlight Shared Terms',
+    iconClass: 'codicon codicon-symbol-color',
+  } satisfies Command,
   SHOW_TOOLTIP_DRAFTS: {
     id: 'scholar-agent.show-tooltip-drafts',
     label: 'Scholar Agent: Show Term Highlights',

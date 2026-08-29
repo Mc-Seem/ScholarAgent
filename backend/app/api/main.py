@@ -23,6 +23,9 @@ from backend.app.compiler.latexml_compiler import compile_latex_to_html, Compila
 from backend.app.api.settings_routes import router as settings_router
 from backend.app.api.semantic_routes import router as semantic_router
 from backend.app.api.chat_routes import router as chat_router
+from backend.app.api.chat_routes import reading_set_chat_router
+from backend.app.api.reading_set_routes import router as reading_set_router
+from backend.app.api.citation_routes import router as citation_router
 from backend.app.semantic_notes import (
     EmptySemanticNote,
     SemanticNotePaperNotFound,
@@ -53,6 +56,9 @@ app.add_middleware(
 app.include_router(settings_router)
 app.include_router(semantic_router)
 app.include_router(chat_router)
+app.include_router(reading_set_chat_router)
+app.include_router(reading_set_router)
+app.include_router(citation_router)
 
 @app.get("/health")
 async def health_check():

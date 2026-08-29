@@ -9,6 +9,7 @@ export type ChatContext = {
   subject_id?: string
   label?: string
   quote?: string
+  paper_id?: string
 }
 
 export type ChatCitation = {
@@ -18,7 +19,11 @@ export type ChatCitation = {
   section_id?: string
   subject_id?: string
   quote?: string
+  paper_id?: string
 }
+
+/** A plain string targets one paper's chat; the object form targets a reading set. */
+export type ChatScope = string | { readingSetId: string }
 
 export type ChatActionStatus = 'pending' | 'confirmed' | 'rejected' | 'stale'
 
@@ -47,7 +52,8 @@ export interface ChatMessage {
 
 export interface ChatConversation {
   id: number
-  paper_id: string
+  paper_id?: string
+  reading_set_id?: string
   title: string
   created_at: string
   updated_at: string
@@ -80,13 +86,13 @@ export interface ChatActionConfirmation {
 }
 
 export interface ChatApi {
-  listConversations(paperId: string): Promise<ChatConversation[]>
-  createConversation(paperId: string, title: string): Promise<ChatConversation>
-  renameConversation(paperId: string, conversationId: number, title: string): Promise<ChatConversation>
-  deleteConversation(paperId: string, conversationId: number): Promise<void>
-  listMessages(paperId: string, conversationId: number): Promise<ChatMessage[]>
+  listConversations(scope: ChatScope): Promise<ChatConversation[]>
+  createConversation(scope: ChatScope, title: string): Promise<ChatConversation>
+  renameConversation(scope: ChatScope, conversationId: number, title: string): Promise<ChatConversation>
+  deleteConversation(scope: ChatScope, conversationId: number): Promise<void>
+  listMessages(scope: ChatScope, conversationId: number): Promise<ChatMessage[]>
   streamMessage(
-    paperId: string,
+    scope: ChatScope,
     conversationId: number,
     request: { content: string; context: ChatContext | null },
     onEvent: (event: ChatStreamEvent) => void,
@@ -148,6 +154,7 @@ function parseContext(value: unknown): ChatContext | null {
     subject_id: optionalString(item.subject_id, 'context subject_id'),
     label: optionalString(item.label, 'context label'),
     quote: optionalString(item.quote, 'context quote'),
+    paper_id: optionalString(item.paper_id, 'context paper_id'),
   }
   if (kind === 'selection' && (!context.data_id || !context.quote)) throw new Error('Invalid chat context')
   if (kind === 'section' && !context.section_id) throw new Error('Invalid chat context')
@@ -168,6 +175,7 @@ function parseCitation(value: unknown): ChatCitation {
     section_id: optionalString(item.section_id, 'citation section_id'),
     subject_id: optionalString(item.subject_id, 'citation subject_id'),
     quote: optionalString(item.quote, 'citation quote'),
+    paper_id: optionalString(item.paper_id, 'citation paper_id'),
   }
   if (kind === 'quote' && (!citation.source_id || !citation.quote)) throw new Error('Invalid chat citation')
   if (kind === 'section' && !citation.section_id) throw new Error('Invalid chat citation')
@@ -221,9 +229,13 @@ export function validateChatMessage(value: unknown): ChatMessage {
 
 export function validateChatConversation(value: unknown): ChatConversation {
   const item = record(value, 'chat conversation')
+  const paperId = optionalString(item.paper_id, 'conversation paper_id')
+  const readingSetId = optionalString(item.reading_set_id, 'conversation reading_set_id')
+  if (!paperId && !readingSetId) throw new Error('Invalid chat conversation scope')
   return {
     id: integer(item.id, 'conversation id'),
-    paper_id: string(item.paper_id, 'conversation paper_id'),
+    paper_id: paperId,
+    reading_set_id: readingSetId,
     title: string(item.title, 'conversation title'),
     created_at: string(item.created_at, 'conversation created_at'),
     updated_at: string(item.updated_at, 'conversation updated_at'),
@@ -335,49 +347,49 @@ async function apiError(response: Response): Promise<ChatApiError> {
 export class HttpChatApi implements ChatApi {
   constructor(private readonly apiBase = API_BASE) {}
 
-  async listConversations(paperId: string): Promise<ChatConversation[]> {
-    const value = await this.json(this.path(paperId, '/conversations'))
+  async listConversations(scope: ChatScope): Promise<ChatConversation[]> {
+    const value = await this.json(this.path(scope, '/conversations'))
     if (!Array.isArray(value)) throw new Error('Invalid chat conversation list')
     return value.map(validateChatConversation)
   }
 
-  async createConversation(paperId: string, title: string): Promise<ChatConversation> {
-    return validateChatConversation(await this.json(this.path(paperId, '/conversations'), {
+  async createConversation(scope: ChatScope, title: string): Promise<ChatConversation> {
+    return validateChatConversation(await this.json(this.path(scope, '/conversations'), {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title }),
     }))
   }
 
   async renameConversation(
-    paperId: string,
+    scope: ChatScope,
     conversationId: number,
     title: string,
   ): Promise<ChatConversation> {
-    return validateChatConversation(await this.json(this.path(paperId, `/conversations/${conversationId}`), {
+    return validateChatConversation(await this.json(this.path(scope, `/conversations/${conversationId}`), {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title }),
     }))
   }
 
-  async deleteConversation(paperId: string, conversationId: number): Promise<void> {
-    const response = await fetch(apiUrl(this.path(paperId, `/conversations/${conversationId}`), this.apiBase), {
+  async deleteConversation(scope: ChatScope, conversationId: number): Promise<void> {
+    const response = await fetch(apiUrl(this.path(scope, `/conversations/${conversationId}`), this.apiBase), {
       method: 'DELETE',
     })
     if (!response.ok) throw await apiError(response)
   }
 
-  async listMessages(paperId: string, conversationId: number): Promise<ChatMessage[]> {
-    const value = await this.json(this.path(paperId, `/conversations/${conversationId}/messages`))
+  async listMessages(scope: ChatScope, conversationId: number): Promise<ChatMessage[]> {
+    const value = await this.json(this.path(scope, `/conversations/${conversationId}/messages`))
     if (!Array.isArray(value)) throw new Error('Invalid chat message list')
     return value.map(validateChatMessage)
   }
 
   async streamMessage(
-    paperId: string,
+    scope: ChatScope,
     conversationId: number,
     request: { content: string; context: ChatContext | null },
     onEvent: (event: ChatStreamEvent) => void,
     signal?: AbortSignal,
   ): Promise<ChatFinalEvent> {
-    const response = await fetch(apiUrl(this.path(paperId, `/conversations/${conversationId}/messages`), this.apiBase), {
+    const response = await fetch(apiUrl(this.path(scope, `/conversations/${conversationId}/messages`), this.apiBase), {
       method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
       body: JSON.stringify(request), signal,
     })
@@ -422,8 +434,11 @@ export class HttpChatApi implements ChatApi {
     return parseAction(await this.json(this.path(paperId, `/actions/${actionId}/reject`), { method: 'POST' }))
   }
 
-  private path(paperId: string, suffix: string): string {
-    return `/api/papers/${encodeURIComponent(paperId)}/chat${suffix}`
+  private path(scope: ChatScope, suffix: string): string {
+    const base = typeof scope === 'string'
+      ? `/api/papers/${encodeURIComponent(scope)}/chat`
+      : `/api/reading-sets/${encodeURIComponent(scope.readingSetId)}/chat`
+    return `${base}${suffix}`
   }
 
   private async json(path: string, init?: RequestInit): Promise<unknown> {

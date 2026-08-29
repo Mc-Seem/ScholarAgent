@@ -39,6 +39,13 @@ import {
   ScholarLibraryWidget,
 } from './scholar-side-widgets'
 import { ScholarAnnotationService } from './scholar-annotation-service'
+import { ScholarCitationService } from './scholar-citation-service'
+import { ScholarReadingSetService } from './scholar-reading-set-service'
+import {
+  SCHOLAR_READING_SET_CONTEXT_MENU,
+  SCHOLAR_READING_SETS_WIDGET_ID,
+  ScholarReadingSetWidget,
+} from './scholar-reading-set-widget'
 import {
   SCHOLAR_ANNOTATION_EDITOR_WIDGET_ID,
   SCHOLAR_COMMENTS_WIDGET_ID,
@@ -84,7 +91,9 @@ export default new ContainerModule(bind => {
   bind(HttpChatApi).toSelf().inSingletonScope()
   bind(ScholarWorkspaceService).toSelf().inSingletonScope()
   bind(ScholarChatService).toSelf().inSingletonScope()
+  bind(ScholarReadingSetService).toSelf().inSingletonScope()
   bind(ScholarAnnotationService).toSelf().inSingletonScope()
+  bind(ScholarCitationService).toSelf().inSingletonScope()
   bind(ScholarSuggestionService).toSelf().inSingletonScope()
   bind(ScholarLlmSettingsService).toSelf().inSingletonScope()
   bindScholarGraphPropertyView(bind)
@@ -112,6 +121,19 @@ export default new ContainerModule(bind => {
       },
       widget: ScholarLibraryWidget,
     }).get(ScholarLibraryWidget),
+  })).inSingletonScope()
+
+  bind(WidgetFactory).toDynamicValue(context => ({
+    id: SCHOLAR_READING_SETS_WIDGET_ID,
+    createWidget: () => createTreeContainer(context.container, {
+      props: {
+        ...defaultTreeProps,
+        contextMenuPath: SCHOLAR_READING_SET_CONTEXT_MENU,
+        expandOnlyOnExpansionToggleClick: true,
+        search: true,
+      },
+      widget: ScholarReadingSetWidget,
+    }).get(ScholarReadingSetWidget),
   })).inSingletonScope()
 
   bind(WidgetFactory).toDynamicValue(context => ({
@@ -277,6 +299,7 @@ export default new ContainerModule(bind => {
         context.container.get(ScholarAnnotationService),
         context.container.get(SelectionService),
         context.container.get(ScholarChatService),
+        context.container.get(ScholarCitationService),
       )
     },
   })).inSingletonScope()

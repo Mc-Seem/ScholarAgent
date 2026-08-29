@@ -223,6 +223,77 @@
   outline: 1px solid var(--theia-editor-findMatchHighlightBorder, rgba(202, 138, 4, 0.8));
 }
 
+/* Popover card for a clicked [N] citation: bibliography text plus actions
+   against the matched library paper (open / show referenced fragment) or an
+   arXiv import when the reference is not in the library yet. */
+.scholar-citation-card {
+  position: fixed;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: 320px;
+  max-width: min(90vw, 380px);
+  padding: 0.6rem;
+  color: var(--theia-foreground);
+  background: var(--theia-editorWidget-background, var(--theia-editor-background));
+  border: 1px solid var(--theia-editorWidget-border, var(--theia-widget-border));
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+}
+
+.scholar-citation-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.scholar-citation-card-title {
+  font-weight: 600;
+}
+
+.scholar-citation-card-close {
+  padding: 0 0.3rem;
+  color: var(--theia-descriptionForeground);
+  font-size: 1rem;
+  line-height: 1;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.scholar-citation-card-close:hover {
+  color: var(--theia-foreground);
+}
+
+.scholar-citation-card-bib {
+  max-height: 140px;
+  overflow: auto;
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.scholar-citation-card-match {
+  color: var(--theia-descriptionForeground);
+  font-size: 0.8rem;
+}
+
+.scholar-citation-card-status {
+  color: var(--theia-descriptionForeground);
+  font-size: 0.85rem;
+}
+
+.scholar-citation-card-error {
+  color: var(--theia-errorForeground);
+  font-size: 0.85rem;
+}
+
+.scholar-citation-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
 .kg-entity {
   padding: 0 1px;
   border-bottom: 1px dotted rgba(99, 102, 241, 0.5);
@@ -244,6 +315,21 @@
 .kg-entity[data-entity-type="symbol"] { border-bottom-color: rgba(59, 130, 246, 0.5); }
 .kg-entity[data-entity-type="definition"] { border-bottom-color: rgba(16, 185, 129, 0.5); }
 .kg-entity[data-entity-type="theorem"] { border-bottom-color: rgba(139, 92, 246, 0.5); }
+
+/* Shared-term highlighting across the papers of one reading set. Every group
+   of aligned terms carries its own colour through a custom property, so the
+   palette itself stays in lib/design-system.ts. */
+.kg-entity.scholar-shared-term {
+  background-color: color-mix(in srgb, var(--scholar-shared-term-color) 22%, transparent);
+  border-bottom: 2px solid var(--scholar-shared-term-color);
+}
+
+/* Cross-paper term navigation flashes every occurrence of the target subject
+   while the first one scrolls into view. */
+.kg-entity.kg-entity-flash {
+  background-color: rgba(99, 102, 241, 0.25);
+  border-bottom-color: rgb(99, 102, 241);
+}
 
 .kg-node-math,
 .kg-node-math mjx-container {
@@ -885,6 +971,25 @@
   min-height: 0;
 }
 
+.scholar-chat-scope {
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
+  padding: 0.45rem 0.45rem 0;
+  color: var(--theia-descriptionForeground);
+  font-size: var(--theia-ui-font-size1);
+}
+
+.scholar-chat-scope-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--theia-foreground);
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 .scholar-chat-header {
   display: flex;
   gap: 0.25rem;
@@ -1076,6 +1181,14 @@
   border: 1px solid var(--theia-widget-border);
   border-radius: 999px;
   cursor: pointer;
+}
+
+.scholar-chat-citation-paper {
+  max-width: 12rem;
+  overflow: hidden;
+  color: var(--theia-descriptionForeground);
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .scholar-chat-definition {

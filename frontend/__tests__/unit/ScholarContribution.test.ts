@@ -564,6 +564,21 @@ function createContribution(store: ReturnType<typeof createFakeStore>) {
     input: vi.fn().mockResolvedValue(''),
   }
   const annotations = new ScholarAnnotationService()
+  const readingSets = {
+    getSnapshot: vi.fn(() => ({ readingSets: [], loading: false, error: null, alignmentBuilds: {} })),
+    subscribe: vi.fn(() => () => undefined),
+    initialize: vi.fn().mockResolvedValue(undefined),
+    refresh: vi.fn().mockResolvedValue(undefined),
+    readingSetOf: vi.fn(() => undefined),
+    createReadingSet: vi.fn(),
+    renameReadingSet: vi.fn(),
+    deleteReadingSet: vi.fn().mockResolvedValue(undefined),
+    addPaperToReadingSet: vi.fn(),
+    removePaperFromReadingSet: vi.fn(),
+    isLinkingTerms: vi.fn(() => false),
+    linkTerms: vi.fn(),
+    cancelLinkTerms: vi.fn().mockResolvedValue(undefined),
+  }
   const suggestions = {
     getSnapshot: vi.fn(() => ({ activePaperId: null, papers: {} })),
     getPaperState: vi.fn(() => ({
@@ -617,12 +632,18 @@ function createContribution(store: ReturnType<typeof createFakeStore>) {
     }),
   }
 
+  const chat = {
+    activateReadingSet: vi.fn().mockResolvedValue(undefined),
+    closeReadingSetChat: vi.fn().mockResolvedValue(undefined),
+  }
+
   const ContributionCtor = ScholarContribution as unknown as new (
     ...args: unknown[]
   ) => ScholarContributionClass
   const contribution = new ContributionCtor(
     store,
     annotations,
+    readingSets,
     suggestions,
     llmSettings,
     widgetManager,
@@ -631,6 +652,7 @@ function createContribution(store: ReturnType<typeof createFakeStore>) {
     messageService,
     quickInputService,
     selectionService,
+    chat,
   )
 
   return {
@@ -640,6 +662,8 @@ function createContribution(store: ReturnType<typeof createFakeStore>) {
     statusBar,
     messageService,
     quickInputService,
+    readingSets,
+    chat,
     fireCurrentWidgetChanged: () => currentWidgetListener?.({ newValue: shell.activeWidget }),
     publishSelection: (selection: unknown) => {
       selectionService.selection = selection
@@ -1390,6 +1414,8 @@ describe('ScholarContribution active-paper commands', () => {
       ScholarCommands.RESET_GRAPH_LAYOUT.id,
       ScholarCommands.REVEAL_GRAPH_SELECTION.id,
       ScholarCommands.REFRESH_LIBRARY.id,
+      ScholarCommands.CREATE_READING_SET.id,
+      ScholarCommands.REFRESH_READING_SETS.id,
       ScholarCommands.UPLOAD_LATEX.id,
       ScholarCommands.IMPORT_ARXIV.id,
       ScholarCommands.GENERATE_SUGGESTIONS.id,
@@ -2357,7 +2383,39 @@ describe('ScholarContribution menus', () => {
       ScholarCommands.BUILD_KNOWLEDGE_GRAPH.id,
       ScholarCommands.STOP_KNOWLEDGE_GRAPH.id,
       ScholarCommands.REANCHOR_OCCURRENCES.id,
+      ScholarCommands.ADD_PAPER_TO_READING_SET.id,
       ScholarCommands.DELETE_PAPER.id,
     ])
+  })
+})
+
+describe('ScholarContribution reading set chat', () => {
+  it('pins the reading-set chat and reveals the chat view from the context menu command', async () => {
+    const context = createContribution(createFakeStore(emptySnapshot()))
+    const readingSet = {
+      id: 'set-1', name: 'Set One',
+      created_at: '2026-08-29T10:00:00Z', updated_at: '2026-08-29T10:00:00Z', papers: [],
+    }
+    context.readingSets.readingSetOf.mockReturnValue(readingSet as never)
+    context.widgetManager.getOrCreateWidget.mockResolvedValue({
+      id: 'scholar-agent:chat', isAttached: true,
+    })
+    const commands = new FakeCommandRegistry()
+    context.contribution.registerCommands(commands as unknown as Parameters<
+      ScholarContributionClass['registerCommands']
+    >[0])
+
+    const node = {
+      id: 'reading-set:set-1', parent: undefined, selected: false, expanded: false,
+      children: [], readingSetId: 'set-1',
+    }
+    const handler = commands.handlerFor(ScholarCommands.OPEN_READING_SET_CHAT)
+    expect(handler.isVisible?.(node)).toBe(true)
+    expect(handler.isVisible?.({ paperId: 'paper-a' })).toBeFalsy()
+    await handler.execute(node)
+
+    expect(context.chat.activateReadingSet).toHaveBeenCalledWith(readingSet)
+    expect(context.shell.activateWidget).toHaveBeenCalledWith('scholar-agent:chat')
+    expect(context.messageService.error).not.toHaveBeenCalled()
   })
 })

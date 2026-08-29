@@ -21,6 +21,8 @@ import {
 } from './scholar-annotation-service'
 import type { ScholarWorkspaceService } from './scholar-workspace-service'
 import type { ScholarChatService } from './scholar-chat-service'
+import type { ScholarCitationService } from './scholar-citation-service'
+import { ScholarCitationCard } from './scholar-citation-card'
 import {
   SCHOLAR_GRAPH_SELECTION_KIND,
   ScholarGraphSelection,
@@ -62,6 +64,7 @@ export class ScholarPaperWidget extends ReactWidget {
     private readonly annotations: ScholarAnnotationService,
     private readonly selectionService: SelectionService,
     private readonly chat?: ScholarChatService,
+    private readonly citations?: ScholarCitationService,
   ) {
     super()
     this.selectionSource = {
@@ -212,6 +215,7 @@ export class ScholarPaperWidget extends ReactWidget {
         onSemanticSelect={this.handleSemanticSelection}
         onTextSelection={this.handleTextSelection}
         onCurrentSection={this.handleCurrentSection}
+        citations={this.citations}
       />
     )
   }
@@ -241,7 +245,16 @@ interface ScholarPaperContentProps {
   onSemanticSelect: (selection: SemanticSelection) => void
   onTextSelection: (context: ChatContext | null) => void
   onCurrentSection: (sectionId: string | null) => void
+  citations?: ScholarCitationService
 }
+
+interface CitationCardRequest {
+  citeKey: string
+  x: number
+  y: number
+}
+
+const BIB_FRAGMENT_MARKER = '#bib.'
 
 function ScholarPaperContent({
   store,
@@ -253,6 +266,7 @@ function ScholarPaperContent({
   onSemanticSelect,
   onTextSelection,
   onCurrentSection,
+  citations,
 }: ScholarPaperContentProps): React.ReactElement {
   const scrollRef = React.useRef<HTMLDivElement>(null)
   const snapshot = useScholarSnapshot(store)
@@ -261,6 +275,7 @@ function ScholarPaperContent({
   const { tooltipMap, entityTooltipMap } = useTooltipMaps(tooltips)
   const loading = snapshot.loadingPaperIds.includes(paperId)
   const error = snapshot.paperErrors[paperId]
+  const [citationRequest, setCitationRequest] = React.useState<CitationCardRequest | null>(null)
 
   React.useLayoutEffect(() => {
     onContentChanged()
@@ -332,6 +347,41 @@ function ScholarPaperContent({
     }
   }, [onCurrentSection, onTextSelection, paper?.html_content])
 
+  const hasCitations = Boolean(paper?.citations?.length)
+
+  React.useEffect(() => {
+    const scroll = scrollRef.current
+    if (!scroll || !paper?.html_content || !citations) return
+    const renderer = scroll.querySelector<HTMLElement>('.html-renderer')
+    if (!renderer) return
+
+    // Citations are recognized by their `#bib.*` anchors (LaTeXML wraps them
+    // in `<cite class="ltx_cite">`, but the href is the stable contract).
+    const handleCitationClick = (event: MouseEvent) => {
+      const target = event.target instanceof Element ? event.target : null
+      const anchor = target?.closest<HTMLAnchorElement>('a[href*="#bib."]')
+      if (!anchor || !renderer.contains(anchor)) return
+      const href = anchor.getAttribute('href') ?? ''
+      const citeKey = href.slice(href.indexOf(BIB_FRAGMENT_MARKER) + BIB_FRAGMENT_MARKER.length)
+      // Papers without extracted citations keep the default in-page jump.
+      if (!citeKey || !hasCitations) return
+      event.preventDefault()
+      event.stopPropagation()
+      setCitationRequest({ citeKey, x: event.clientX, y: event.clientY })
+    }
+
+    renderer.addEventListener('click', handleCitationClick)
+    return () => renderer.removeEventListener('click', handleCitationClick)
+  }, [citations, hasCitations, paper?.html_content])
+
+  React.useEffect(() => {
+    if (!citationRequest) return
+    const dismiss = () => setCitationRequest(null)
+    // The card stops mousedown propagation, so any other press dismisses it.
+    document.addEventListener('mousedown', dismiss)
+    return () => document.removeEventListener('mousedown', dismiss)
+  }, [citationRequest])
+
   const reportFailure = React.useCallback((action: string, reason: unknown) => {
     void messageService.error(`${action}: ${errorMessage(reason)}`)
   }, [messageService])
@@ -400,6 +450,26 @@ function ScholarPaperContent({
           />
         )}
       </div>
+      {citationRequest && citations && (
+        <ScholarCitationCard
+          paperId={paperId}
+          citeKey={citationRequest.citeKey}
+          anchor={{ x: citationRequest.x, y: citationRequest.y }}
+          api={citations}
+          onOpenPaper={targetPaperId => {
+            void citations.openPaper(targetPaperId)
+              .catch(reason => reportFailure('Could not open paper', reason))
+          }}
+          onShowFragment={(targetPaperId, resolution) => {
+            void citations.showFragment(targetPaperId, resolution)
+              .catch(reason => reportFailure('Could not show referenced fragment', reason))
+          }}
+          onImportArxiv={arxivId => {
+            void citations.importArxiv(arxivId)
+          }}
+          onClose={() => setCitationRequest(null)}
+        />
+      )}
     </div>
   )
 }

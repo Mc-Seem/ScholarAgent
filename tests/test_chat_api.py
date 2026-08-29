@@ -156,7 +156,11 @@ class TestChatModelsAndMigration:
         message_fks = {fk.target_fullname: fk.ondelete for fk in ChatMessage.__table__.foreign_keys}
         action_fks = {fk.target_fullname: fk.ondelete for fk in ChatAction.__table__.foreign_keys}
 
-        assert conversation_fks == {"papers.id": "CASCADE", "users.id": "CASCADE"}
+        assert conversation_fks == {
+            "papers.id": "CASCADE",
+            "reading_sets.id": "CASCADE",
+            "users.id": "CASCADE",
+        }
         assert message_fks == {"chat_conversations.id": "CASCADE"}
         assert action_fks == {"chat_messages.id": "CASCADE"}
         assert "knowledge_graph_version" in ChatAction.__table__.columns
@@ -345,6 +349,7 @@ class TestChatMessageStream:
             "subject_id": None,
             "label": "Selected passage",
             "quote": " exact selected phrase ",
+            "paper_id": None,
         }
         assert history[1]["id"] == final["message"]["id"]
 
@@ -455,6 +460,7 @@ class TestChatMessageStream:
             "section_id": "sec-1",
             "subject_id": None,
             "quote": "Exact evidence.",
+            "paper_id": None,
         }]
         assert captured["html_content"].startswith("<section")
         assert captured["history"] == []

@@ -119,6 +119,13 @@ frontend/theia/
         ├── scholar-graph-selection.ts  # Source-aware Theia graph selection
         ├── scholar-graph-property-view.tsx # Native Property View provider (fallback)
         ├── scholar-semantic-lens-widget.tsx # Right-sidebar Semantic/Equation Lens
+        ├── scholar-reading-set-widget.tsx # Native Reading Sets tree
+        ├── scholar-reading-set-service.ts # Shared sets, alignments, and SSE state
+        ├── scholar-shared-term-highlighter.ts # Per-alignment split-view highlights
+        ├── scholar-citation-card.tsx # Bibliography card and target actions
+        ├── scholar-citation-service.ts # Citation-card and resolution state
+        ├── scholar-chat-widget.tsx # Paper/Reading Set chat presentation
+        ├── scholar-chat-service.ts # Conversation, streaming, and citation routing
         ├── scholar-side-widgets.tsx    # Papers library
         ├── scholar-native-widgets.tsx  # Native trees, annotation detail/editor
         ├── scholar-annotation-preview.tsx # LaTeX-aware comment tree rows
@@ -138,6 +145,37 @@ and keeps active-entity state isolated per tab. Activating an already loaded
 tab therefore does not refetch it. A singleton `HttpReaderWorkspaceApi` supplies
 the common FastAPI client, typed tooltip-suggestion operations, and compilation
 and knowledge-graph SSE subscriptions.
+
+### Reading Sets and Cross-Paper Workflows
+
+`ScholarReadingSetWidget` is a native `TreeWidget` in the left `Navigate`
+container. Its set nodes expand to member papers, and the library and tree
+context menus provide create, rename, delete, add/remove paper, open-all,
+`Link Terms`, stop-linking, shared-term highlighting, and Reading Set chat.
+`ScholarReadingSetService` owns the authoritative API-backed snapshot, caches
+alignments, and publishes SSE build progress without optimistic local state.
+
+Selecting an aligned term adds an `In other papers` section to
+`ScholarSemanticLensWidget`. Each row shows the other paper's local label,
+confidence and review controls; opening it activates the target paper, selects
+the target subject, and scrolls to its first occurrence. Rejected and stale
+alignments remain reviewable in storage but are excluded from reading surfaces.
+`ScholarSharedTermHighlighter` assigns stable design-system colors per active
+alignment across split paper widgets, and the same command toggles all added
+marks off.
+
+Clicking an in-text bibliography reference opens `ScholarCitationCard` with the
+stored entry and its library match. It can open an available paper, import a
+recognized arXiv paper that is not in the library, or lazily resolve and flash
+the referenced section/passage in an already compiled target. Cached targets
+are invalidated server-side when target HTML changes.
+
+Reading Set chat reuses `ScholarChatWidget` with a set scope banner and
+set-scoped conversation endpoints. Retrieval fans out with per-paper budgets,
+citations display the source paper title, and clicking a citation routes to the
+correct paper tab before selecting its anchor. The current interaction is
+optimized for sets of roughly five papers; larger sets may have slower linking
+and less balanced retrieval.
 
 Theia persists widget factory options (`paperId` and label), so paper tabs,
 split groups, and side-view layout restore across restarts. The Next.js
