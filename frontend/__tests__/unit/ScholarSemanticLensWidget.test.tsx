@@ -136,20 +136,38 @@ function createLens(store: LensStore) {
     ...store,
     saveSemanticNote,
     clearSemanticNote,
+    setActiveEntity: vi.fn(),
+    setSemanticSelection: vi.fn(),
     getSnapshot: () => ({ tooltipsByPaperId: { 'paper-a': store.tooltips ?? [] } }),
     subscribe: () => () => undefined,
   }
+  const readingSets = {
+    getSnapshot: vi.fn(() => ({ readingSets: [], loading: false, error: null, alignmentBuilds: {} })),
+    subscribe: vi.fn(() => () => undefined),
+    initialize: vi.fn().mockResolvedValue(undefined),
+    alignmentsOf: vi.fn(() => undefined),
+    loadAlignments: vi.fn().mockResolvedValue([]),
+    confirmAlignment: vi.fn(),
+    rejectAlignment: vi.fn(),
+  }
+  const widgetManager = {
+    getOrCreateWidget: vi.fn(),
+  }
+  const shell = {
+    addWidget: vi.fn().mockResolvedValue(undefined),
+    activateWidget: vi.fn().mockResolvedValue(undefined),
+  }
   const WidgetCtor = ScholarSemanticLensWidget as unknown as new (
-    store: unknown,
-    selectionService: unknown,
-    chat: unknown,
-    commandService: unknown,
+    ...args: unknown[]
   ) => ScholarSemanticLensWidgetClass
   const widget = new WidgetCtor(
     fullStore,
     selectionService,
     { setNextContextForPaper, sendMessage },
     { executeCommand },
+    readingSets,
+    widgetManager,
+    shell,
   )
   return {
     widget,

@@ -1,5 +1,5 @@
 import { Emitter, Event, SelectionService } from '@theia/core'
-import { inject, injectable } from '@theia/core/shared/inversify'
+import { inject, injectable, optional } from '@theia/core/shared/inversify'
 
 import {
   ChatApiError,
@@ -9,19 +9,30 @@ import {
   type ChatContext,
   type ChatConversation,
   type ChatMessage,
+  type ChatScope,
   type ChatStreamEvent,
   type PendingChatAction,
 } from '../../../../lib/chat-api'
 import type { SemanticSelection } from '../../../../lib/semantic-api'
+import type { ReadingSet } from '../../../../lib/reading-set-api'
 import { ScholarWorkspaceService } from './scholar-workspace-service'
+import { ScholarCitationService } from './scholar-citation-service'
 import {
   SCHOLAR_GRAPH_SELECTION_KIND,
   ScholarGraphSelection,
 } from './scholar-graph-selection'
-import { navigateToPaperElement } from './scholar-react'
+import { navigateToPaperElement, paperLabel, revealDomNode } from './scholar-react'
+
+/** Reading-set chat scope pinned by the user; paper titles back the citation chips. */
+export interface ScholarChatReadingSetScope {
+  readonly id: string
+  readonly name: string
+  readonly paperTitles: Readonly<Record<string, string>>
+}
 
 export interface ScholarChatSnapshot {
   readonly activePaperId: string | null
+  readonly readingSet: ScholarChatReadingSetScope | null
   readonly conversations: readonly ChatConversation[]
   readonly activeConversationId: number | null
   readonly messages: readonly ChatMessage[]
@@ -37,9 +48,13 @@ export interface ScholarChatSnapshot {
 
 type Listener = () => void
 
-function initialSnapshot(activePaperId: string | null = null): ScholarChatSnapshot {
+function initialSnapshot(
+  activePaperId: string | null = null,
+  readingSet: ScholarChatReadingSetScope | null = null,
+): ScholarChatSnapshot {
   return {
     activePaperId,
+    readingSet,
     conversations: [],
     activeConversationId: null,
     messages: [],
@@ -102,8 +117,12 @@ export class ScholarChatService {
     @inject(HttpChatApi) private readonly api: ChatApi,
     @inject(ScholarWorkspaceService) private readonly workspace: ScholarWorkspaceService,
     @inject(SelectionService) private readonly selectionService: SelectionService,
+    @inject(ScholarCitationService) @optional() private readonly citations?: ScholarCitationService,
   ) {
     this.unsubscribeWorkspace = this.workspace.subscribe(() => {
+      // A pinned reading-set chat survives paper tab switches; citation clicks
+      // activate paper tabs and must not reset the conversation.
+      if (this.snapshot.readingSet) return
       const paperId = this.workspace.getSnapshot().activePaperId
       if (paperId !== this.snapshot.activePaperId) void this.activatePaper(paperId)
     })
@@ -135,12 +154,38 @@ export class ScholarChatService {
     const version = ++this.loadVersion
     this.update({ ...initialSnapshot(paperId), loading: Boolean(paperId) })
     if (!paperId) return
+    await this.loadConversations(paperId, version)
+  }
+
+  /** Pins the chat to a reading set until `closeReadingSetChat` or dispose. */
+  async activateReadingSet(readingSet: ReadingSet): Promise<void> {
+    this.cancelStream()
+    const version = ++this.loadVersion
+    const scope: ScholarChatReadingSetScope = {
+      id: readingSet.id,
+      name: readingSet.name,
+      paperTitles: Object.fromEntries(readingSet.papers.map(paper => [
+        paper.id,
+        paperLabel(paper.filename, paper.title ?? undefined),
+      ])),
+    }
+    this.update({ ...initialSnapshot(null, scope), loading: true })
+    await this.loadConversations({ readingSetId: readingSet.id }, version)
+  }
+
+  /** Returns the chat to the per-paper scope of the currently active paper. */
+  async closeReadingSetChat(): Promise<void> {
+    if (!this.snapshot.readingSet) return
+    await this.activatePaper(this.workspace.getSnapshot().activePaperId)
+  }
+
+  private async loadConversations(scope: ChatScope, version: number): Promise<void> {
     try {
-      const conversations = await this.api.listConversations(paperId)
+      const conversations = await this.api.listConversations(scope)
       if (version !== this.loadVersion) return
       const activeConversationId = conversations[0]?.id ?? null
       this.update({ conversations, activeConversationId, loading: Boolean(activeConversationId) })
-      if (activeConversationId) await this.loadMessages(paperId, activeConversationId, version)
+      if (activeConversationId) await this.loadMessages(scope, activeConversationId, version)
       else this.update({ loading: false })
     } catch (reason) {
       if (version !== this.loadVersion) return
@@ -149,18 +194,18 @@ export class ScholarChatService {
   }
 
   async selectConversation(conversationId: number): Promise<void> {
-    const paperId = this.requirePaper()
+    const scope = this.requireScope()
     if (!this.snapshot.conversations.some(item => item.id === conversationId)) return
     const version = ++this.loadVersion
     this.cancelStream()
     this.update({ activeConversationId: conversationId, messages: [], loading: true, error: null })
-    await this.loadMessages(paperId, conversationId, version)
+    await this.loadMessages(scope, conversationId, version)
   }
 
   async createConversation(title = 'New conversation'): Promise<ChatConversation> {
-    const paperId = this.requirePaper()
+    const scope = this.requireScope()
     try {
-      const conversation = await this.api.createConversation(paperId, title.trim() || 'New conversation')
+      const conversation = await this.api.createConversation(scope, title.trim() || 'New conversation')
       ++this.loadVersion
       this.update({
         conversations: [conversation, ...this.snapshot.conversations],
@@ -176,9 +221,9 @@ export class ScholarChatService {
   }
 
   async renameConversation(conversationId: number, title: string): Promise<void> {
-    const paperId = this.requirePaper()
+    const scope = this.requireScope()
     try {
-      const conversation = await this.api.renameConversation(paperId, conversationId, title.trim())
+      const conversation = await this.api.renameConversation(scope, conversationId, title.trim())
       this.update({
         conversations: this.snapshot.conversations.map(item =>
           item.id === conversationId ? conversation : item),
@@ -191,11 +236,11 @@ export class ScholarChatService {
   }
 
   async deleteConversation(conversationId: number): Promise<void> {
-    const paperId = this.requirePaper()
+    const scope = this.requireScope()
     const previousActiveConversationId = this.snapshot.activeConversationId
     if (previousActiveConversationId === conversationId) this.cancelStream()
     try {
-      await this.api.deleteConversation(paperId, conversationId)
+      await this.api.deleteConversation(scope, conversationId)
     } catch (reason) {
       this.update({ error: errorMessage(reason) })
       throw reason
@@ -222,6 +267,12 @@ export class ScholarChatService {
   }
 
   setNextContextForPaper(paperId: string, context: ChatContext | null): void {
+    if (this.snapshot.readingSet) {
+      if (!(paperId in this.snapshot.readingSet.paperTitles)) return
+      if (context) this.setNextContext({ ...context, paper_id: paperId })
+      else this.clearNextContext()
+      return
+    }
     if (paperId !== this.snapshot.activePaperId) return
     if (context) this.setNextContext(context)
     else this.clearNextContext()
@@ -252,7 +303,7 @@ export class ScholarChatService {
   async sendMessage(content: string, contextOverride?: ChatContext | null): Promise<void> {
     const question = content.trim()
     if (!question || this.snapshot.streaming) return
-    const paperId = this.requirePaper()
+    const scope = this.requireScope()
     let conversationId = this.snapshot.activeConversationId
     if (!conversationId) conversationId = (await this.createConversation(conversationTitle(question))).id
     const context = contextOverride === undefined ? this.snapshot.nextContext : contextOverride
@@ -280,26 +331,26 @@ export class ScholarChatService {
 
     try {
       await this.api.streamMessage(
-        paperId,
+        scope,
         conversationId,
         { content: question, context },
         event => this.applyStreamEvent(event),
         controller.signal,
       )
       if (!controller.signal.aborted) {
-        const messages = await this.api.listMessages(paperId, conversationId)
-        if (this.snapshot.activePaperId === paperId && this.snapshot.activeConversationId === conversationId) {
+        const messages = await this.api.listMessages(scope, conversationId)
+        if (this.isCurrentScope(scope) && this.snapshot.activeConversationId === conversationId) {
           this.update({ messages, streaming: false, status: null, error: null, retryContent: null })
         }
-        await this.refreshConversations(paperId)
+        await this.refreshConversations(scope)
       }
     } catch (reason) {
       if (controller.signal.aborted) {
         this.update({ streaming: false, status: null })
       } else {
         try {
-          const messages = await this.api.listMessages(paperId, conversationId)
-          if (this.snapshot.activePaperId === paperId) this.update({ messages })
+          const messages = await this.api.listMessages(scope, conversationId)
+          if (this.isCurrentScope(scope)) this.update({ messages })
         } catch {
           // Keep the optimistic transcript if history refresh also fails.
         }
@@ -330,6 +381,10 @@ export class ScholarChatService {
 
   requestCitation(citation: ChatCitation): void {
     this.citationEmitter.fire(citation)
+    if (this.snapshot.readingSet && citation.paper_id) {
+      void this.revealReadingSetCitation(citation.paper_id, citation)
+      return
+    }
     const paperId = this.snapshot.activePaperId
     if (!paperId) return
     if (citation.kind === 'entity' && citation.subject_id) {
@@ -341,6 +396,23 @@ export class ScholarChatService {
       navigateToPaperElement(paperId, dataId, {
         quote: citation.kind === 'quote' ? citation.quote : undefined,
       })
+    }
+  }
+
+  /** Opens the cited paper's tab and lands on the cited passage or section. */
+  private async revealReadingSetCitation(paperId: string, citation: ChatCitation): Promise<void> {
+    try {
+      await this.citations?.openPaper(paperId)
+    } catch {
+      // The reveal below still retries against any already-open paper tab.
+    }
+    if (citation.kind === 'entity' && citation.subject_id) {
+      this.revealSubject(paperId, citation.subject_id, citation.label)
+      return
+    }
+    const dataId = citation.source_id || citation.section_id
+    if (dataId) {
+      revealDomNode(paperId, dataId, citation.kind === 'quote' ? citation.quote : undefined)
     }
   }
 
@@ -417,18 +489,18 @@ export class ScholarChatService {
     )
   }
 
-  private async refreshConversations(paperId: string): Promise<void> {
+  private async refreshConversations(scope: ChatScope): Promise<void> {
     try {
-      const conversations = await this.api.listConversations(paperId)
-      if (this.snapshot.activePaperId === paperId) this.update({ conversations })
+      const conversations = await this.api.listConversations(scope)
+      if (this.isCurrentScope(scope)) this.update({ conversations })
     } catch {
       // A completed answer remains usable when refreshing only the title list fails.
     }
   }
 
-  private async loadMessages(paperId: string, conversationId: number, version: number): Promise<void> {
+  private async loadMessages(scope: ChatScope, conversationId: number, version: number): Promise<void> {
     try {
-      const messages = await this.api.listMessages(paperId, conversationId)
+      const messages = await this.api.listMessages(scope, conversationId)
       if (version !== this.loadVersion) return
       this.update({ messages, loading: false, error: null })
     } catch (reason) {
@@ -458,6 +530,18 @@ export class ScholarChatService {
   private requirePaper(): string {
     if (!this.snapshot.activePaperId) throw new Error('Open a paper to use Chat.')
     return this.snapshot.activePaperId
+  }
+
+  private requireScope(): ChatScope {
+    if (this.snapshot.readingSet) return { readingSetId: this.snapshot.readingSet.id }
+    return this.requirePaper()
+  }
+
+  private isCurrentScope(scope: ChatScope): boolean {
+    if (typeof scope === 'string') {
+      return !this.snapshot.readingSet && this.snapshot.activePaperId === scope
+    }
+    return this.snapshot.readingSet?.id === scope.readingSetId
   }
 
   private update(patch: Partial<ScholarChatSnapshot>): void {

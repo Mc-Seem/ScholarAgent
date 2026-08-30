@@ -211,10 +211,26 @@ function createContext() {
     selection: undefined as unknown,
     onSelectionChanged: vi.fn(() => ({ dispose: () => undefined })),
   }
+  const readingSets = {
+    getSnapshot: vi.fn(() => ({ readingSets: [], loading: false, error: null, alignmentBuilds: {} })),
+    subscribe: vi.fn(() => () => undefined),
+    initialize: vi.fn().mockResolvedValue(undefined),
+    refresh: vi.fn().mockResolvedValue(undefined),
+    readingSetOf: vi.fn(() => undefined),
+    createReadingSet: vi.fn(),
+    renameReadingSet: vi.fn(),
+    deleteReadingSet: vi.fn().mockResolvedValue(undefined),
+    addPaperToReadingSet: vi.fn(),
+    removePaperFromReadingSet: vi.fn(),
+    isLinkingTerms: vi.fn(() => false),
+    linkTerms: vi.fn(),
+    cancelLinkTerms: vi.fn().mockResolvedValue(undefined),
+  }
   const Constructor = ScholarContribution as unknown as new (...args: unknown[]) => ScholarContributionClass
   const contribution = new Constructor(
     store,
     new ScholarAnnotationService(),
+    readingSets,
     suggestions,
     llmSettings,
     widgetManager,

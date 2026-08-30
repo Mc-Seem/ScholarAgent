@@ -21,6 +21,7 @@ export interface ScholarChatActions {
   rejectAction(id: number): void | Promise<void>
   requestCitation(citation: ChatCitation): void
   summarizeCurrentSection(): void | Promise<void>
+  closeReadingSetChat(): void | Promise<void>
 }
 
 interface ScholarChatViewProps {
@@ -299,13 +300,15 @@ function ChatSubmitIcon({ stop = false }: { stop?: boolean }): React.ReactNode {
   )
 }
 
-function CitationChip({ citation, onClick }: {
+function CitationChip({ citation, paperTitle, onClick }: {
   citation: ChatCitation
+  paperTitle?: string
   onClick: (citation: ChatCitation) => void
 }): React.ReactNode {
-  const title = citation.kind === 'quote' && citation.quote
+  const quoteTitle = citation.kind === 'quote' && citation.quote
     ? `“${citation.quote}”`
     : `${citation.kind}: ${citation.label}`
+  const title = paperTitle ? `${paperTitle} — ${quoteTitle}` : quoteTitle
   return (
     <button
       type="button"
@@ -314,6 +317,7 @@ function CitationChip({ citation, onClick }: {
       onClick={() => onClick(citation)}
     >
       <span className="codicon codicon-link" aria-hidden="true" />
+      {paperTitle && <span className="scholar-chat-citation-paper">{paperTitle}</span>}
       {citation.label}
     </button>
   )
@@ -463,6 +467,9 @@ function TranscriptMessage({ message, snapshot, actions }: {
             <CitationChip
               key={`${citation.kind}-${citation.source_id || citation.section_id || citation.subject_id}-${index}`}
               citation={citation}
+              paperTitle={citation.paper_id
+                ? snapshot.readingSet?.paperTitles[citation.paper_id]
+                : undefined}
               onClick={actions.requestCitation}
             />
           ))}
@@ -483,7 +490,7 @@ export function ScholarChatView({ snapshot, actions }: ScholarChatViewProps): Re
   const [draft, setDraft] = React.useState('')
   const activeConversation = snapshot.conversations.find(item => item.id === snapshot.activeConversationId)
 
-  if (!snapshot.activePaperId) {
+  if (!snapshot.activePaperId && !snapshot.readingSet) {
     return <div className="scholar-chat-empty theia-widget-noInfo">Open a paper to start a grounded chat.</div>
   }
 
@@ -525,6 +532,21 @@ export function ScholarChatView({ snapshot, actions }: ScholarChatViewProps): Re
 
   return (
     <div className="scholar-chat-view">
+      {snapshot.readingSet && (
+        <div className="scholar-chat-scope" title={`Reading set: ${snapshot.readingSet.name}`}>
+          <span className="codicon codicon-folder-library" aria-hidden="true" />
+          <span className="scholar-chat-scope-name">{snapshot.readingSet.name}</span>
+          <button
+            type="button"
+            className="scholar-chat-icon"
+            aria-label="Close reading set chat"
+            title="Back to the active paper's chat"
+            onClick={() => runAction(actions.closeReadingSetChat)}
+          >
+            <span className="codicon codicon-close" aria-hidden="true" />
+          </button>
+        </div>
+      )}
       <header className="scholar-chat-header">
         <select
           className="theia-select"
@@ -551,7 +573,11 @@ export function ScholarChatView({ snapshot, actions }: ScholarChatViewProps): Re
         {snapshot.loading ? (
           <div className="scholar-chat-empty">Loading conversations…</div>
         ) : snapshot.messages.length === 0 ? (
-          <div className="scholar-chat-empty">Ask a question about the active paper.</div>
+          <div className="scholar-chat-empty">
+            {snapshot.readingSet
+              ? 'Ask a question about the papers in this reading set.'
+              : 'Ask a question about the active paper.'}
+          </div>
         ) : snapshot.messages.map(message => (
           <TranscriptMessage key={message.id} message={message} snapshot={snapshot} actions={actions} />
         ))}
@@ -587,7 +613,7 @@ export function ScholarChatView({ snapshot, actions }: ScholarChatViewProps): Re
             rows={3}
             maxLength={20_000}
             disabled={snapshot.streaming}
-            placeholder="Ask about this paper…"
+            placeholder={snapshot.readingSet ? 'Ask about the papers in this set…' : 'Ask about this paper…'}
             onChange={event => setDraft(event.target.value)}
             onKeyDown={event => {
               if (event.key === 'Enter' && !event.shiftKey) {
@@ -636,6 +662,7 @@ export class ScholarChatWidget extends ReactWidget {
       rejectAction: id => this.chat.rejectAction(id),
       requestCitation: citation => this.chat.requestCitation(citation),
       summarizeCurrentSection: () => this.chat.summarizeCurrentSection(),
+      closeReadingSetChat: () => this.chat.closeReadingSetChat(),
     }
     this.toDispose.push(Disposable.create(this.chat.subscribe(() => this.update())))
     void this.chat.initialize().finally(() => this.update())

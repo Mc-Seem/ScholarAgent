@@ -4,6 +4,7 @@ from sqlalchemy import (
     CheckConstraint,
     Column,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -64,6 +65,11 @@ class Paper(Base):
     tooltip_suggestions = relationship("TooltipSuggestion", back_populates="paper", cascade="all, delete-orphan")
     chat_conversations = relationship(
         "ChatConversation",
+        back_populates="paper",
+        cascade="all, delete-orphan",
+    )
+    reading_set_memberships = relationship(
+        "ReadingSetPaper",
         back_populates="paper",
         cascade="all, delete-orphan",
     )
@@ -158,18 +164,194 @@ class LLMConfig(Base):
         return f"<LLMConfig(id={self.id}, provider={self.provider}, active={self.is_active})>"
 
 
+class ReadingSet(Base):
+    """Explicit named group of papers read together (multi-paper features scope)."""
+    __tablename__ = "reading_sets"
+
+    id = Column(String(36), primary_key=True)  # UUID
+    name = Column(String(255), nullable=False)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+    memberships = relationship(
+        "ReadingSetPaper",
+        back_populates="reading_set",
+        cascade="all, delete-orphan",
+        order_by="ReadingSetPaper.added_at",
+    )
+    alignments = relationship(
+        "EntityAlignment",
+        back_populates="reading_set",
+        cascade="all, delete-orphan",
+    )
+    chat_conversations = relationship(
+        "ChatConversation",
+        back_populates="reading_set",
+        cascade="all, delete-orphan",
+    )
+
+    def __repr__(self):
+        return f"<ReadingSet(id={self.id[:8]}..., name={self.name})>"
+
+
+class ReadingSetPaper(Base):
+    """Membership of a paper in a reading set."""
+    __tablename__ = "reading_set_papers"
+
+    reading_set_id = Column(
+        String(36),
+        ForeignKey("reading_sets.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    paper_id = Column(
+        String(64),
+        ForeignKey("papers.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    added_at = Column(DateTime, default=utcnow, nullable=False)
+
+    reading_set = relationship("ReadingSet", back_populates="memberships")
+    paper = relationship("Paper", back_populates="reading_set_memberships")
+
+    __table_args__ = (
+        Index("idx_reading_set_paper_paper", "paper_id"),
+    )
+
+    def __repr__(self):
+        return f"<ReadingSetPaper(reading_set_id={self.reading_set_id[:8]}..., paper_id={self.paper_id[:8]}...)>"
+
+
+class EntityAlignment(Base):
+    """Cross-paper term correspondence inside one reading set.
+
+    The paper pair is stored in canonical orientation (paper_a_id < paper_b_id)
+    so a pair of subjects has exactly one row per reading set. Labels are
+    denormalized so the link can be shown without parsing the other paper's
+    knowledge graph.
+    """
+    __tablename__ = "entity_alignments"
+
+    id = Column(String(36), primary_key=True)  # UUID
+    reading_set_id = Column(
+        String(36),
+        ForeignKey("reading_sets.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    paper_a_id = Column(String(64), ForeignKey("papers.id", ondelete="CASCADE"), nullable=False)
+    subject_a_id = Column(String(128), nullable=False)
+    label_a = Column(String(512), nullable=False)
+    paper_b_id = Column(String(64), ForeignKey("papers.id", ondelete="CASCADE"), nullable=False)
+    subject_b_id = Column(String(128), nullable=False)
+    label_b = Column(String(512), nullable=False)
+    method = Column(String(16), nullable=False)  # deterministic | llm
+    score = Column(Float, nullable=False, default=0.0)
+    confidence = Column(String(8), nullable=False)  # high | medium | low
+    status = Column(String(16), nullable=False, default="auto")
+    rationale = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+
+    reading_set = relationship("ReadingSet", back_populates="alignments")
+
+    __table_args__ = (
+        CheckConstraint("method IN ('deterministic', 'llm')", name="ck_entity_alignment_method"),
+        CheckConstraint(
+            "confidence IN ('high', 'medium', 'low')",
+            name="ck_entity_alignment_confidence",
+        ),
+        CheckConstraint(
+            "status IN ('auto', 'confirmed', 'rejected', 'stale')",
+            name="ck_entity_alignment_status",
+        ),
+        UniqueConstraint(
+            "reading_set_id",
+            "paper_a_id",
+            "subject_a_id",
+            "paper_b_id",
+            "subject_b_id",
+            name="uq_entity_alignment_pair",
+        ),
+        Index("idx_entity_alignment_set_paper_a", "reading_set_id", "paper_a_id"),
+        Index("idx_entity_alignment_set_paper_b", "reading_set_id", "paper_b_id"),
+    )
+
+    def __repr__(self):
+        return (
+            f"<EntityAlignment(id={self.id[:8]}..., "
+            f"{self.paper_a_id[:8]}.../{self.subject_a_id} ~ "
+            f"{self.paper_b_id[:8]}.../{self.subject_b_id})>"
+        )
+
+
+class CitationLink(Base):
+    """Cached resolution of one bibliography citation onto a library paper.
+
+    A row records where a `[N]` citation in paper A points inside paper B
+    (a section, a specific passage, or nothing locatable). The resolution is
+    produced lazily by a single LLM call and is only valid for the HTML
+    version of B it was computed against; a recompile of B invalidates it.
+    """
+    __tablename__ = "citation_links"
+
+    id = Column(String(36), primary_key=True)  # UUID
+    paper_id = Column(String(64), ForeignKey("papers.id", ondelete="CASCADE"), nullable=False)
+    cite_key = Column(String(255), nullable=False)
+    target_paper_id = Column(
+        String(64),
+        ForeignKey("papers.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    target_kind = Column(String(16), nullable=False)  # section | passage | none
+    target_section_id = Column(String(128), nullable=True)
+    target_dom_node_id = Column(String(128), nullable=True)
+    quote = Column(Text, nullable=True)  # exact substring for flash-highlight
+    confidence = Column(String(8), nullable=False)  # high | medium | low
+    target_html_version = Column(String(64), nullable=True)
+    resolved_at = Column(DateTime, default=utcnow, nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "target_kind IN ('section', 'passage', 'none')",
+            name="ck_citation_link_target_kind",
+        ),
+        CheckConstraint(
+            "confidence IN ('high', 'medium', 'low')",
+            name="ck_citation_link_confidence",
+        ),
+        UniqueConstraint(
+            "paper_id",
+            "cite_key",
+            "target_paper_id",
+            name="uq_citation_link_pair",
+        ),
+        Index("idx_citation_link_paper_key", "paper_id", "cite_key"),
+    )
+
+    def __repr__(self):
+        return (
+            f"<CitationLink(id={self.id[:8]}..., "
+            f"{self.paper_id[:8]}.../{self.cite_key} -> "
+            f"{self.target_paper_id[:8]}.../{self.target_kind})>"
+        )
+
+
 class ChatConversation(Base):
-    """Named, paper-scoped chat owned by the current user."""
+    """Named chat owned by the current user, scoped to one paper or one reading set."""
     __tablename__ = "chat_conversations"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    paper_id = Column(String(64), ForeignKey("papers.id", ondelete="CASCADE"), nullable=False)
+    paper_id = Column(String(64), ForeignKey("papers.id", ondelete="CASCADE"), nullable=True)
+    reading_set_id = Column(
+        String(36),
+        ForeignKey("reading_sets.id", ondelete="CASCADE"),
+        nullable=True,
+    )
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, default=1)
     title = Column(String(255), nullable=False)
     created_at = Column(DateTime, default=utcnow, nullable=False)
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
 
     paper = relationship("Paper", back_populates="chat_conversations")
+    reading_set = relationship("ReadingSet", back_populates="chat_conversations")
     user = relationship("User", back_populates="chat_conversations")
     messages = relationship(
         "ChatMessage",
@@ -179,7 +361,12 @@ class ChatConversation(Base):
     )
 
     __table_args__ = (
+        CheckConstraint(
+            "(paper_id IS NULL) != (reading_set_id IS NULL)",
+            name="ck_chat_conversation_scope",
+        ),
         Index("idx_chat_conversation_paper_user", "paper_id", "user_id"),
+        Index("idx_chat_conversation_reading_set_user", "reading_set_id", "user_id"),
     )
 
 

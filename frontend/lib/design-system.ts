@@ -152,6 +152,27 @@ export const colors = {
 } as const;
 
 // ============================================================================
+// SHARED TERM HIGHLIGHTING
+// ============================================================================
+
+/**
+ * Raw hex colors for shared-term highlighting: when two papers of a reading
+ * set are read side by side, every group of aligned terms gets one of these
+ * colors in both panes. Consecutive entries are far apart in hue so the
+ * groups a reader compares most often stay distinguishable.
+ */
+export const sharedTermPalette = [
+  '#f59e0b', // amber
+  '#3b82f6', // blue
+  '#10b981', // emerald
+  '#8b5cf6', // violet
+  '#ec4899', // pink
+  '#14b8a6', // teal
+  '#f97316', // orange
+  '#6366f1', // indigo
+] as const;
+
+// ============================================================================
 // TYPOGRAPHY
 // ============================================================================
 

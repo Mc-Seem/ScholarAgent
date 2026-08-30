@@ -51,6 +51,7 @@ afterAll(() => {
 function snapshot(overrides: Partial<ScholarChatSnapshot> = {}): ScholarChatSnapshot {
   return {
     activePaperId: 'paper-a',
+    readingSet: null,
     conversations: [{
       id: 1, paper_id: 'paper-a', title: 'Main',
       created_at: '2026-08-23T20:00:00Z', updated_at: '2026-08-23T20:00:00Z',
@@ -67,7 +68,7 @@ function actions() {
     selectConversation: vi.fn(), createConversation: vi.fn(), renameConversation: vi.fn(),
     deleteConversation: vi.fn(), sendMessage: vi.fn(), retry: vi.fn(), cancelStream: vi.fn(),
     clearNextContext: vi.fn(), confirmAction: vi.fn(), rejectAction: vi.fn(),
-    requestCitation: vi.fn(), summarizeCurrentSection: vi.fn(),
+    requestCitation: vi.fn(), summarizeCurrentSection: vi.fn(), closeReadingSetChat: vi.fn(),
   }
 }
 
@@ -282,6 +283,38 @@ describe('ScholarChatView', () => {
     expect(screen.getByText('Selection: selected phrase')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Кратко пересказать текущую секцию' }))
     expect(handlers.summarizeCurrentSection).toHaveBeenCalledOnce()
+  })
+
+  it('shows the reading-set scope with per-paper citation chips and a close control', async () => {
+    const user = userEvent.setup()
+    const handlers = actions()
+    render(<ScholarChatView snapshot={snapshot({
+      activePaperId: null,
+      readingSet: {
+        id: 'set-1',
+        name: 'Preference Optimization',
+        paperTitles: { 'paper-b': 'Paper Beta' },
+      },
+      messages: [{
+        id: 9, conversation_id: 1, role: 'assistant', content: 'Cross-paper answer',
+        context: null,
+        citations: [{
+          kind: 'quote', label: 'Evidence', source_id: 'p-9',
+          quote: 'exact phrase', paper_id: 'paper-b',
+        }],
+        pending_action: null, created_at: '2026-08-29T10:00:00Z',
+      }],
+    })} actions={handlers} />)
+
+    expect(screen.getByText('Preference Optimization')).toHaveClass('scholar-chat-scope-name')
+    expect(screen.getByText('Paper Beta')).toHaveClass('scholar-chat-citation-paper')
+    expect(screen.getByLabelText('Message'))
+      .toHaveAttribute('placeholder', 'Ask about the papers in this set…')
+
+    await user.click(screen.getByRole('button', { name: /Paper Beta.*Evidence/ }))
+    expect(handlers.requestCitation).toHaveBeenCalledWith(expect.objectContaining({ paper_id: 'paper-b' }))
+    await user.click(screen.getByRole('button', { name: 'Close reading set chat' }))
+    expect(handlers.closeReadingSetChat).toHaveBeenCalledOnce()
   })
 
   it('supports conversation create, rename, select, and delete controls', async () => {

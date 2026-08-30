@@ -56,6 +56,8 @@ This roadmap addresses stakeholder feedback focused on: (1) making the knowledge
 ---
 
 ## Phase 2: Multi-Paper Workflows
+>**Status**: Implemented (Reading Sets, term alignment, cross-paper lens/citations, and set chat)
+>
 >**Timeline**: 3-4 weeks
 >
 >**Goal**: Enable comparative reading and cross-paper navigation
@@ -73,27 +75,33 @@ This roadmap addresses stakeholder feedback focused on: (1) making the knowledge
 >**Use Case**: Reading survey + cited papers, tracking concept evolution
 
 **Solution**:
-- Unified KG index across user's library (vector embeddings per entity)
-- Entity alignment via semantic similarity (cosine distance on embeddings)
-- "Same As" relationships between entities in different papers
-- Requires pruned KG (core entities only) to avoid noise
+- Explicit Reading Sets scope comparisons to papers the reader chose
+- Deterministic blocking for high-confidence candidates plus LLM adjudication of ambiguous pairs
+- Persisted alignment method, score, confidence, rationale, and auto/confirmed/rejected/stale status
+- Background linking with SSE progress, cooperative cancellation, and stale-link preservation
 
 ### 2.3 Terminology Alignment
 >**Problem**: Same concept, different names across papers
 
 **Solution**:
-- Diff-like view: "Paper A calls this X, Paper B calls it Y"
-- User can manually merge entities or accept agent suggestions
-- Show alignment confidence score (high/medium/low)
+- Semantic Lens `In other papers` rows show each paper's local terminology
+- User can confirm or reject agent suggestions within each Reading Set
+- High/medium/low confidence and rationale remain visible during review
+- Clicking a row opens the other paper and scrolls to the aligned term
 
 ### 2.4 Side-by-Side Comparison View
 >**Use Case**: Compare two papers on similar topics
 
 **Solution**:
-- Split-screen layout with synchronized scrolling (optional)
-- Agent highlights semantically similar sections (same color borders)
-- Show unique KG entities in margins (e.g., "Only in Paper A: Theorem 3.2")
-- Citation cross-references (if Paper A cites Paper B, link sections)
+- Open all papers from a Reading Set into restorable Theia tabs and split groups
+- Highlight aligned terms with stable per-group colors across visible paper panes
+- Open bibliography cards with library matching and arXiv import when absent
+- Lazily resolve citation context to a cached target section or passage in the referenced paper
+- Ask set-scoped chat questions with budgeted per-paper retrieval and paper-labelled citations
+
+**Operating limits**:
+- Alignments become stale after relevant KG changes and must be rebuilt before returning to reading surfaces
+- Pairwise linking and multi-paper retrieval are optimized for Reading Sets of about five papers
 
 ---
 
@@ -195,7 +203,7 @@ This roadmap addresses stakeholder feedback focused on: (1) making the knowledge
 6. **Relational KG review** → only after triggers in `docs/kg-relational-migration.md`
 
 ### Long Term (3+ months out)
-7. **Phase 2.2-2.4** (Cross-paper features) → needs user validation with multi-paper usage
+7. **Phase 2 validation** → measure alignment quality and retrieval balance in regular multi-paper usage
 8. **Phase 5** (Research management) → defer until core reading experience is mature
 
 ---
@@ -213,9 +221,10 @@ These items block roadmap features and should be completed first:
 ### New Technical Requirements
 
 #### Phase 2 (Multi-Paper)
-- Vector embeddings for entities (use Voyage AI or Anthropic embeddings)
-- Cross-paper entity index (new table: `entity_alignments`)
-- Compiled HTML caching layer (Redis or in-memory LRU cache)
+- ~~Cross-paper entity index~~ — implemented as Reading Set-scoped `entity_alignments`
+- ~~Reviewable automatic alignment~~ — deterministic blocking plus LLM adjudication and confirm/reject
+- ~~Cross-paper navigation~~ — Semantic Lens links, shared highlights, and cached citation targets
+- Future scaling beyond about five papers may require embeddings and a library-wide index
 
 #### Phase 3 (Chat)
 - Passage/equation retrieval baseline; do not enable graph expansion until a query class passes recorded gates
@@ -256,11 +265,11 @@ These items block roadmap features and should be completed first:
 ## Open Questions
 
 1. **Entity Types**: Should we allow fully custom entity types, or provide a fixed set (Formula, Algorithm, Proof, Assumption)?
-2. **Cross-Paper Linking**: Manual alignment vs. automatic with confirmation step?
+2. ~~**Cross-Paper Linking**: Manual alignment vs. automatic with confirmation step?~~ Resolved: automatic suggestions with confidence and per-set confirm/reject review.
 3. **Chat Memory**: Should chat context persist across sessions, or reset per paper?
 4. **Collaboration**: Self-hosted only, or cloud sync for teams?
 
 ---
 
-**Last Updated**: 2026-07-25
-**Status**: Canonical KG refinement complete; passage-first retrieval decision recorded
+**Last Updated**: 2026-08-29
+**Status**: Multi-paper Reading Sets and cross-paper workflows implemented; usage validation remains
