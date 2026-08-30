@@ -139,6 +139,49 @@
   outline-offset: -1px;
 }
 
+.semantic-lens-explanation-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.75rem;
+  padding-top: 0.65rem;
+  border-top: 1px solid var(--theia-panel-border, rgba(128, 128, 128, 0.35));
+}
+
+.semantic-lens-explanation-label {
+  color: var(--theia-descriptionForeground, #64748b);
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+
+.semantic-lens-explanation-shortcuts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.semantic-lens-explanation-shortcut {
+  margin: 0;
+  padding: 0.2rem 0.45rem;
+  cursor: pointer;
+  color: var(--theia-button-secondaryForeground, var(--theia-foreground, #334155));
+  font: inherit;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  background: var(--theia-button-secondaryBackground, transparent);
+  border: 1px solid var(--theia-button-border, var(--theia-panel-border, #94a3b8));
+  border-radius: 0.25rem;
+}
+
+.semantic-lens-explanation-shortcut:hover {
+  background: var(--theia-button-secondaryHoverBackground, rgba(90, 93, 94, 0.31));
+}
+
+.semantic-lens-explanation-shortcut:focus-visible {
+  outline: 1px solid var(--theia-focusBorder, #007fd4);
+  outline-offset: 1px;
+}
+
 .equation-lens-formula {
   min-width: 0;
   padding: 0.55rem 0.65rem;

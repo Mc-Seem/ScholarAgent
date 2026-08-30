@@ -193,6 +193,13 @@ counter, and a failed lookup renders the error instead of an endless spinner.
 The widget is bound transiently, because closing the tab disposes it and a
 singleton binding would return a disposed instance to the widget factory.
 
+When a semantic subject has an explanation, the lens shows `Deeper`, `Simpler`,
+`Example`, and `Connections` shortcuts beneath it. A shortcut opens Chat and
+immediately sends a natural-language request with the existing entity
+`ChatContext`; no shortcut-specific API field is needed. Deeper and simpler
+wording explicitly refers to the displayed definition, while example and
+connections requests remain explanation-only unless the reader adds feedback.
+
 Definitions and their strict mathematical representation form one card. When
 an object has a `defining_equation`, selecting either the highlighted term or
 the displayed equation renders the same order: `SemanticSubjectSummary` with

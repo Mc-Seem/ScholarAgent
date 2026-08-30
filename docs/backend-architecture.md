@@ -73,6 +73,57 @@ legacy value, then that provider's recommendation. OpenAI, Ollama, and custom
 connections never inherit an Anthropic model fallback; custom connections with
 no explicit or compatible legacy model fail clearly.
 
+## Contextual Chat Planning
+
+Paper chat uses a fixed `router → retrieval → answer` LangGraph. The router plans
+each turn once: alongside retrieval intent and graph policy, it returns a broad
+explanation goal (`direct`, `deeper`, `simpler`, `example`, `connections`, or
+custom guidance) and identifies explicit feedback about an insufficient stored
+definition. The generic grounded-answer prompt receives that goal as turn data;
+grounding, citation validation, response language, Markdown, and MathJax behavior
+remain common to every explanation style.
+
+Planning receives the current reader context plus bounded recent messages and
+their saved context snapshots. This lets pronoun-style follow-ups retain a
+semantic subject without adding new public API fields. Explanation and
+persistence remain separate concerns: ordinary questions can be answered or
+produce existing add/highlight proposals, while a stored definition replacement
+requires explicit feedback or rewrite intent and still becomes a confirmable
+`ChatAction` before any semantic note changes. One generic refinement prompt
+selects from indexed definitions resolved from current context, nearest recent
+entity contexts, and retrieved graph evidence; the application revalidates the
+selected subject, reader-visible base definition, changed text, and graph version.
+
+### Proposal Rejections and Diagnostics
+
+Every proposal a turn mechanically drops (entity addition, annotation of a
+known term, or definition refinement) is recorded as a structured
+`ProposalRejection { action, label, subject_id, reason, candidates }` on
+`GroundedChatResult.proposal_rejections` instead of a log line. The serialized
+list is persisted verbatim in the nullable JSON column
+`chat_messages.diagnostics` (`NULL` when nothing was dropped), so incidents are
+diagnosable from the database; the public `ChatMessageResponse` schema is
+unchanged. When the router marks the turn as an explicit request
+(`entity_action_request` for entity paths, `definition_feedback` or definition
+intent for refinement), a short deterministic notice with the rejection reason
+is appended to the reply Markdown; failed proactive proposals stay silent in
+the reply but are still persisted.
+
+### Multi-Owner Label Disambiguation
+
+A requested term already covered by the graph may be owned by several entities
+(e.g. the same acronym as a topic, procedure, and artifact). The annotation
+path first drops senses that are already highlighted (all annotated → silent
+no-op) and mechanically filters the rest to viable candidates that have both a
+stored definition and anchorable occurrences. Exactly one viable candidate is
+annotated directly with no extra LLM call; two or more trigger one bounded
+structured call (`AnnotationSelectionOutput`) that picks the sense matching the
+question, draft answer, context, and recent history. Index `0`, an invalid
+index, or a structured-output failure resolves to an unresolved-ambiguity
+`ProposalRejection` carrying the candidate list, whose reply notice enumerates
+the known senses. The reader still confirms the resulting `ChatAction` before
+anything is persisted.
+
 ## Knowledge Graph Pipeline
 
 ```

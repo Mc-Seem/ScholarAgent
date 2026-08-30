@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from dataclasses import asdict
 from datetime import datetime
 from typing import Any, Literal
 
@@ -268,11 +269,13 @@ def _sse(event: str, payload: BaseModel) -> str:
 
 
 def _grounded_assistant_message(conversation_id: int, result) -> ChatMessage:
+    rejections = getattr(result, "proposal_rejections", [])
     return ChatMessage(
         conversation_id=conversation_id,
         role="assistant",
         content=result.content,
         citations=[citation.model_dump(mode="json") for citation in result.citations],
+        diagnostics=[asdict(rejection) for rejection in rejections] or None,
     )
 
 
@@ -625,7 +628,15 @@ async def stream_message(
         .all()
     ))
     history = [
-        {"role": message.role, "content": message.content}
+        {
+            "role": message.role,
+            "content": message.content,
+            **(
+                {"context_snapshot": message.context_snapshot}
+                if message.context_snapshot is not None
+                else {}
+            ),
+        }
         for message in history_rows
     ]
     article_snapshot = {

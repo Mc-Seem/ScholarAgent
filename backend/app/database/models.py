@@ -197,6 +197,8 @@ class ChatMessage(Base):
     content = Column(Text, nullable=False)
     context_snapshot = Column(JSON, nullable=True)
     citations = Column(JSON, nullable=False, default=list)
+    # Structured reasons for proposals the agent mechanically discarded this turn.
+    diagnostics = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=utcnow, nullable=False)
 
     conversation = relationship("ChatConversation", back_populates="messages")

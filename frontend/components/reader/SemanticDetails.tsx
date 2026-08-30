@@ -13,6 +13,8 @@ import { EvidenceLocations } from './EvidenceLocations'
 import { LatexText } from './LatexText'
 import { SemanticSubjectSummary } from './SemanticSubjectSummary'
 
+export type ExplanationShortcut = 'deeper' | 'simpler' | 'example' | 'connections'
+
 interface SemanticDetailsProps {
   selection: SemanticSelection
   subjectDetails?: SemanticSubjectDetails | null
@@ -27,8 +29,16 @@ interface SemanticDetailsProps {
   editor?: SemanticTextEditor
   onBack?: () => void
   onAskAboutEntity?: () => void
+  onRequestExplanation?: (shortcut: ExplanationShortcut) => void
   onNavigate?: (domNodeId: string) => void
 }
+
+const EXPLANATION_SHORTCUTS: Array<{ id: ExplanationShortcut; label: string }> = [
+  { id: 'deeper', label: 'Deeper' },
+  { id: 'simpler', label: 'Simpler' },
+  { id: 'example', label: 'Example' },
+  { id: 'connections', label: 'Connections' },
+]
 
 
 /**
@@ -50,6 +60,7 @@ export function SemanticDetails({
   editor,
   onBack,
   onAskAboutEntity,
+  onRequestExplanation,
   onNavigate,
 }: SemanticDetailsProps) {
   const askAboutEntityButton = onAskAboutEntity ? (
@@ -63,6 +74,27 @@ export function SemanticDetails({
       <MessageCircleQuestion size={16} aria-hidden="true" />
     </button>
   ) : undefined
+  const explanationShortcuts = subjectDetails?.explanation && onRequestExplanation ? (
+    <div
+      className="semantic-lens-explanation-actions"
+      role="group"
+      aria-label={`Explore the explanation of ${subjectDetails.subject.label}`}
+    >
+      <span className="semantic-lens-explanation-label">Explore this explanation</span>
+      <div className="semantic-lens-explanation-shortcuts">
+        {EXPLANATION_SHORTCUTS.map(shortcut => (
+          <button
+            key={shortcut.id}
+            type="button"
+            className="semantic-lens-explanation-shortcut"
+            onClick={() => onRequestExplanation(shortcut.id)}
+          >
+            {shortcut.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  ) : null
 
   return (
     <div className="semantic-lens-panel" data-testid="semantic-details">
@@ -77,28 +109,31 @@ export function SemanticDetails({
         <EquationLens details={equationDetails} onNavigate={onNavigate} editor={editor} />
       )}
       {!loading && !error && (selection.kind === 'occurrence' || selection.kind === 'node') && subjectDetails && (
-        subjectDetails.defining_equation ? (
-          <EquationLens
-            details={subjectDetails.defining_equation}
-            definedSubject={subjectDetails}
-            definedSubjectTitleAction={askAboutEntityButton}
-            onNavigate={onNavigate}
-            editor={editor}
-          />
-        ) : (
-          <div className="semantic-lens" data-testid="semantic-subject">
-            <SemanticSubjectSummary
-              details={subjectDetails}
-              editor={editor}
-              titleAction={askAboutEntityButton}
-            />
-            <EvidenceLocations
-              evidence={subjectDetails.evidence}
-              redundantQuote={subjectDetails.subject.label}
+        <>
+          {subjectDetails.defining_equation ? (
+            <EquationLens
+              details={subjectDetails.defining_equation}
+              definedSubject={subjectDetails}
+              definedSubjectTitleAction={askAboutEntityButton}
               onNavigate={onNavigate}
+              editor={editor}
             />
-          </div>
-        )
+          ) : (
+            <div className="semantic-lens" data-testid="semantic-subject">
+              <SemanticSubjectSummary
+                details={subjectDetails}
+                editor={editor}
+                titleAction={askAboutEntityButton}
+              />
+              <EvidenceLocations
+                evidence={subjectDetails.evidence}
+                redundantQuote={subjectDetails.subject.label}
+                onNavigate={onNavigate}
+              />
+            </div>
+          )}
+          {explanationShortcuts}
+        </>
       )}
       {!loading && !error && selection.kind === 'edge' && (
         <div className="semantic-lens">

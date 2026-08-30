@@ -130,6 +130,7 @@ function createLens(store: LensStore) {
   const saveSemanticNote = vi.fn().mockResolvedValue({ id: 'tooltip-new' })
   const clearSemanticNote = vi.fn().mockResolvedValue(undefined)
   const setNextContextForPaper = vi.fn()
+  const sendMessage = vi.fn().mockResolvedValue(undefined)
   const executeCommand = vi.fn().mockResolvedValue(undefined)
   const fullStore = {
     ...store,
@@ -147,7 +148,7 @@ function createLens(store: LensStore) {
   const widget = new WidgetCtor(
     fullStore,
     selectionService,
-    { setNextContextForPaper },
+    { setNextContextForPaper, sendMessage },
     { executeCommand },
   )
   return {
@@ -155,6 +156,7 @@ function createLens(store: LensStore) {
     saveSemanticNote,
     clearSemanticNote,
     setNextContextForPaper,
+    sendMessage,
     executeCommand,
     publish: (selection: unknown) => {
       selectionService.selection = selection
@@ -239,6 +241,44 @@ describe('ScholarSemanticLensWidget', () => {
       label: 'KTO',
     })
     expect(executeCommand).toHaveBeenCalledWith('scholar-agent.show-chat')
+  })
+
+  it.each([
+    ['Deeper', 'Explain the displayed definition of KTO in more depth.'],
+    ['Simpler', 'Explain the displayed definition of KTO more simply.'],
+    ['Example', 'Give me a concrete example of KTO.'],
+    ['Connections', 'Explain how KTO connects to other concepts in this paper.'],
+  ])('opens Chat and immediately submits the %s explanation request', async (label, message) => {
+    const details = subjectDetails()
+    details.explanation = {
+      stable_id: 'explanation:kto',
+      subject_id: 'artifact:kto',
+      base_content: 'A preference optimization method that needs no pairs.',
+      expertise: 'intermediate',
+      evidence_ids: [],
+    }
+    const store = {
+      loadEquationDetails: vi.fn(),
+      loadSemanticSubject: vi.fn().mockResolvedValue(details),
+    }
+    const { widget, publish, sendMessage, executeCommand } = createLens(store)
+
+    await act(async () => {
+      publish(entitySelection())
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    renderLens(widget)
+    await userEvent.click(screen.getByRole('button', { name: label }))
+
+    expect(executeCommand).toHaveBeenCalledWith('scholar-agent.show-chat')
+    expect(sendMessage).toHaveBeenCalledWith(message, {
+      kind: 'entity',
+      subject_id: 'artifact:kto',
+      data_id: 'p-1',
+      section_id: 'sec-1',
+      label: 'KTO',
+    })
   })
 
   it('keeps the current lens when an unrelated selection arrives and clears it on an empty one', async () => {

@@ -19,7 +19,7 @@
     "rebuild": "theia rebuild:electron --cacheRoot ../..",
     "bundle": "npm run rebuild && theia build --mode development",
     "bundle:production": "npm run rebuild && theia build --mode production",
-    "start": "theia start",
+    "start": "electron src-gen/backend/electron-main.js",
     "watch": "npm run rebuild && theia build --watch --mode development"
   },
   "theia": {

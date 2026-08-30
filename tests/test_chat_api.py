@@ -25,6 +25,7 @@ from backend.app.agents.chat_agent import (
     EntityAnnotationProposal,
     GroundedChatResult,
     GroundedCitation,
+    ProposalRejection,
 )
 from backend.app.agents.chat_retrieval import knowledge_document_version
 from backend.app.agents.knowledge_graph_retrieval import build_fixture_document
@@ -313,6 +314,24 @@ class TestChatModelsAndMigration:
         assert "ADD COLUMN knowledge_graph_version" in sql
         assert "DROP COLUMN knowledge_graph_version" in sql
 
+    def test_diagnostics_migration_renders_add_and_drop_column(self):
+        migration = importlib.import_module(
+            "backend.alembic.versions.012_add_chat_message_diagnostics"
+        )
+        output = io.StringIO()
+        context = MigrationContext.configure(
+            url="postgresql://",
+            opts={"as_sql": True, "output_buffer": output},
+        )
+
+        with Operations.context(context):
+            migration.upgrade()
+            migration.downgrade()
+
+        sql = output.getvalue()
+        assert "ADD COLUMN diagnostics" in sql
+        assert "DROP COLUMN diagnostics" in sql
+
     def test_annotation_action_migration_rewrites_type_constraint(self):
         migration = importlib.import_module(
             "backend.alembic.versions.011_add_chat_action_entity_annotation"
@@ -533,6 +552,77 @@ class TestChatMessageStream:
         }
         assert history[1]["id"] == final["message"]["id"]
 
+        with chat_api.session_factory() as db:
+            assistant = db.query(ChatMessage).filter(ChatMessage.role == "assistant").one()
+            assert assistant.diagnostics is None
+
+    def test_stream_persists_proposal_rejection_diagnostics(self, chat_api, monkeypatch):
+        conversation_id = create_conversation(chat_api)["id"]
+        monkeypatch.setattr(
+            chat_routes,
+            "run_chat_agent",
+            lambda **_kwargs: GroundedChatResult(
+                content="DPO is a preference alignment procedure.",
+                citations=[],
+                graph_available=True,
+                used_graph=False,
+                proposal_rejections=[ProposalRejection(
+                    action="annotate_entity",
+                    label="DPO",
+                    subject_id=None,
+                    reason=(
+                        "several knowledge graph entities own the label and the"
+                        " conversation does not single out one sense"
+                    ),
+                    candidates=[
+                        {"subject_id": "procedure:dpo", "label": "DPO", "kind": "procedure"},
+                        {
+                            "subject_id": "topic:dpo",
+                            "label": "Direct preference optimization",
+                            "kind": "topic",
+                        },
+                    ],
+                )],
+            ),
+        )
+
+        with chat_api.client.stream(
+            "POST",
+            f"/api/papers/paper-one/chat/conversations/{conversation_id}/messages",
+            json={"content": "Can we add DPO as a term?"},
+        ) as response:
+            events = parse_sse(response)
+
+        final = events[-1][1]
+        assert final["type"] == "final"
+        assert final["pending_action"] is None
+        assert "diagnostics" not in final["message"]
+
+        history = chat_api.client.get(
+            f"/api/papers/paper-one/chat/conversations/{conversation_id}/messages",
+        ).json()
+        assert "diagnostics" not in history[-1]
+
+        with chat_api.session_factory() as db:
+            assistant = db.query(ChatMessage).filter(ChatMessage.role == "assistant").one()
+            assert assistant.diagnostics == [{
+                "action": "annotate_entity",
+                "label": "DPO",
+                "subject_id": None,
+                "reason": (
+                    "several knowledge graph entities own the label and the"
+                    " conversation does not single out one sense"
+                ),
+                "candidates": [
+                    {"subject_id": "procedure:dpo", "label": "DPO", "kind": "procedure"},
+                    {
+                        "subject_id": "topic:dpo",
+                        "label": "Direct preference optimization",
+                        "kind": "topic",
+                    },
+                ],
+            }]
+
     def test_stream_emits_sanitized_error_and_keeps_user_message(
         self,
         chat_api,
@@ -659,6 +749,11 @@ class TestChatMessageStream:
                     conversation_id=conversation_id,
                     role="user",
                     content="Earlier question",
+                    context_snapshot={
+                        "kind": "entity",
+                        "subject_id": "quantity:elbo",
+                        "quote": "ELBO",
+                    },
                     citations=[],
                 ),
                 ChatMessage(
@@ -690,7 +785,15 @@ class TestChatMessageStream:
 
         assert events[-1][0] == "final"
         assert captured["history"] == [
-            {"role": "user", "content": "Earlier question"},
+            {
+                "role": "user",
+                "content": "Earlier question",
+                "context_snapshot": {
+                    "kind": "entity",
+                    "subject_id": "quantity:elbo",
+                    "quote": "ELBO",
+                },
+            },
             {"role": "assistant", "content": "Earlier answer"},
         ]
 

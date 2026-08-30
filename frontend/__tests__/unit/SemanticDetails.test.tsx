@@ -1,7 +1,8 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { render, screen } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import userEvent from '@testing-library/user-event'
+import { describe, expect, it, vi } from 'vitest'
 
 import { EditableSemanticText } from '@/components/reader/EditableSemanticText'
 import { SemanticDetails } from '@/components/reader/SemanticDetails'
@@ -241,6 +242,46 @@ describe('SemanticDetails', () => {
       expect(role).toHaveClass('semantic-chip')
       expect(role.className).not.toMatch(/bg-/)
     }
+  })
+
+  it('offers accessible explanation shortcuts and reports the selected goal', async () => {
+    const onRequestExplanation = vi.fn()
+    render(
+      <SemanticDetails
+        selection={selection}
+        subjectDetails={subjectDetails()}
+        onRequestExplanation={onRequestExplanation}
+      />,
+    )
+
+    const group = screen.getByRole('group', { name: 'Explore the explanation of KTO' })
+    for (const label of ['Deeper', 'Simpler', 'Example', 'Connections']) {
+      expect(group).toContainElement(screen.getByRole('button', { name: label }))
+    }
+
+    await userEvent.click(screen.getByRole('button', { name: 'Deeper' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Simpler' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Example' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Connections' }))
+
+    expect(onRequestExplanation.mock.calls).toEqual([
+      ['deeper'],
+      ['simpler'],
+      ['example'],
+      ['connections'],
+    ])
+  })
+
+  it('hides explanation shortcuts when the subject has no explanation', () => {
+    render(
+      <SemanticDetails
+        selection={selection}
+        subjectDetails={subjectDetails({ explanation: null })}
+        onRequestExplanation={() => {}}
+      />,
+    )
+
+    expect(screen.queryByRole('group', { name: /Explore the explanation/i })).not.toBeInTheDocument()
   })
 })
 
