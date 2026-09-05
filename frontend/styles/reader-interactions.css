@@ -431,6 +431,14 @@
   font-weight: 600;
 }
 
+/* Pushes the bulk action to the right edge of the "In other papers" title. */
+.semantic-other-papers-confirm-all {
+  margin-left: auto;
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
 .semantic-editable {
   position: relative;
   min-width: 0;

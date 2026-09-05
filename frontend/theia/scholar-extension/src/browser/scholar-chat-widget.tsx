@@ -5,6 +5,7 @@ import { inject, injectable } from '@theia/core/shared/inversify'
 
 import type { ChatCitation, ChatContext, ChatMessage, PendingChatAction } from '../../../../lib/chat-api'
 import { ScholarChatService, type ScholarChatSnapshot } from './scholar-chat-service'
+import { ScholarReadingSetService } from './scholar-reading-set-service'
 
 export const SCHOLAR_CHAT_WIDGET_ID = 'scholar-agent:chat'
 
@@ -22,10 +23,18 @@ export interface ScholarChatActions {
   requestCitation(citation: ChatCitation): void
   summarizeCurrentSection(): void | Promise<void>
   closeReadingSetChat(): void | Promise<void>
+  activateReadingSetChat(readingSetId: string): void | Promise<void>
+}
+
+/** A reading set the scope selector can switch the chat to. */
+export interface ScholarChatScopeOption {
+  id: string
+  name: string
 }
 
 interface ScholarChatViewProps {
   snapshot: ScholarChatSnapshot
+  readingSetOptions?: readonly ScholarChatScopeOption[]
   actions: ScholarChatActions
 }
 
@@ -486,12 +495,64 @@ function TranscriptMessage({ message, snapshot, actions }: {
   )
 }
 
-export function ScholarChatView({ snapshot, actions }: ScholarChatViewProps): React.ReactNode {
+export function ScholarChatView({ snapshot, readingSetOptions = [], actions }: ScholarChatViewProps): React.ReactNode {
   const [draft, setDraft] = React.useState('')
   const activeConversation = snapshot.conversations.find(item => item.id === snapshot.activeConversationId)
 
+  // The pinned set may have been deleted from the service snapshot meanwhile;
+  // keep it selectable so the control always reflects the actual scope.
+  const pinnedSet = snapshot.readingSet
+  const scopeOptions = pinnedSet && !readingSetOptions.some(option => option.id === pinnedSet.id)
+    ? [...readingSetOptions, { id: pinnedSet.id, name: pinnedSet.name }]
+    : readingSetOptions
+  const scopeBar = (pinnedSet || scopeOptions.length > 0) && (
+    <div
+      className="scholar-chat-scope"
+      title={pinnedSet ? `Reading set: ${pinnedSet.name}` : 'Chat scope'}
+    >
+      <span className="codicon codicon-folder-library" aria-hidden="true" />
+      <select
+        className="theia-select scholar-chat-scope-name"
+        aria-label="Chat scope"
+        value={pinnedSet?.id ?? ''}
+        disabled={snapshot.streaming}
+        onChange={event => {
+          const readingSetId = event.target.value
+          runAction(() => readingSetId
+            ? actions.activateReadingSetChat(readingSetId)
+            : actions.closeReadingSetChat())
+        }}
+      >
+        <option value="">Active paper</option>
+        {scopeOptions.map(option => (
+          <option key={option.id} value={option.id}>Reading set: {option.name}</option>
+        ))}
+      </select>
+      {pinnedSet && (
+        <button
+          type="button"
+          className="scholar-chat-icon"
+          aria-label="Close reading set chat"
+          title="Back to the active paper's chat"
+          onClick={() => runAction(actions.closeReadingSetChat)}
+        >
+          <span className="codicon codicon-close" aria-hidden="true" />
+        </button>
+      )}
+    </div>
+  )
+
   if (!snapshot.activePaperId && !snapshot.readingSet) {
-    return <div className="scholar-chat-empty theia-widget-noInfo">Open a paper to start a grounded chat.</div>
+    return (
+      <div className="scholar-chat-view">
+        {scopeBar}
+        <div className="scholar-chat-empty theia-widget-noInfo">
+          {scopeOptions.length > 0
+            ? 'Open a paper to start a grounded chat, or pick a reading set above.'
+            : 'Open a paper to start a grounded chat.'}
+        </div>
+      </div>
+    )
   }
 
   const create = async () => {
@@ -532,21 +593,7 @@ export function ScholarChatView({ snapshot, actions }: ScholarChatViewProps): Re
 
   return (
     <div className="scholar-chat-view">
-      {snapshot.readingSet && (
-        <div className="scholar-chat-scope" title={`Reading set: ${snapshot.readingSet.name}`}>
-          <span className="codicon codicon-folder-library" aria-hidden="true" />
-          <span className="scholar-chat-scope-name">{snapshot.readingSet.name}</span>
-          <button
-            type="button"
-            className="scholar-chat-icon"
-            aria-label="Close reading set chat"
-            title="Back to the active paper's chat"
-            onClick={() => runAction(actions.closeReadingSetChat)}
-          >
-            <span className="codicon codicon-close" aria-hidden="true" />
-          </button>
-        </div>
-      )}
+      {scopeBar}
       <header className="scholar-chat-header">
         <select
           className="theia-select"
@@ -641,7 +688,10 @@ export function ScholarChatView({ snapshot, actions }: ScholarChatViewProps): Re
 export class ScholarChatWidget extends ReactWidget {
   private readonly actions: ScholarChatActions
 
-  constructor(@inject(ScholarChatService) private readonly chat: ScholarChatService) {
+  constructor(
+    @inject(ScholarChatService) private readonly chat: ScholarChatService,
+    @inject(ScholarReadingSetService) private readonly readingSets: ScholarReadingSetService,
+  ) {
     super()
     this.id = SCHOLAR_CHAT_WIDGET_ID
     this.title.label = 'Chat'
@@ -663,13 +713,28 @@ export class ScholarChatWidget extends ReactWidget {
       requestCitation: citation => this.chat.requestCitation(citation),
       summarizeCurrentSection: () => this.chat.summarizeCurrentSection(),
       closeReadingSetChat: () => this.chat.closeReadingSetChat(),
+      activateReadingSetChat: readingSetId => {
+        const readingSet = this.readingSets.readingSetOf(readingSetId)
+        return readingSet ? this.chat.activateReadingSet(readingSet) : undefined
+      },
     }
     this.toDispose.push(Disposable.create(this.chat.subscribe(() => this.update())))
+    this.toDispose.push(Disposable.create(this.readingSets.subscribe(() => this.update())))
     void this.chat.initialize().finally(() => this.update())
+    void this.readingSets.initialize().catch(() => undefined)
     this.update()
   }
 
   protected override render(): React.ReactNode {
-    return <ScholarChatView snapshot={this.chat.getSnapshot()} actions={this.actions} />
+    return (
+      <ScholarChatView
+        snapshot={this.chat.getSnapshot()}
+        readingSetOptions={this.readingSets.getSnapshot().readingSets.map(set => ({
+          id: set.id,
+          name: set.name,
+        }))}
+        actions={this.actions}
+      />
+    )
   }
 }

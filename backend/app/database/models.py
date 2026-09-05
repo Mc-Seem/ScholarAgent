@@ -172,6 +172,9 @@ class ReadingSet(Base):
     name = Column(String(255), nullable=False)
     created_at = Column(DateTime, default=utcnow, nullable=False)
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+    # Last reference-suggestion run, merged across runs so suggestions stay
+    # reviewable after import: {"generated_at": iso8601, "suggestions": [...]}.
+    reference_suggestions = Column(JSON, nullable=True)
 
     memberships = relationship(
         "ReadingSetPaper",

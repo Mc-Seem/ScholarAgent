@@ -23,9 +23,13 @@ export interface SemanticLensOtherPapersProps {
   loading?: boolean
   /** Alignment whose confirm/reject request is in flight. */
   busyAlignmentId?: string | null
+  /** A bulk confirm request for this term is in flight. */
+  bulkBusy?: boolean
   onOpen: (link: OtherPaperTermLink) => void
   onConfirm: (link: OtherPaperTermLink) => void
   onReject: (link: OtherPaperTermLink) => void
+  /** Confirms every proposed link of this term at once, when provided. */
+  onConfirmAll?: () => void
 }
 
 /**
@@ -41,25 +45,40 @@ export function SemanticLensOtherPapers({
   links,
   loading = false,
   busyAlignmentId = null,
+  bulkBusy = false,
   onOpen,
   onConfirm,
   onReject,
+  onConfirmAll,
 }: SemanticLensOtherPapersProps) {
   if (!loading && links.length === 0) {
     return null
   }
 
+  const pendingCount = links.filter(link => link.status === 'auto').length
+
   return (
     <section className="semantic-other-papers" data-testid="semantic-other-papers">
       <h4 className="semantic-locations-title">
         In other papers {links.length > 0 && <span>{links.length}</span>}
+        {onConfirmAll && pendingCount > 1 && (
+          <button
+            type="button"
+            className="semantic-other-paper-action semantic-other-papers-confirm-all"
+            data-testid="alignment-confirm-all"
+            disabled={bulkBusy}
+            onClick={onConfirmAll}
+          >
+            Confirm all
+          </button>
+        )}
       </h4>
       {loading && links.length === 0 && (
         <p className="semantic-lens-status">Loading term links…</p>
       )}
       <ul className="semantic-other-papers-list">
         {links.map(link => {
-          const busy = busyAlignmentId === link.alignmentId
+          const busy = bulkBusy || busyAlignmentId === link.alignmentId
           return (
             <li key={link.alignmentId} className="semantic-other-paper">
               <button

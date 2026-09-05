@@ -67,6 +67,32 @@ export interface ReadingSetAlignmentFilter {
   subjectId?: string
 }
 
+/** Outcome of confirming or rejecting every proposed alignment at once. */
+export interface BulkAlignmentReviewResult {
+  updated_count: number
+  alignments: EntityAlignment[]
+}
+
+export type ReferenceSuggestionRelevance = 'high' | 'medium' | 'low'
+
+/** One referenced arXiv paper the agent suggests adding to a reading set. */
+export interface ReferenceSuggestion {
+  arxiv_id: string
+  title: string
+  abstract: string
+  relevance: ReferenceSuggestionRelevance
+  reason: string
+  cited_by_paper_ids: string[]
+  library_paper_id: string | null
+  in_reading_set: boolean
+}
+
+export interface ReferenceSuggestionsResult {
+  reading_set_id: string
+  suggestions: ReferenceSuggestion[]
+  skipped_papers: SkippedAlignmentPaper[]
+}
+
 export interface ReadingSetApi {
   listReadingSets(): Promise<ReadingSet[]>
   createReadingSet(name: string): Promise<ReadingSet>
@@ -82,6 +108,15 @@ export interface ReadingSetApi {
   ): Promise<EntityAlignment[]>
   confirmReadingSetAlignment(readingSetId: string, alignmentId: string): Promise<EntityAlignment>
   rejectReadingSetAlignment(readingSetId: string, alignmentId: string): Promise<EntityAlignment>
+  bulkReviewReadingSetAlignments(
+    readingSetId: string,
+    action: 'confirm' | 'reject',
+    filter?: ReadingSetAlignmentFilter,
+  ): Promise<BulkAlignmentReviewResult>
+  suggestReadingSetReferences(
+    readingSetId: string,
+    maxCandidates?: number,
+  ): Promise<ReferenceSuggestionsResult>
   watchReadingSetAlignments(
     readingSetId: string,
     onProgress: (progress: ReadingSetAlignmentProgress) => void,
@@ -171,6 +206,50 @@ export function validateEntityAlignment(value: unknown): EntityAlignment {
   }
 }
 
+function validateBulkAlignmentReview(value: unknown): BulkAlignmentReviewResult {
+  const item = record(value, 'bulk alignment review')
+  if (!Array.isArray(item.alignments)) throw new Error('Invalid bulk review alignments')
+  return {
+    updated_count: number(item.updated_count, 'bulk review updated_count'),
+    alignments: item.alignments.map(validateEntityAlignment),
+  }
+}
+
+function validateReferenceSuggestion(value: unknown): ReferenceSuggestion {
+  const item = record(value, 'reference suggestion')
+  if (!Array.isArray(item.cited_by_paper_ids)) {
+    throw new Error('Invalid reference suggestion cited_by_paper_ids')
+  }
+  return {
+    arxiv_id: string(item.arxiv_id, 'suggestion arxiv_id'),
+    title: string(item.title, 'suggestion title'),
+    abstract: typeof item.abstract === 'string' ? item.abstract : '',
+    relevance: oneOf(item.relevance, ['high', 'medium', 'low'], 'suggestion relevance'),
+    reason: typeof item.reason === 'string' ? item.reason : '',
+    cited_by_paper_ids: item.cited_by_paper_ids.map(id => string(id, 'suggestion citing paper id')),
+    library_paper_id: nullableString(item.library_paper_id, 'suggestion library_paper_id'),
+    in_reading_set: item.in_reading_set === true,
+  }
+}
+
+function validateReferenceSuggestions(value: unknown): ReferenceSuggestionsResult {
+  const item = record(value, 'reference suggestions')
+  if (!Array.isArray(item.suggestions)) throw new Error('Invalid reference suggestions list')
+  const skipped = Array.isArray(item.skipped_papers) ? item.skipped_papers : []
+  return {
+    reading_set_id: string(item.reading_set_id, 'reference suggestions reading_set_id'),
+    suggestions: item.suggestions.map(validateReferenceSuggestion),
+    skipped_papers: skipped.map(entry => {
+      const skippedRecord = record(entry, 'skipped paper')
+      return {
+        paper_id: string(skippedRecord.paper_id, 'skipped paper id'),
+        filename: typeof skippedRecord.filename === 'string' ? skippedRecord.filename : '',
+        reason: string(skippedRecord.reason, 'skipped paper reason'),
+      }
+    }),
+  }
+}
+
 async function apiError(response: Response): Promise<ReadingSetApiError> {
   let message = response.statusText || 'Reading set request failed'
   try {
@@ -247,6 +326,33 @@ export class HttpReadingSetApi implements ReadingSetApi {
     return validateEntityAlignment(
       await this.json(`${this.alignmentPath(readingSetId, alignmentId)}/reject`, { method: 'POST' }),
     )
+  }
+
+  async bulkReviewReadingSetAlignments(
+    readingSetId: string,
+    action: 'confirm' | 'reject',
+    filter?: ReadingSetAlignmentFilter,
+  ): Promise<BulkAlignmentReviewResult> {
+    return validateBulkAlignmentReview(await this.json(`${this.path(readingSetId)}/alignments/bulk-review`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action,
+        paper_id: filter?.paperId ?? null,
+        subject_id: filter?.subjectId ?? null,
+      }),
+    }))
+  }
+
+  async suggestReadingSetReferences(
+    readingSetId: string,
+    maxCandidates?: number,
+  ): Promise<ReferenceSuggestionsResult> {
+    return validateReferenceSuggestions(await this.json(`${this.path(readingSetId)}/reference-suggestions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(maxCandidates ? { max_candidates: maxCandidates } : {}),
+    }))
   }
 
   watchReadingSetAlignments(

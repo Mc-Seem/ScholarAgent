@@ -69,6 +69,8 @@ let SCHOLAR_SEMANTIC_LENS_WIDGET_ID: string
 let SCHOLAR_CHAT_WIDGET_ID: string
 let SCHOLAR_NAVIGATION_WIDGET_ID: string
 let SCHOLAR_OUTLINE_WIDGET_ID: string
+let SCHOLAR_LIBRARY_WIDGET_ID: string
+let SCHOLAR_READING_SETS_WIDGET_ID: string
 let ScholarGraphSelectionNs: typeof import(
   '@/theia/scholar-extension/src/browser/scholar-graph-selection'
 ).ScholarGraphSelection
@@ -101,11 +103,15 @@ beforeAll(async () => {
   ;({
     ScholarLibraryWidget,
     SCHOLAR_LIBRARY_CONTEXT_MENU,
+    SCHOLAR_LIBRARY_WIDGET_ID,
     SCHOLAR_ANNOTATIONS_WIDGET_ID,
     SCHOLAR_NAVIGATION_WIDGET_ID,
     SCHOLAR_TOOLTIP_DRAFTS_WIDGET_ID,
   } = await import(
     '@/theia/scholar-extension/src/browser/scholar-side-widgets'
+  ))
+  ;({ SCHOLAR_READING_SETS_WIDGET_ID } = await import(
+    '@/theia/scholar-extension/src/browser/scholar-reading-set-widget'
   ))
   ;({
     SCHOLAR_SUGGESTIONS_WIDGET_ID,
@@ -563,6 +569,7 @@ function createContribution(store: ReturnType<typeof createFakeStore>) {
     error: vi.fn().mockResolvedValue(undefined),
     warn: vi.fn().mockResolvedValue(undefined),
     info: vi.fn().mockResolvedValue(undefined),
+    showProgress: vi.fn().mockResolvedValue({ cancel: vi.fn() }),
   }
   const quickInputService = {
     pick: vi.fn(),
@@ -584,6 +591,7 @@ function createContribution(store: ReturnType<typeof createFakeStore>) {
     isLinkingTerms: vi.fn(() => false),
     linkTerms: vi.fn(),
     cancelLinkTerms: vi.fn().mockResolvedValue(undefined),
+    suggestReferences: vi.fn(),
   }
   const suggestions = {
     getSnapshot: vi.fn(() => ({ activePaperId: null, papers: {} })),
@@ -789,17 +797,34 @@ describe('ScholarContribution Semantic Lens placement', () => {
   })
 })
 
+/**
+ * Marks the Chat and Reading Sets widgets as already attached so the other
+ * layout migrations under test run against an otherwise settled shell.
+ */
+function stubSettledLayout(context: ReturnType<typeof createContribution>): void {
+  const chat = { id: SCHOLAR_CHAT_WIDGET_ID }
+  const readingSets = { id: SCHOLAR_READING_SETS_WIDGET_ID }
+  const tryGetWidget = context.widgetManager.tryGetWidget.getMockImplementation()
+  context.widgetManager.tryGetWidget.mockImplementation((widgetId: string) => (
+    widgetId === SCHOLAR_CHAT_WIDGET_ID
+      ? chat
+      : widgetId === SCHOLAR_READING_SETS_WIDGET_ID
+        ? readingSets
+        : tryGetWidget?.(widgetId)
+  ))
+  const getAreaFor = context.shell.getAreaFor.getMockImplementation()
+  context.shell.getAreaFor.mockImplementation((widget: unknown) => (
+    widget === chat
+      ? 'right'
+      : widget === readingSets
+        ? 'left'
+        : getAreaFor?.(widget)
+  ))
+}
+
 describe('ScholarContribution Term Highlights layout migration', () => {
   async function migrate(context: ReturnType<typeof createContribution>): Promise<void> {
-    const chat = { id: SCHOLAR_CHAT_WIDGET_ID }
-    const tryGetWidget = context.widgetManager.tryGetWidget.getMockImplementation()
-    context.widgetManager.tryGetWidget.mockImplementation((widgetId: string) => (
-      widgetId === SCHOLAR_CHAT_WIDGET_ID ? chat : tryGetWidget?.(widgetId)
-    ))
-    const getAreaFor = context.shell.getAreaFor.getMockImplementation()
-    context.shell.getAreaFor.mockImplementation((widget: unknown) => (
-      widget === chat ? 'right' : getAreaFor?.(widget)
-    ))
+    stubSettledLayout(context)
     const contribution = context.contribution as unknown as {
       onDidInitializeLayout(app: unknown): Promise<void>
     }
@@ -917,8 +942,11 @@ describe('ScholarContribution Chat layout migration', () => {
     const chat = { id: SCHOLAR_CHAT_WIDGET_ID }
     const outline = { id: SCHOLAR_OUTLINE_WIDGET_ID, close: vi.fn() }
     const navigation = createFakeViewContainer(SCHOLAR_NAVIGATION_WIDGET_ID, [])
+    const readingSets = { id: SCHOLAR_READING_SETS_WIDGET_ID }
     Object.defineProperty(navigation, 'close', { value: vi.fn(), configurable: true })
-    context.widgetManager.tryGetWidget.mockReturnValue(undefined)
+    context.widgetManager.tryGetWidget.mockImplementation((widgetId: string) => (
+      widgetId === SCHOLAR_READING_SETS_WIDGET_ID ? readingSets : undefined
+    ))
     context.widgetManager.getOrCreateWidget.mockImplementation(async (widgetId: string) => {
       if (widgetId === SCHOLAR_CHAT_WIDGET_ID) return chat
       if (widgetId === SCHOLAR_NAVIGATION_WIDGET_ID) return navigation
@@ -926,7 +954,11 @@ describe('ScholarContribution Chat layout migration', () => {
       throw new Error(`Unexpected widget: ${widgetId}`)
     })
     context.shell.getAreaFor.mockImplementation((widget: unknown) => (
-      widget === outline || widget === navigation ? 'right' : undefined
+      widget === outline || widget === navigation
+        ? 'right'
+        : widget === readingSets
+          ? 'left'
+          : undefined
     ))
 
     await (context.contribution as unknown as {
@@ -944,13 +976,7 @@ describe('ScholarContribution Chat layout migration', () => {
 
   it('preserves a restored layout that already contains Chat', async () => {
     const context = createContribution(createFakeStore(emptySnapshot()))
-    const chat = { id: SCHOLAR_CHAT_WIDGET_ID }
-    context.widgetManager.tryGetWidget.mockImplementation((widgetId: string) => (
-      widgetId === SCHOLAR_CHAT_WIDGET_ID ? chat : undefined
-    ))
-    context.shell.getAreaFor.mockImplementation((widget: unknown) => (
-      widget === chat ? 'right' : undefined
-    ))
+    stubSettledLayout(context)
 
     await (context.contribution as unknown as {
       onDidInitializeLayout(app: unknown): Promise<void>
@@ -959,6 +985,58 @@ describe('ScholarContribution Chat layout migration', () => {
     expect(context.widgetManager.getOrCreateWidget).not.toHaveBeenCalled()
     expect(context.shell.addWidget).not.toHaveBeenCalled()
     expect(context.shell.activateWidget).not.toHaveBeenCalled()
+  })
+})
+
+describe('ScholarContribution Reading Sets layout migration', () => {
+  it('attaches the Reading Sets view next to the Papers view after restoring an old layout', async () => {
+    const context = createContribution(createFakeStore(emptySnapshot()))
+    const chat = { id: SCHOLAR_CHAT_WIDGET_ID }
+    const library = { id: SCHOLAR_LIBRARY_WIDGET_ID }
+    const readingSets = { id: SCHOLAR_READING_SETS_WIDGET_ID }
+    context.widgetManager.tryGetWidget.mockImplementation((widgetId: string) => (
+      widgetId === SCHOLAR_CHAT_WIDGET_ID
+        ? chat
+        : widgetId === SCHOLAR_LIBRARY_WIDGET_ID
+          ? library
+          : undefined
+    ))
+    context.widgetManager.getOrCreateWidget.mockResolvedValue(readingSets)
+    context.shell.getAreaFor.mockImplementation((widget: unknown) => (
+      widget === chat ? 'right' : widget === library ? 'left' : undefined
+    ))
+
+    await (context.contribution as unknown as {
+      onDidInitializeLayout(app: unknown): Promise<void>
+    }).onDidInitializeLayout({ shell: context.shell })
+
+    expect(context.widgetManager.getOrCreateWidget)
+      .toHaveBeenCalledWith(SCHOLAR_READING_SETS_WIDGET_ID)
+    expect(context.shell.addWidget).toHaveBeenCalledWith(readingSets, {
+      area: 'left',
+      mode: 'tab-after',
+      ref: library,
+    })
+    expect(context.messageService.warn).not.toHaveBeenCalled()
+  })
+
+  it('falls back to the left area when the Papers view is not attached there', async () => {
+    const context = createContribution(createFakeStore(emptySnapshot()))
+    const chat = { id: SCHOLAR_CHAT_WIDGET_ID }
+    const readingSets = { id: SCHOLAR_READING_SETS_WIDGET_ID }
+    context.widgetManager.tryGetWidget.mockImplementation((widgetId: string) => (
+      widgetId === SCHOLAR_CHAT_WIDGET_ID ? chat : undefined
+    ))
+    context.widgetManager.getOrCreateWidget.mockResolvedValue(readingSets)
+    context.shell.getAreaFor.mockImplementation((widget: unknown) => (
+      widget === chat ? 'right' : undefined
+    ))
+
+    await (context.contribution as unknown as {
+      onDidInitializeLayout(app: unknown): Promise<void>
+    }).onDidInitializeLayout({ shell: context.shell })
+
+    expect(context.shell.addWidget).toHaveBeenCalledWith(readingSets, { area: 'left' })
   })
 })
 
@@ -1482,6 +1560,8 @@ describe('ScholarContribution active-paper commands', () => {
       ScholarCommands.REFRESH_LIBRARY.id,
       ScholarCommands.CREATE_READING_SET.id,
       ScholarCommands.REFRESH_READING_SETS.id,
+      ScholarCommands.OPEN_READING_SET_CHAT.id,
+      ScholarCommands.SUGGEST_READING_SET_REFERENCES.id,
       ScholarCommands.UPLOAD_LATEX.id,
       ScholarCommands.IMPORT_ARXIV.id,
       ScholarCommands.GENERATE_SUGGESTIONS.id,
@@ -2483,5 +2563,133 @@ describe('ScholarContribution reading set chat', () => {
     expect(context.chat.activateReadingSet).toHaveBeenCalledWith(readingSet)
     expect(context.shell.activateWidget).toHaveBeenCalledWith('scholar-agent:chat')
     expect(context.messageService.error).not.toHaveBeenCalled()
+  })
+})
+
+describe('ScholarContribution reference suggestions', () => {
+  const setNode = {
+    id: 'reading-set:set-1', parent: undefined, selected: false, expanded: false,
+    children: [], readingSetId: 'set-1',
+  }
+
+  function suggestion(overrides: Record<string, unknown> = {}) {
+    return {
+      arxiv_id: '2402.11111',
+      title: 'Fresh Paper',
+      abstract: 'Fresh abstract.',
+      relevance: 'high',
+      reason: 'Core method.',
+      cited_by_paper_ids: ['member-a'],
+      library_paper_id: null,
+      in_reading_set: false,
+      ...overrides,
+    }
+  }
+
+  function register() {
+    const store = createFakeStore(emptySnapshot())
+    const context = createContribution(store)
+    context.readingSets.readingSetOf.mockReturnValue({
+      id: 'set-1', name: 'Set One',
+      created_at: '2026-08-29T10:00:00Z', updated_at: '2026-08-29T10:00:00Z',
+      papers: [{ id: 'member-a' }, { id: 'member-b' }],
+    } as never)
+    const commands = new FakeCommandRegistry()
+    context.contribution.registerCommands(commands as unknown as Parameters<
+      ScholarContributionClass['registerCommands']
+    >[0])
+    return { ...context, store, commands }
+  }
+
+  it('keeps previously imported suggestions visible and only adds the fresh picks', async () => {
+    const { commands, readingSets, quickInputService, store, messageService } = register()
+    readingSets.suggestReferences.mockResolvedValue({
+      reading_set_id: 'set-1',
+      suggestions: [
+        suggestion(),
+        suggestion({
+          arxiv_id: '2403.22222', title: 'Imported Paper', relevance: 'low',
+          reason: 'Added earlier.', library_paper_id: 'lib-1', in_reading_set: true,
+        }),
+      ],
+      skipped_papers: [],
+    })
+    quickInputService.pick.mockImplementation(async (items: FakeQuickPickItem[]) => items)
+    store.uploadArxiv.mockResolvedValue({ id: 'paper-new' })
+
+    await commands.handlerFor(ScholarCommands.SUGGEST_READING_SET_REFERENCES).execute(setNode)
+
+    const [items, options] = quickInputService.pick.mock.calls[0] as [
+      FakeQuickPickItem[],
+      { placeHolder?: string },
+    ]
+    expect(items).toHaveLength(2)
+    expect(items[0]).toMatchObject({ label: 'Fresh Paper', picked: true })
+    expect(items[1].description).toContain('already in this set')
+    expect(items[1].picked).toBe(false)
+    expect(options.placeHolder).toBe('Pick the papers to import and add to the reading set')
+    // Selecting everything only imports the paper that is not yet a member.
+    expect(store.uploadArxiv).toHaveBeenCalledOnce()
+    expect(store.uploadArxiv).toHaveBeenCalledWith('2402.11111')
+    expect(readingSets.addPaperToReadingSet).toHaveBeenCalledOnce()
+    expect(readingSets.addPaperToReadingSet).toHaveBeenCalledWith('set-1', 'paper-new')
+    expect(messageService.error).not.toHaveBeenCalled()
+  })
+
+  it('still shows the picker when every suggested paper is already in the set', async () => {
+    const { commands, readingSets, quickInputService, store, messageService } = register()
+    readingSets.suggestReferences.mockResolvedValue({
+      reading_set_id: 'set-1',
+      suggestions: [
+        suggestion({ library_paper_id: 'lib-1', in_reading_set: true }),
+      ],
+      skipped_papers: [],
+    })
+    quickInputService.pick.mockImplementation(async (items: FakeQuickPickItem[]) => items)
+
+    await commands.handlerFor(ScholarCommands.SUGGEST_READING_SET_REFERENCES).execute(setNode)
+
+    const options = quickInputService.pick.mock.calls[0][1] as { placeHolder?: string }
+    expect(options.placeHolder)
+      .toBe('All previously suggested papers are already in this reading set')
+    expect(store.uploadArxiv).not.toHaveBeenCalled()
+    expect(readingSets.addPaperToReadingSet).not.toHaveBeenCalled()
+    expect(messageService.info)
+      .toHaveBeenCalledWith('The selected papers are already in "Set One".')
+  })
+
+  it('explains that suggestions need compiled bibliographies when every member was skipped', async () => {
+    const { commands, readingSets, quickInputService, messageService } = register()
+    readingSets.suggestReferences.mockResolvedValue({
+      reading_set_id: 'set-1',
+      suggestions: [],
+      skipped_papers: [
+        { paper_id: 'member-a', filename: '', reason: 'no_citations' },
+        { paper_id: 'member-b', filename: '', reason: 'no_citations' },
+      ],
+    })
+
+    await commands.handlerFor(ScholarCommands.SUGGEST_READING_SET_REFERENCES).execute(setNode)
+
+    expect(quickInputService.pick).not.toHaveBeenCalled()
+    expect(messageService.info).toHaveBeenCalledWith(
+      expect.stringContaining('no bibliographies to scan yet'),
+    )
+  })
+
+  it('explains that only arXiv references qualify when the bibliographies have none', async () => {
+    const { commands, readingSets, quickInputService, messageService } = register()
+    readingSets.suggestReferences.mockResolvedValue({
+      reading_set_id: 'set-1',
+      suggestions: [],
+      skipped_papers: [],
+    })
+
+    await commands.handlerFor(ScholarCommands.SUGGEST_READING_SET_REFERENCES).execute(setNode)
+
+    expect(quickInputService.pick).not.toHaveBeenCalled()
+    expect(messageService.info).toHaveBeenCalledWith(
+      expect.stringContaining('No arXiv references found in the bibliographies of "Set One"'),
+    )
   })
 })

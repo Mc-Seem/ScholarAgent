@@ -131,13 +131,17 @@ export class ScholarReadingSetWidget extends TreeWidget {
     const id = `reading-set:${readingSet.id}`
     const paperCount = readingSet.papers.length
     const build = this.readingSets.getSnapshot().alignmentBuilds[readingSet.id]
+    const pendingLinks = this.readingSets.pendingAlignmentCountOf(readingSet.id)
+    const paperCountLabel = `${paperCount} paper${paperCount === 1 ? '' : 's'}`
     const node: ScholarReadingSetTreeNode = {
       id,
       readingSetId: readingSet.id,
       name: readingSet.name,
       description: build
         ? linkTermsDescription(build)
-        : `${paperCount} paper${paperCount === 1 ? '' : 's'}`,
+        : pendingLinks
+          ? `${paperCountLabel} · ${pendingLinks} pending link${pendingLinks === 1 ? '' : 's'}`
+          : paperCountLabel,
       parent,
       selected: previousSelection.has(id),
       expanded: !previousCollapsed.has(id),
@@ -156,12 +160,16 @@ export class ScholarReadingSetWidget extends TreeWidget {
     previousSelection: Set<string>,
   ): ScholarReadingSetPaperTreeNode {
     const id = `reading-set:${readingSet.id}:paper:${paper.id}`
+    // Surface the Link Terms precondition before the user runs it: papers
+    // without a knowledge graph are skipped by the alignment build.
+    const missingGraph = paper.has_knowledge_graph ? undefined : 'No knowledge graph'
+    const arxiv = paper.arxiv_id ? `arXiv:${paper.arxiv_id}` : undefined
     return {
       id,
       readingSetId: readingSet.id,
       paperId: paper.id,
       name: paperLabel(paper.filename, paper.title ?? undefined),
-      description: paper.arxiv_id ? `arXiv:${paper.arxiv_id}` : undefined,
+      description: missingGraph && arxiv ? `${arxiv} · ${missingGraph}` : missingGraph ?? arxiv,
       parent,
       selected: previousSelection.has(id),
     }
@@ -178,6 +186,16 @@ export class ScholarReadingSetWidget extends TreeWidget {
       return <div className="scholar-tree-icon codicon codicon-folder-library" />
     }
     if (isScholarReadingSetPaperTreeNode(node)) {
+      const paper = this.readingSets.readingSetOf(node.readingSetId)
+        ?.papers.find(member => member.id === node.paperId)
+      if (paper && !paper.has_knowledge_graph) {
+        return (
+          <div
+            className="scholar-tree-icon codicon codicon-warning"
+            title="No knowledge graph yet — Link Terms will skip this paper"
+          />
+        )
+      }
       return <div className="scholar-tree-icon codicon codicon-book" />
     }
     return undefined

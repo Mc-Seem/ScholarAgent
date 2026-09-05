@@ -808,8 +808,14 @@ def _paper_title(paper: Paper) -> str | None:
 
 
 def _reading_set_papers_snapshot(reading_set: ReadingSet) -> list[dict]:
+    # Memberships can dangle after a paper is deleted; skip them instead of
+    # failing the whole conversation.
     memberships = sorted(
-        reading_set.memberships,
+        (
+            membership
+            for membership in reading_set.memberships
+            if membership.paper is not None
+        ),
         key=lambda membership: (membership.added_at, membership.paper_id),
     )
     return [
@@ -971,9 +977,29 @@ async def stream_set_message(
     )
     conversation.updated_at = utcnow()
     db.add(user_message)
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception(
+            "Chat message persistence failed for reading set %s, conversation %s",
+            reading_set_id,
+            conversation_id,
+        )
+        raise HTTPException(status_code=500, detail="The chat message could not be saved.")
 
     async def generate_events():
+        # Degrade gracefully when no member paper has compiled content: the
+        # agent cannot ground an answer, so report a structured error instead
+        # of failing mid-stream.
+        if not any(paper["html_content"] for paper in papers):
+            yield _sse(
+                "error",
+                ChatErrorEvent(
+                    message="This reading set has no readable paper content to chat about.",
+                ),
+            )
+            return
         yield _sse(
             "status",
             ChatStatusEvent(stage="retrieval", message="Preparing reading set evidence."),
@@ -983,7 +1009,8 @@ async def stream_set_message(
             ChatStatusEvent(stage="answer", message="Preparing grounded answer."),
         )
         try:
-            result = run_reading_set_chat_agent(
+            result = await asyncio.to_thread(
+                run_reading_set_chat_agent,
                 question=request.content,
                 papers=papers,
                 alignments=alignments,

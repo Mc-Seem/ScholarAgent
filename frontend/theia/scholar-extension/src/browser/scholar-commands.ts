@@ -65,9 +65,24 @@ export const ScholarCommands = {
     label: 'Stop Linking Terms',
     iconClass: 'codicon codicon-stop-circle',
   } satisfies Command,
+  CONFIRM_ALL_READING_SET_TERMS: {
+    id: 'scholar-agent.confirm-all-reading-set-terms',
+    label: 'Confirm All Proposed Links',
+    iconClass: 'codicon codicon-check-all',
+  } satisfies Command,
+  REJECT_ALL_READING_SET_TERMS: {
+    id: 'scholar-agent.reject-all-reading-set-terms',
+    label: 'Reject All Proposed Links',
+    iconClass: 'codicon codicon-close-all',
+  } satisfies Command,
+  SUGGEST_READING_SET_REFERENCES: {
+    id: 'scholar-agent.suggest-reading-set-references',
+    label: 'Suggest Papers from References…',
+    iconClass: 'codicon codicon-sparkle',
+  } satisfies Command,
   OPEN_READING_SET_CHAT: {
     id: 'scholar-agent.open-reading-set-chat',
-    label: 'Chat About Set',
+    label: 'Chat About Reading Set',
     iconClass: 'codicon codicon-comment-discussion',
   } satisfies Command,
   HIGHLIGHT_SHARED_TERMS: {

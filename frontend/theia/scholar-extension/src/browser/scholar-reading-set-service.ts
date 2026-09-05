@@ -2,9 +2,12 @@ import { inject, injectable } from '@theia/core/shared/inversify'
 
 import { HttpReaderWorkspaceApi } from '../../../../lib/reader-workspace-api'
 import type {
+  BulkAlignmentReviewResult,
   EntityAlignment,
   ReadingSet,
+  ReadingSetAlignmentFilter,
   ReadingSetApi,
+  ReferenceSuggestionsResult,
   SkippedAlignmentPaper,
 } from '../../../../lib/reading-set-api'
 
@@ -157,6 +160,8 @@ export class ScholarReadingSetService {
           this.clearAlignmentBuild(readingSetId)
           if (progress.stage === 'complete') {
             this.alignmentsCache.delete(readingSetId)
+            // Reload eagerly so pending-link counts appear in the tree right away.
+            void this.loadAlignments(readingSetId).catch(() => undefined)
           }
           resolve({
             stage: progress.stage,
@@ -190,6 +195,42 @@ export class ScholarReadingSetService {
     this.alignmentsCache.set(readingSetId, alignments)
     this.update({})
     return alignments
+  }
+
+  /** Proposed ("auto") links awaiting review; undefined until alignments are cached. */
+  pendingAlignmentCountOf(readingSetId: string): number | undefined {
+    const alignments = this.alignmentsCache.get(readingSetId)
+    if (!alignments) {
+      return undefined
+    }
+    return alignments.filter(alignment => alignment.status === 'auto').length
+  }
+
+  /** Confirms or rejects every proposed link at once, optionally narrowed to one paper or subject. */
+  async bulkReviewAlignments(
+    readingSetId: string,
+    action: 'confirm' | 'reject',
+    filter?: ReadingSetAlignmentFilter,
+  ): Promise<BulkAlignmentReviewResult> {
+    const result = await this.api.bulkReviewReadingSetAlignments(readingSetId, action, filter)
+    const cached = this.alignmentsCache.get(readingSetId)
+    if (cached && result.alignments.length > 0) {
+      const updatedById = new Map(result.alignments.map(alignment => [alignment.id, alignment]))
+      this.alignmentsCache.set(
+        readingSetId,
+        cached.map(alignment => updatedById.get(alignment.id) ?? alignment),
+      )
+      this.update({})
+    }
+    return result
+  }
+
+  /** Asks the backend to rank the set's referenced arXiv papers by relevance. */
+  suggestReferences(
+    readingSetId: string,
+    maxCandidates?: number,
+  ): Promise<ReferenceSuggestionsResult> {
+    return this.api.suggestReadingSetReferences(readingSetId, maxCandidates)
   }
 
   async confirmAlignment(readingSetId: string, alignmentId: string): Promise<EntityAlignment> {

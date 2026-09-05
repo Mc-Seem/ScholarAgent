@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import io
 import json
@@ -12,7 +13,7 @@ import pytest
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -530,6 +531,96 @@ class TestReadingSetChatStream:
         assert final["message"]["pending_action"] is None
         with set_chat_api.session_factory() as db:
             assert db.query(ChatAction).count() == 0
+
+    def test_dangling_membership_is_skipped_instead_of_failing(self, set_chat_api, monkeypatch):
+        conversation_id = create_set_conversation(set_chat_api)["id"]
+        with set_chat_api.session_factory() as db:
+            db.execute(text("DELETE FROM papers WHERE id = 'paper-three'"))
+            db.commit()
+        captured = {}
+
+        def grounded(**kwargs):
+            captured.update(kwargs)
+            return GroundedChatResult(
+                content="Answer without the deleted paper.",
+                citations=[],
+                graph_available=False,
+                used_graph=False,
+            )
+
+        monkeypatch.setattr(chat_routes, "run_reading_set_chat_agent", grounded)
+        with set_chat_api.client.stream(
+            "POST",
+            f"/api/reading-sets/set-1/chat/conversations/{conversation_id}/messages",
+            json={"content": "What do the remaining papers say?"},
+        ) as response:
+            assert response.status_code == 200
+            events = parse_sse(response)
+
+        assert [name for name, _ in events] == ["status", "status", "final"]
+        assert {paper["id"] for paper in captured["papers"]} == {"paper-one", "paper-two"}
+
+    def test_agent_is_invoked_off_the_event_loop(self, set_chat_api, monkeypatch):
+        conversation_id = create_set_conversation(set_chat_api)["id"]
+        observed = {}
+
+        def grounded(**_kwargs):
+            try:
+                asyncio.get_running_loop()
+                observed["on_event_loop"] = True
+            except RuntimeError:
+                observed["on_event_loop"] = False
+            return GroundedChatResult(
+                content="Computed off the event loop.",
+                citations=[],
+                graph_available=False,
+                used_graph=False,
+            )
+
+        monkeypatch.setattr(chat_routes, "run_reading_set_chat_agent", grounded)
+        with set_chat_api.client.stream(
+            "POST",
+            f"/api/reading-sets/set-1/chat/conversations/{conversation_id}/messages",
+            json={"content": "Where does the agent run?"},
+        ) as response:
+            events = parse_sse(response)
+
+        assert [name for name, _ in events] == ["status", "status", "final"]
+        assert observed["on_event_loop"] is False
+
+    def test_set_without_readable_content_returns_structured_error(
+        self,
+        set_chat_api,
+        monkeypatch,
+    ):
+        with set_chat_api.session_factory() as db:
+            db.add(ReadingSet(id="set-empty", name="Uncompiled"))
+            db.flush()
+            db.add(ReadingSetPaper(reading_set_id="set-empty", paper_id="paper-three"))
+            db.commit()
+        created = set_chat_api.client.post(
+            "/api/reading-sets/set-empty/chat/conversations",
+            json={"title": "Empty set"},
+        )
+        assert created.status_code == 201
+        conversation_id = created.json()["id"]
+        monkeypatch.setattr(
+            chat_routes,
+            "run_reading_set_chat_agent",
+            lambda **_kwargs: pytest.fail("agent must not run without readable content"),
+        )
+
+        with set_chat_api.client.stream(
+            "POST",
+            f"/api/reading-sets/set-empty/chat/conversations/{conversation_id}/messages",
+            json={"content": "Anything to read here?"},
+        ) as response:
+            assert response.status_code == 200
+            events = parse_sse(response)
+
+        assert [name for name, _ in events] == ["error"]
+        assert events[0][1]["type"] == "error"
+        assert "no readable paper content" in events[0][1]["message"]
 
     def test_stream_emits_sanitized_error_and_keeps_user_message(
         self,

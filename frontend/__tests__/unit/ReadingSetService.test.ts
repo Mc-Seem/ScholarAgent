@@ -59,6 +59,12 @@ function setup(initialSets: ReadingSet[] = [readingSet('set-a')]) {
     listReadingSetAlignments: vi.fn().mockResolvedValue([]),
     confirmReadingSetAlignment: vi.fn(),
     rejectReadingSetAlignment: vi.fn(),
+    bulkReviewReadingSetAlignments: vi.fn().mockResolvedValue({ updated_count: 0, alignments: [] }),
+    suggestReadingSetReferences: vi.fn().mockResolvedValue({
+      reading_set_id: 'set-a',
+      suggestions: [],
+      skipped_papers: [],
+    }),
     watchReadingSetAlignments: vi.fn().mockImplementation((
       _readingSetId: string,
       onProgress: (progress: ReadingSetAlignmentProgress) => void,
@@ -281,18 +287,62 @@ describe('ScholarReadingSetService', () => {
       expect(service.alignmentsOf('set-a')?.[0].status).toBe('rejected')
     })
 
-    it('invalidates the cache when a build completes', async () => {
+    it('reloads the cache when a build completes', async () => {
       const { api, service, watchers } = setup()
-      vi.mocked(api.listReadingSetAlignments).mockResolvedValue([alignment('al-1')])
+      vi.mocked(api.listReadingSetAlignments).mockResolvedValueOnce([alignment('al-1')])
       await service.loadAlignments('set-a')
+      vi.mocked(api.listReadingSetAlignments).mockResolvedValueOnce([alignment('al-2')])
 
       const result = service.linkTerms('set-a')
       await Promise.resolve()
       await Promise.resolve()
-      watchers[0].emit({ stage: 'complete', alignment_count: 0 })
+      watchers[0].emit({ stage: 'complete', alignment_count: 1 })
       await result
 
-      expect(service.alignmentsOf('set-a')).toBeUndefined()
+      await vi.waitFor(() => {
+        expect(service.alignmentsOf('set-a')?.map(item => item.id)).toEqual(['al-2'])
+      })
+      expect(api.listReadingSetAlignments).toHaveBeenCalledTimes(2)
+    })
+
+    it('counts pending links only when alignments are cached', async () => {
+      const { api, service } = setup()
+      expect(service.pendingAlignmentCountOf('set-a')).toBeUndefined()
+
+      vi.mocked(api.listReadingSetAlignments).mockResolvedValue([
+        alignment('al-1'),
+        alignment('al-2', { status: 'confirmed' }),
+        alignment('al-3', { status: 'rejected' }),
+      ])
+      await service.loadAlignments('set-a')
+
+      expect(service.pendingAlignmentCountOf('set-a')).toBe(1)
+    })
+
+    it('applies bulk review results to the cached rows', async () => {
+      const { api, service } = setup()
+      vi.mocked(api.listReadingSetAlignments).mockResolvedValue([
+        alignment('al-1'),
+        alignment('al-2', { status: 'confirmed' }),
+        alignment('al-3'),
+      ])
+      vi.mocked(api.bulkReviewReadingSetAlignments).mockResolvedValue({
+        updated_count: 2,
+        alignments: [
+          alignment('al-1', { status: 'confirmed' }),
+          alignment('al-3', { status: 'confirmed' }),
+        ],
+      })
+      await service.loadAlignments('set-a')
+
+      const result = await service.bulkReviewAlignments('set-a', 'confirm', { subjectId: 'subject-1' })
+
+      expect(api.bulkReviewReadingSetAlignments)
+        .toHaveBeenCalledWith('set-a', 'confirm', { subjectId: 'subject-1' })
+      expect(result.updated_count).toBe(2)
+      expect(service.alignmentsOf('set-a')?.map(item => item.status))
+        .toEqual(['confirmed', 'confirmed', 'confirmed'])
+      expect(service.pendingAlignmentCountOf('set-a')).toBe(0)
     })
   })
 })

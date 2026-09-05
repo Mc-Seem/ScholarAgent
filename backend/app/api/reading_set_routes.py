@@ -15,7 +15,7 @@ import asyncio
 import json
 import uuid
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Literal, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response, status
 from fastapi.responses import StreamingResponse
@@ -79,6 +79,42 @@ class ReadingSetUpdate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
 
 
+class BulkAlignmentReviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    action: Literal["confirm", "reject"]
+    paper_id: str | None = None
+    subject_id: str | None = None
+
+
+class ReferenceSuggestionsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    max_candidates: int = Field(default=25, ge=1, le=50)
+
+
+class ReferenceSuggestionResponse(BaseModel):
+    arxiv_id: str
+    title: str
+    abstract: str
+    relevance: str
+    reason: str
+    cited_by_paper_ids: list[str]
+    library_paper_id: str | None
+    in_reading_set: bool
+
+
+class SkippedPaperResponse(BaseModel):
+    paper_id: str
+    reason: str
+
+
+class ReferenceSuggestionsResponse(BaseModel):
+    reading_set_id: str
+    suggestions: list[ReferenceSuggestionResponse]
+    skipped_papers: list[SkippedPaperResponse]
+
+
 class EntityAlignmentResponse(BaseModel):
     id: str
     reading_set_id: str
@@ -94,6 +130,11 @@ class EntityAlignmentResponse(BaseModel):
     status: str
     rationale: str | None
     created_at: datetime
+
+
+class BulkAlignmentReviewResponse(BaseModel):
+    updated_count: int
+    alignments: list[EntityAlignmentResponse]
 
 
 def _reading_set_or_404(db: Session, reading_set_id: str) -> ReadingSet:
@@ -483,3 +524,168 @@ async def reject_alignment(
     db.commit()
     db.refresh(alignment)
     return _alignment_response(alignment)
+
+
+@router.post(
+    "/{reading_set_id}/alignments/bulk-review",
+    response_model=BulkAlignmentReviewResponse,
+)
+async def bulk_review_alignments(
+    reading_set_id: str,
+    request: BulkAlignmentReviewRequest,
+    db: Session = Depends(get_db),
+):
+    """Confirm or reject every proposed (`auto`) alignment in one call.
+
+    Only `auto` rows are touched — confirmed/rejected/stale rows keep their
+    user decision. The optional filters narrow the selection the same way as
+    `list_alignments`.
+    """
+    _reading_set_or_404(db, reading_set_id)
+
+    query = db.query(EntityAlignment).filter(
+        EntityAlignment.reading_set_id == reading_set_id,
+        EntityAlignment.status == "auto",
+    )
+    if request.paper_id is not None:
+        query = query.filter(
+            (EntityAlignment.paper_a_id == request.paper_id)
+            | (EntityAlignment.paper_b_id == request.paper_id),
+        )
+    if request.subject_id is not None:
+        query = query.filter(
+            (EntityAlignment.subject_a_id == request.subject_id)
+            | (EntityAlignment.subject_b_id == request.subject_id),
+        )
+    alignments = query.order_by(EntityAlignment.created_at, EntityAlignment.id).all()
+
+    new_status = "confirmed" if request.action == "confirm" else "rejected"
+    for alignment in alignments:
+        alignment.status = new_status
+    db.commit()
+
+    return BulkAlignmentReviewResponse(
+        updated_count=len(alignments),
+        alignments=[_alignment_response(alignment) for alignment in alignments],
+    )
+
+
+# =============================================================================
+# Reference suggestions
+# =============================================================================
+
+@router.post(
+    "/{reading_set_id}/reference-suggestions",
+    response_model=ReferenceSuggestionsResponse,
+)
+async def build_reference_suggestions(
+    reading_set_id: str,
+    request: ReferenceSuggestionsRequest | None = None,
+    db: Session = Depends(get_db),
+):
+    """Suggest referenced arXiv papers to import into the reading set.
+
+    Aggregates the member papers' bibliographies, fetches metadata for the
+    referenced arXiv papers not yet in the set, and ranks their relevance with
+    one LLM call. Candidates already imported into the library are annotated
+    with their paper id so the client can link instead of re-importing.
+
+    Each run is persisted on the reading set and merged with the previous run:
+    once a suggested paper is imported it becomes a member and stops being a
+    candidate, but its stored suggestion is still returned (flagged
+    `in_reading_set`) so the user can review past suggestions at any time.
+    """
+    import httpx
+
+    from backend.app.agents.reference_suggestions import (
+        normalize_arxiv_id,
+        suggest_references,
+    )
+
+    reading_set = _reading_set_or_404(db, reading_set_id)
+    memberships = sorted(
+        reading_set.memberships,
+        key=lambda membership: (membership.added_at, membership.paper_id),
+    )
+    papers = [membership.paper for membership in memberships if membership.paper is not None]
+    member_paper_ids = {paper.id for paper in papers}
+    max_candidates = request.max_candidates if request is not None else 25
+
+    try:
+        result = await asyncio.to_thread(suggest_references, papers, max_candidates)
+    except httpx.HTTPError as error:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not read arXiv metadata: {error}",
+        ) from error
+
+    # Merge the fresh candidates with the previously stored run, then persist.
+    # Fresh entries win on id collisions; entries only present in the stored
+    # run (typically already imported into the set) are retained after them.
+    new_entries = [
+        {
+            "arxiv_id": suggestion.arxiv_id,
+            "title": suggestion.title,
+            "abstract": suggestion.abstract,
+            "relevance": suggestion.relevance,
+            "reason": suggestion.reason,
+            "cited_by_paper_ids": suggestion.cited_by_paper_ids,
+        }
+        for suggestion in result.suggestions
+    ]
+    new_ids = {entry["arxiv_id"] for entry in new_entries}
+    stored = (
+        reading_set.reference_suggestions
+        if isinstance(reading_set.reference_suggestions, dict)
+        else {}
+    )
+    stored_entries = stored.get("suggestions")
+    retained = [
+        entry
+        for entry in (stored_entries if isinstance(stored_entries, list) else [])
+        if isinstance(entry, dict)
+        and isinstance(entry.get("arxiv_id"), str)
+        and entry["arxiv_id"] not in new_ids
+    ]
+    merged = new_entries + retained
+    reading_set.reference_suggestions = {
+        "generated_at": utcnow().isoformat(),
+        "suggestions": merged,
+    }
+    db.commit()
+
+    # Match candidates against already-imported library papers (version-insensitive).
+    candidate_ids = {entry["arxiv_id"] for entry in merged}
+    library_by_arxiv_id: dict[str, str] = {}
+    if candidate_ids:
+        for paper in db.query(Paper).filter(Paper.arxiv_id.isnot(None)).all():
+            normalized = normalize_arxiv_id(paper.arxiv_id)
+            if normalized in candidate_ids and normalized not in library_by_arxiv_id:
+                library_by_arxiv_id[normalized] = paper.id
+
+    suggestions = []
+    for entry in merged:
+        library_paper_id = library_by_arxiv_id.get(entry["arxiv_id"])
+        cited_by = entry.get("cited_by_paper_ids")
+        suggestions.append(ReferenceSuggestionResponse(
+            arxiv_id=entry["arxiv_id"],
+            title=str(entry.get("title") or ""),
+            abstract=str(entry.get("abstract") or ""),
+            relevance=str(entry.get("relevance") or "medium"),
+            reason=str(entry.get("reason") or ""),
+            cited_by_paper_ids=[
+                str(paper_id)
+                for paper_id in (cited_by if isinstance(cited_by, list) else [])
+            ],
+            library_paper_id=library_paper_id,
+            in_reading_set=library_paper_id in member_paper_ids,
+        ))
+
+    return ReferenceSuggestionsResponse(
+        reading_set_id=reading_set_id,
+        suggestions=suggestions,
+        skipped_papers=[
+            SkippedPaperResponse(paper_id=item["paper_id"], reason=item["reason"])
+            for item in result.skipped_papers
+        ],
+    )

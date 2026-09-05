@@ -38,6 +38,7 @@ import { inject, injectable, optional } from '@theia/core/shared/inversify'
 import type { Paper, PaperDetail } from '../../../../hooks/usePapers'
 import type { Tooltip } from '../../../../hooks/useTooltips'
 import type { LlmWorkflow } from '../../../../lib/llm-settings-api'
+import type { ReferenceSuggestion, ReferenceSuggestionsResult } from '../../../../lib/reading-set-api'
 import { readUserExpertise, writeUserExpertise } from '../../../../lib/user-expertise'
 import { ensureMathJax } from './mathjax-loader'
 import { ScholarCommands } from './scholar-commands'
@@ -71,6 +72,7 @@ import {
   ScholarReadingSetWidget,
   isScholarReadingSetPaperTreeNode,
   isScholarReadingSetTreeNode,
+  linkTermsDescription,
 } from './scholar-reading-set-widget'
 import {
   SCHOLAR_ANNOTATION_EDITOR_WIDGET_ID,
@@ -110,6 +112,7 @@ import { ScholarArxivImportDialog } from './scholar-arxiv-import-dialog'
 
 const STATUS_BAR_ID = 'scholar-agent.active-paper'
 const GRAPH_STATUS_BAR_ID = 'scholar-agent.graph-status'
+const READING_SET_STATUS_BAR_ID = 'scholar-agent.reading-set-status'
 const UPLOAD_ACCEPT = '.tar.gz,.tgz,.zip,.tex'
 // Keeps the reading lens above the authoring views in the right side bar.
 const SEMANTIC_LENS_RANK = 90
@@ -126,6 +129,10 @@ interface GraphFilterQuickPickItem extends QuickPickItem {
 
 interface ReadingSetQuickPickItem extends QuickPickItem {
   id: string
+}
+
+interface ReferenceSuggestionQuickPickItem extends QuickPickItem {
+  suggestion: ReferenceSuggestion
 }
 
 @injectable()
@@ -202,6 +209,10 @@ export class ScholarContribution implements
     this.toDispose.push(this.llmSettings.onDidChange(() => {
       this.onToolbarItemsChangedEmitter.fire()
     }))
+    this.toDispose.push(Disposable.create(this.readingSets.subscribe(() => {
+      this.updateReadingSetStatusBar()
+      this.onToolbarItemsChangedEmitter.fire()
+    })))
     this.toDispose.push(this.selectionService.onSelectionChanged(selection => {
       if (ScholarGraphSelection.is(selection)) {
         void this.revealSemanticLens()
@@ -260,6 +271,13 @@ export class ScholarContribution implements
         `Could not migrate the Chat layout: ${errorMessage(reason)}`,
       )
     }
+    try {
+      await this.migrateReadingSetsLayout(app)
+    } catch (reason) {
+      await this.messageService.warn(
+        `Could not migrate the Reading Sets layout: ${errorMessage(reason)}`,
+      )
+    }
   }
 
   onStop(): void {
@@ -267,6 +285,7 @@ export class ScholarContribution implements
     this.toDispose.dispose()
     void this.statusBar.removeElement(STATUS_BAR_ID)
     void this.statusBar.removeElement(GRAPH_STATUS_BAR_ID)
+    void this.statusBar.removeElement(READING_SET_STATUS_BAR_ID)
   }
 
   registerCommands(commands: CommandRegistry): void {
@@ -338,10 +357,31 @@ export class ScholarContribution implements
       isVisible: (argument: unknown) => isScholarReadingSetTreeNode(argument)
         && this.readingSets.isLinkingTerms(argument.readingSetId),
     })
+    commands.registerCommand(ScholarCommands.CONFIRM_ALL_READING_SET_TERMS, {
+      execute: (argument: unknown) => this.bulkReviewReadingSetTerms(argument, 'confirm'),
+      isEnabled: (argument: unknown) => isScholarReadingSetTreeNode(argument)
+        && !this.readingSets.isLinkingTerms(argument.readingSetId),
+      isVisible: isScholarReadingSetTreeNode,
+    })
+    commands.registerCommand(ScholarCommands.REJECT_ALL_READING_SET_TERMS, {
+      execute: (argument: unknown) => this.bulkReviewReadingSetTerms(argument, 'reject'),
+      isEnabled: (argument: unknown) => isScholarReadingSetTreeNode(argument)
+        && !this.readingSets.isLinkingTerms(argument.readingSetId),
+      isVisible: isScholarReadingSetTreeNode,
+    })
+    commands.registerCommand(ScholarCommands.SUGGEST_READING_SET_REFERENCES, {
+      execute: (argument: unknown) => this.suggestReadingSetReferences(argument),
+      isEnabled: (argument: unknown) => isScholarReadingSetTreeNode(argument)
+        || isReadingSetsCommandVisible(argument),
+      isVisible: (argument: unknown) => isScholarReadingSetTreeNode(argument)
+        || isReadingSetsCommandVisible(argument),
+    })
     commands.registerCommand(ScholarCommands.OPEN_READING_SET_CHAT, {
       execute: (argument: unknown) => this.openReadingSetChat(argument),
-      isEnabled: isScholarReadingSetTreeNode,
-      isVisible: isScholarReadingSetTreeNode,
+      isEnabled: (argument: unknown) => isScholarReadingSetTreeNode(argument)
+        || isReadingSetsCommandVisible(argument),
+      isVisible: (argument: unknown) => isScholarReadingSetTreeNode(argument)
+        || isReadingSetsCommandVisible(argument),
     })
     commands.registerCommand(ScholarCommands.HIGHLIGHT_SHARED_TERMS, {
       execute: () => this.toggleSharedTermHighlights(),
@@ -660,6 +700,20 @@ export class ScholarContribution implements
       onDidChange: this.onToolbarItemsChangedEmitter.event,
     }))
     this.toDispose.push(registry.registerItem({
+      id: ScholarCommands.OPEN_READING_SET_CHAT.id,
+      command: ScholarCommands.OPEN_READING_SET_CHAT.id,
+      group: 'navigation',
+      priority: 5,
+      onDidChange: this.onToolbarItemsChangedEmitter.event,
+    }))
+    this.toDispose.push(registry.registerItem({
+      id: ScholarCommands.SUGGEST_READING_SET_REFERENCES.id,
+      command: ScholarCommands.SUGGEST_READING_SET_REFERENCES.id,
+      group: 'navigation',
+      priority: 15,
+      onDidChange: this.onToolbarItemsChangedEmitter.event,
+    }))
+    this.toDispose.push(registry.registerItem({
       id: ScholarCommands.UPLOAD_LATEX.id,
       command: ScholarCommands.UPLOAD_LATEX.id,
       group: 'navigation',
@@ -830,6 +884,18 @@ export class ScholarContribution implements
     menus.registerMenuAction(SCHOLAR_READING_SET_CONTEXT_MENU, {
       commandId: ScholarCommands.STOP_READING_SET_TERMS.id,
       order: 'b21',
+    })
+    menus.registerMenuAction(SCHOLAR_READING_SET_CONTEXT_MENU, {
+      commandId: ScholarCommands.CONFIRM_ALL_READING_SET_TERMS.id,
+      order: 'b22',
+    })
+    menus.registerMenuAction(SCHOLAR_READING_SET_CONTEXT_MENU, {
+      commandId: ScholarCommands.REJECT_ALL_READING_SET_TERMS.id,
+      order: 'b23',
+    })
+    menus.registerMenuAction(SCHOLAR_READING_SET_CONTEXT_MENU, {
+      commandId: ScholarCommands.SUGGEST_READING_SET_REFERENCES.id,
+      order: 'b25',
     })
     menus.registerMenuAction(SCHOLAR_READING_SET_CONTEXT_MENU, {
       commandId: ScholarCommands.OPEN_READING_SET_CHAT.id,
@@ -1534,6 +1600,10 @@ export class ScholarContribution implements
     }
     const name = this.readingSets.readingSetOf(argument.readingSetId)?.name ?? 'reading set'
     try {
+      const prepared = await this.prepareKnowledgeGraphsForLinking(argument.readingSetId)
+      if (!prepared) {
+        return
+      }
       const result = await this.readingSets.linkTerms(argument.readingSetId)
       if (result.stage === 'complete') {
         const counts = `${result.alignmentCount} term link${result.alignmentCount === 1 ? '' : 's'}`
@@ -1556,6 +1626,269 @@ export class ScholarContribution implements
       }
     } catch (reason) {
       await this.messageService.error(`Could not link terms: ${errorMessage(reason)}`)
+    }
+  }
+
+  /**
+   * Link Terms silently skips papers without a knowledge graph, so surface the
+   * precondition up front: offer to build the missing graphs and start the
+   * alignment only once they are ready. Resolves false when the user cancels.
+   */
+  private async prepareKnowledgeGraphsForLinking(readingSetId: string): Promise<boolean> {
+    const readingSet = this.readingSets.readingSetOf(readingSetId)
+    const missing = (readingSet?.papers ?? []).filter(paper => !paper.has_knowledge_graph)
+    if (missing.length === 0) {
+      return true
+    }
+    const count = `${missing.length} paper${missing.length === 1 ? '' : 's'}`
+    const BUILD = 'scholar-agent:build-missing-graphs'
+    const SKIP = 'scholar-agent:link-without-graphs'
+    const choice = await this.quickInputService.pick<ReadingSetQuickPickItem>([
+      {
+        id: BUILD,
+        label: `Build ${missing.length} missing knowledge graph${missing.length === 1 ? '' : 's'}, then link`,
+        description: 'Runs LLM extraction and can take several minutes per paper',
+        iconClasses: ['codicon', 'codicon-combine'],
+      },
+      {
+        id: SKIP,
+        label: 'Link terms now',
+        description: `Skips ${count} without a knowledge graph`,
+        iconClasses: ['codicon', 'codicon-link'],
+      },
+    ], {
+      title: 'Link Terms',
+      placeHolder: `${count} in this reading set ${missing.length === 1 ? 'has' : 'have'} no knowledge graph yet`,
+      canPickMany: false,
+    })
+    if (!choice) {
+      return false
+    }
+    if (choice.id === SKIP) {
+      return true
+    }
+    void this.messageService.info(`Building knowledge graphs for ${count}…`)
+    const failed = await this.buildKnowledgeGraphs(missing.map(paper => paper.id))
+    await this.readingSets.refresh()
+    if (failed.length > 0) {
+      const labels = failed
+        .map(paperId => {
+          const paper = this.paperOf(paperId)
+          return paper ? paperLabel(paper.filename, this.paperTitle(paper)) : paperId
+        })
+        .join(', ')
+      void this.messageService.warn(
+        `Could not build knowledge graphs for: ${labels}. Link Terms will skip them.`,
+      )
+    }
+    return true
+  }
+
+  /**
+   * Starts the missing builds and resolves once every one reached a terminal
+   * state, returning the papers whose graph still failed. Progress is watched
+   * through the workspace store, the same stream the status bar renders.
+   */
+  private async buildKnowledgeGraphs(paperIds: string[]): Promise<string[]> {
+    const failed: string[] = []
+    const initialProgress = new Map(paperIds.map(paperId => [
+      paperId,
+      this.store.getSnapshot().knowledgeGraphProgressByPaperId[paperId],
+    ]))
+    const pending = new Set<string>()
+    await Promise.all(paperIds.map(async paperId => {
+      try {
+        await this.store.buildKnowledgeGraph(paperId)
+        pending.add(paperId)
+      } catch {
+        failed.push(paperId)
+      }
+    }))
+    if (pending.size === 0) {
+      return failed
+    }
+    await new Promise<void>(resolve => {
+      let unsubscribe = (): void => undefined
+      const check = (): void => {
+        const snapshot = this.store.getSnapshot()
+        for (const paperId of [...pending]) {
+          const paper = snapshot.papersById[paperId]
+            ?? snapshot.papers.find(candidate => candidate.id === paperId)
+          if (paper?.has_knowledge_graph) {
+            pending.delete(paperId)
+            continue
+          }
+          const progress = snapshot.knowledgeGraphProgressByPaperId[paperId]
+          // Ignore a stale terminal event left over from an earlier build.
+          if (!progress || progress === initialProgress.get(paperId)) {
+            if (snapshot.paperErrors[paperId]) {
+              pending.delete(paperId)
+              failed.push(paperId)
+            }
+            continue
+          }
+          if (progress.stage === 'complete') {
+            pending.delete(paperId)
+          } else if (progress.stage === 'cancelled' || progress.stage === 'error') {
+            pending.delete(paperId)
+            failed.push(paperId)
+          }
+        }
+        if (pending.size === 0) {
+          unsubscribe()
+          resolve()
+        }
+      }
+      unsubscribe = this.store.subscribe(check)
+      check()
+    })
+    return failed
+  }
+
+  /** Confirms or rejects every proposed link of the set at once. */
+  private async bulkReviewReadingSetTerms(
+    argument: unknown,
+    action: 'confirm' | 'reject',
+  ): Promise<void> {
+    if (!isScholarReadingSetTreeNode(argument)) {
+      return
+    }
+    const name = this.readingSets.readingSetOf(argument.readingSetId)?.name ?? 'reading set'
+    if (action === 'reject') {
+      const confirmed = await new ConfirmDialog({
+        title: 'Reject All Proposed Links',
+        msg: `Reject every proposed term link in "${name}"? Links you confirmed stay.`,
+        ok: 'Reject All',
+      }).open()
+      if (!confirmed) {
+        return
+      }
+    }
+    try {
+      const result = await this.readingSets.bulkReviewAlignments(argument.readingSetId, action)
+      const verb = action === 'confirm' ? 'Confirmed' : 'Rejected'
+      void this.messageService.info(
+        `${verb} ${result.updated_count} proposed link${result.updated_count === 1 ? '' : 's'} in "${name}"`,
+      )
+    } catch (reason) {
+      await this.messageService.error(`Could not update term links: ${errorMessage(reason)}`)
+    }
+  }
+
+  /**
+   * Resolves the target set for actions started without a tree selection
+   * (toolbar, command palette): the only set, or a quick pick.
+   */
+  private async pickReadingSetForAction(title: string): Promise<string | undefined> {
+    await this.readingSets.initialize()
+    const sets = this.readingSets.getSnapshot().readingSets
+    if (sets.length === 0) {
+      void this.messageService.info(
+        'Create a reading set first: group papers in the Reading Sets view.',
+      )
+      return undefined
+    }
+    if (sets.length === 1) {
+      return sets[0].id
+    }
+    const selected = await this.quickInputService.pick<ReadingSetQuickPickItem>(
+      sets.map(set => ({
+        id: set.id,
+        label: set.name,
+        description: `${set.papers.length} paper${set.papers.length === 1 ? '' : 's'}`,
+      })),
+      { title, placeHolder: 'Choose a reading set', canPickMany: false },
+    )
+    return selected?.id
+  }
+
+  /**
+   * Aggregates the set's bibliographies, lets the agent rank the referenced
+   * arXiv papers, and imports the ones the user picks straight into the set.
+   * The backend persists every run, so suggestions that were already imported
+   * stay visible in the picker instead of silently disappearing.
+   */
+  private async suggestReadingSetReferences(argument: unknown): Promise<void> {
+    const readingSetId = isScholarReadingSetTreeNode(argument)
+      ? argument.readingSetId
+      : await this.pickReadingSetForAction('Suggest Papers from References')
+    if (!readingSetId) {
+      return
+    }
+    const name = this.readingSets.readingSetOf(readingSetId)?.name ?? 'reading set'
+    const progress = await this.messageService.showProgress({
+      text: `Ranking referenced papers for "${name}"…`,
+    })
+    let result: ReferenceSuggestionsResult
+    try {
+      result = await this.readingSets.suggestReferences(readingSetId)
+    } catch (reason) {
+      await this.messageService.error(
+        `Could not suggest referenced papers: ${errorMessage(reason)}`,
+      )
+      return
+    } finally {
+      progress.cancel()
+    }
+    const pickable = result.suggestions.filter(suggestion => !suggestion.in_reading_set)
+    const alreadyInSet = result.suggestions.filter(suggestion => suggestion.in_reading_set)
+    if (result.suggestions.length === 0) {
+      const memberCount = this.readingSets.readingSetOf(readingSetId)?.papers.length ?? 0
+      void this.messageService.info(
+        memberCount > 0 && result.skipped_papers.length >= memberCount
+          ? `The papers in "${name}" have no bibliographies to scan yet. `
+            + 'Suggestions become available once the papers finish compiling.'
+          : `No arXiv references found in the bibliographies of "${name}". `
+            + 'Only references with arXiv identifiers can be suggested.',
+      )
+      return
+    }
+    const toItem = (suggestion: ReferenceSuggestion) => ({
+      suggestion,
+      label: suggestion.title,
+      description: `${suggestion.relevance} relevance · arXiv:${suggestion.arxiv_id}`
+        + (suggestion.in_reading_set
+          ? ' · already in this set'
+          : suggestion.library_paper_id ? ' · already in library' : ''),
+      detail: suggestion.reason || suggestion.abstract.slice(0, 200),
+      picked: !suggestion.in_reading_set && suggestion.relevance === 'high',
+    })
+    const selected = await this.quickInputService.pick<ReferenceSuggestionQuickPickItem>(
+      [...pickable, ...alreadyInSet].map(toItem),
+      {
+        title: `Add Referenced Papers to "${name}"`,
+        placeHolder: pickable.length > 0
+          ? 'Pick the papers to import and add to the reading set'
+          : 'All previously suggested papers are already in this reading set',
+        canPickMany: true,
+      },
+    )
+    if (!selected || selected.length === 0) {
+      return
+    }
+    const toAdd = selected.filter(item => !item.suggestion.in_reading_set)
+    if (toAdd.length === 0) {
+      void this.messageService.info(`The selected papers are already in "${name}".`)
+      return
+    }
+    let added = 0
+    const failures: string[] = []
+    for (const item of toAdd) {
+      const suggestion = item.suggestion
+      try {
+        const paperId = suggestion.library_paper_id
+          ?? (await this.store.uploadArxiv(suggestion.arxiv_id)).id
+        await this.readingSets.addPaperToReadingSet(readingSetId, paperId)
+        added += 1
+      } catch {
+        failures.push(suggestion.title)
+      }
+    }
+    if (added > 0) {
+      void this.messageService.info(`Added ${added} paper${added === 1 ? '' : 's'} to "${name}"`)
+    }
+    if (failures.length > 0) {
+      await this.messageService.error(`Could not add: ${failures.join(', ')}`)
     }
   }
 
@@ -1607,10 +1940,16 @@ export class ScholarContribution implements
   }
 
   private async openReadingSetChat(argument: unknown): Promise<void> {
-    if (!isScholarReadingSetTreeNode(argument) || !this.chat) {
+    if (!this.chat) {
       return
     }
-    const readingSet = this.readingSets.readingSetOf(argument.readingSetId)
+    const readingSetId = isScholarReadingSetTreeNode(argument)
+      ? argument.readingSetId
+      : await this.pickReadingSetForAction('Chat About Reading Set')
+    if (!readingSetId) {
+      return
+    }
+    const readingSet = this.readingSets.readingSetOf(readingSetId)
     if (!readingSet) {
       return
     }
@@ -1992,6 +2331,25 @@ export class ScholarContribution implements
     }
   }
 
+  /**
+   * Theia restores existing users' saved layouts without calling
+   * `initializeLayout`, so the Reading Sets view added there never appeared
+   * for them. Attach it once next to the Papers view, keeping layouts intact.
+   */
+  private async migrateReadingSetsLayout(app: FrontendApplication): Promise<void> {
+    const existing = this.widgetManager.tryGetWidget(SCHOLAR_READING_SETS_WIDGET_ID)
+    if (existing && app.shell.getAreaFor(existing)) {
+      return
+    }
+    const readingSets = existing
+      ?? await this.widgetManager.getOrCreateWidget(SCHOLAR_READING_SETS_WIDGET_ID)
+    const library = this.widgetManager.tryGetWidget(SCHOLAR_LIBRARY_WIDGET_ID)
+    const ref = library && app.shell.getAreaFor(library) === 'left' ? library : undefined
+    await app.shell.addWidget(readingSets, ref
+      ? { area: 'left', mode: 'tab-after', ref }
+      : { area: 'left' })
+  }
+
   private async migratePreChatLayout(app: FrontendApplication): Promise<void> {
     const existingChat = this.widgetManager.tryGetWidget(SCHOLAR_CHAT_WIDGET_ID)
     if (existingChat && app.shell.getAreaFor(existingChat)) {
@@ -2218,6 +2576,25 @@ export class ScholarContribution implements
       return 'all'
     }
     return selected.map(filter => filter.label).join(', ')
+  }
+
+  /** Mirrors the in-flight "Link terms" builds so progress is visible outside the tree. */
+  private updateReadingSetStatusBar(): void {
+    const builds = Object.entries(this.readingSets.getSnapshot().alignmentBuilds)
+    if (builds.length === 0) {
+      void this.statusBar.removeElement(READING_SET_STATUS_BAR_ID)
+      return
+    }
+    const [readingSetId, build] = builds[0]
+    const name = this.readingSets.readingSetOf(readingSetId)?.name ?? 'Reading set'
+    const suffix = builds.length > 1 ? ` (+${builds.length - 1} more)` : ''
+    void this.statusBar.setElement(READING_SET_STATUS_BAR_ID, {
+      text: `$(sync~spin) ${name}: ${linkTermsDescription(build)}${suffix}`,
+      alignment: StatusBarAlignment.LEFT,
+      priority: 98,
+      tooltip: `Linking terms in "${name}"`,
+      command: ScholarCommands.SHOW_READING_SETS.id,
+    })
   }
 
   private async updateStatusBar(): Promise<void> {

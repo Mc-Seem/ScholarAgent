@@ -12,11 +12,13 @@ import { HttpSemanticApi } from './semantic-api'
 import type { EquationDetails, SectionAnnotationsResponse, SemanticSubjectDetails } from './semantic-api'
 import { HttpReadingSetApi } from './reading-set-api'
 import type {
+  BulkAlignmentReviewResult,
   EntityAlignment,
   ReadingSet,
   ReadingSetAlignmentFilter,
   ReadingSetAlignmentProgress,
   ReadingSetApi,
+  ReferenceSuggestionsResult,
 } from './reading-set-api'
 import { HttpCitationApi } from './citation-api'
 import type { CitationApi, CitationCard, CitationResolution } from './citation-api'
@@ -431,6 +433,21 @@ export class HttpReaderWorkspaceApi implements ReaderWorkspaceApi, TooltipSugges
 
   rejectReadingSetAlignment(readingSetId: string, alignmentId: string): Promise<EntityAlignment> {
     return this.readingSetApi.rejectReadingSetAlignment(readingSetId, alignmentId)
+  }
+
+  bulkReviewReadingSetAlignments(
+    readingSetId: string,
+    action: 'confirm' | 'reject',
+    filter?: ReadingSetAlignmentFilter,
+  ): Promise<BulkAlignmentReviewResult> {
+    return this.readingSetApi.bulkReviewReadingSetAlignments(readingSetId, action, filter)
+  }
+
+  suggestReadingSetReferences(
+    readingSetId: string,
+    maxCandidates?: number,
+  ): Promise<ReferenceSuggestionsResult> {
+    return this.readingSetApi.suggestReadingSetReferences(readingSetId, maxCandidates)
   }
 
   watchReadingSetAlignments(

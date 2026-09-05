@@ -41,6 +41,7 @@ export class ScholarSemanticLensWidget extends ReactWidget {
   private updateVersion = 0
   private otherPapersLoading = false
   private alignmentBusyId: string | null = null
+  private alignmentBulkBusy = false
   private readonly selectionChangedEmitter = new Emitter<ScholarGraphSelection>()
 
   readonly onDidChangeSemanticSelection: Event<ScholarGraphSelection> =
@@ -112,6 +113,7 @@ export class ScholarSemanticLensWidget extends ReactWidget {
     this.detailsError = null
     this.otherPapersLoading = false
     this.alignmentBusyId = null
+    this.alignmentBulkBusy = false
   }
 
   private loadSemanticDetails(): void {
@@ -292,6 +294,34 @@ export class ScholarSemanticLensWidget extends ReactWidget {
     }
   }
 
+  /**
+   * Confirms every proposed link of the active term at once. The subject may
+   * be shared by several reading sets, so one bulk request runs per set that
+   * still has a pending link for it.
+   */
+  private async confirmAllOtherPaperLinks(links: OtherPaperTermLink[]): Promise<void> {
+    const readingSetIds = new Set(
+      links.filter(link => link.status === 'auto').map(link => link.readingSetId),
+    )
+    if (readingSetIds.size === 0) {
+      return
+    }
+    this.alignmentBulkBusy = true
+    this.update()
+    try {
+      const subject = this.subjectContextOf(this.selection)
+      await Promise.all([...readingSetIds].map(readingSetId =>
+        this.readingSets.bulkReviewAlignments(readingSetId, 'confirm', {
+          subjectId: subject?.subjectId,
+        })))
+    } catch {
+      // Untouched rows keep their previous state; the next click retries.
+    } finally {
+      this.alignmentBulkBusy = false
+      this.update()
+    }
+  }
+
   private otherPapersProps(
     selection: ScholarGraphSelection,
   ): SemanticLensOtherPapersProps | undefined {
@@ -299,10 +329,12 @@ export class ScholarSemanticLensWidget extends ReactWidget {
     if (!subject) {
       return undefined
     }
+    const links = this.otherPaperLinks(subject.paperId, subject.subjectId)
     return {
-      links: this.otherPaperLinks(subject.paperId, subject.subjectId),
+      links,
       loading: this.otherPapersLoading,
       busyAlignmentId: this.alignmentBusyId,
+      bulkBusy: this.alignmentBulkBusy,
       onOpen: link => {
         void this.openOtherPaperLink(link).catch(() => undefined)
       },
@@ -311,6 +343,9 @@ export class ScholarSemanticLensWidget extends ReactWidget {
       },
       onReject: link => {
         void this.judgeOtherPaperLink(link, 'reject')
+      },
+      onConfirmAll: () => {
+        void this.confirmAllOtherPaperLinks(links)
       },
     }
   }

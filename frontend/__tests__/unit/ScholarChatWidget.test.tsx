@@ -69,6 +69,7 @@ function actions() {
     deleteConversation: vi.fn(), sendMessage: vi.fn(), retry: vi.fn(), cancelStream: vi.fn(),
     clearNextContext: vi.fn(), confirmAction: vi.fn(), rejectAction: vi.fn(),
     requestCitation: vi.fn(), summarizeCurrentSection: vi.fn(), closeReadingSetChat: vi.fn(),
+    activateReadingSetChat: vi.fn(),
   }
 }
 
@@ -306,7 +307,10 @@ describe('ScholarChatView', () => {
       }],
     })} actions={handlers} />)
 
-    expect(screen.getByText('Preference Optimization')).toHaveClass('scholar-chat-scope-name')
+    const scope = screen.getByLabelText('Chat scope')
+    expect(scope).toHaveClass('scholar-chat-scope-name')
+    expect(scope).toHaveValue('set-1')
+    expect(screen.getByRole('option', { name: 'Reading set: Preference Optimization' })).toBeInTheDocument()
     expect(screen.getByText('Paper Beta')).toHaveClass('scholar-chat-citation-paper')
     expect(screen.getByLabelText('Message'))
       .toHaveAttribute('placeholder', 'Ask about the papers in this set…')
@@ -314,6 +318,31 @@ describe('ScholarChatView', () => {
     await user.click(screen.getByRole('button', { name: /Paper Beta.*Evidence/ }))
     expect(handlers.requestCitation).toHaveBeenCalledWith(expect.objectContaining({ paper_id: 'paper-b' }))
     await user.click(screen.getByRole('button', { name: 'Close reading set chat' }))
+    expect(handlers.closeReadingSetChat).toHaveBeenCalledOnce()
+  })
+
+  it('switches the chat scope through the reading-set selector', async () => {
+    const user = userEvent.setup()
+    const handlers = actions()
+    const { rerender } = render(<ScholarChatView
+      snapshot={snapshot({ activePaperId: null })}
+      readingSetOptions={[{ id: 'set-1', name: 'Preference Optimization' }]}
+      actions={handlers}
+    />)
+
+    expect(screen.getByText(/or pick a reading set above/)).toBeInTheDocument()
+    await user.selectOptions(screen.getByLabelText('Chat scope'), 'set-1')
+    expect(handlers.activateReadingSetChat).toHaveBeenCalledWith('set-1')
+
+    rerender(<ScholarChatView
+      snapshot={snapshot({
+        activePaperId: null,
+        readingSet: { id: 'set-1', name: 'Preference Optimization', paperTitles: {} },
+      })}
+      readingSetOptions={[{ id: 'set-1', name: 'Preference Optimization' }]}
+      actions={handlers}
+    />)
+    await user.selectOptions(screen.getByLabelText('Chat scope'), '')
     expect(handlers.closeReadingSetChat).toHaveBeenCalledOnce()
   })
 

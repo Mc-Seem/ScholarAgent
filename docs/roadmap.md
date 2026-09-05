@@ -103,6 +103,18 @@ This roadmap addresses stakeholder feedback focused on: (1) making the knowledge
 - Alignments become stale after relevant KG changes and must be rebuilt before returning to reading surfaces
 - Pairwise linking and multi-paper retrieval are optimized for Reading Sets of about five papers
 
+### 2.5 Multi-Paper UX Touch-up
+>**Problem**: First multi-paper release required too much manual orchestration (hidden Reading Sets view, per-link review, KG prerequisites, chat only via context menu, hand-picked set membership)
+
+**Solution**:
+- Reading Sets view attaches next to the Papers view by default, including for previously saved layouts
+- Link Terms progress mirrors into the status bar; set rows show pending-link counts and papers without a KG carry a warning icon
+- Link Terms offers to build missing knowledge graphs first, then starts the alignment automatically
+- Bulk confirm/reject of proposed links per set (`POST .../alignments/bulk-review`) and a per-term `Confirm all` in the Semantic Lens
+- Reading-set chat reachable from the panel toolbar, the command palette, and a scope selector in the Chat view; the message endpoint runs the agent off the event loop and degrades gracefully instead of returning 500s
+- Agent-ranked reference suggestions (`POST .../reference-suggestions`): aggregate member bibliographies, fetch arXiv abstracts, rank relevance with the LLM, and import picked papers straight into the set
+- Suggestion runs are persisted on the reading set (`reading_sets.reference_suggestions`, migration 017) and merged across runs, so imported suggestions stay reviewable in the picker (flagged "already in this set") instead of disappearing once their papers become members
+
 ---
 
 ## Phase 3: Interactive Chat with Agent Tools
